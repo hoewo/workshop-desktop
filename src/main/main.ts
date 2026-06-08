@@ -486,35 +486,44 @@ async function getPersonalRecord(id: string): Promise<PersonalRecord | null> {
 }
 
 async function savePersonalRecord(request: SavePersonalRecordRequest): Promise<PersonalRecord> {
+  const nextRequest: Record<string, unknown> = isPlainObject(request) ? request : {};
+  const bodyMarkdown = typeof nextRequest.bodyMarkdown === "string" ? nextRequest.bodyMarkdown : "";
+  const projectId = typeof nextRequest.projectId === "number" && Number.isFinite(nextRequest.projectId) ? nextRequest.projectId : undefined;
+  const projectName = safeWindowText(nextRequest.projectName) ?? undefined;
+  const taskId = typeof nextRequest.taskId === "number" && Number.isFinite(nextRequest.taskId) ? nextRequest.taskId : undefined;
+  const taskTitle = safeWindowText(nextRequest.taskTitle) ?? undefined;
+  const promotedTaskId =
+    typeof nextRequest.promotedTaskId === "number" && Number.isFinite(nextRequest.promotedTaskId) ? nextRequest.promotedTaskId : undefined;
   const records = await readRecordIndex();
-  const scopeType = normalizeRecordScope(request.scopeType);
+  const scopeType = normalizeRecordScope(nextRequest.scopeType);
   const existingTaskRecord =
-    !request.id && scopeType === "task" && typeof request.taskId === "number" && Number.isFinite(request.taskId)
-      ? records.find((record) => record.status === "active" && record.scopeType === "task" && record.taskId === request.taskId)
+    !nextRequest.id && scopeType === "task" && typeof taskId === "number"
+      ? records.find((record) => record.status === "active" && record.scopeType === "task" && record.taskId === taskId)
       : undefined;
-  const id = request.id
-    ? normalizeRecordId(request.id)
+  const requestId = safeWindowText(nextRequest.id, 80);
+  const id = requestId
+    ? normalizeRecordId(requestId)
     : existingTaskRecord?.id ?? `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
   const existing = records.find((record) => record.id === id);
   const now = new Date().toISOString();
-  const fallbackTitle = request.taskTitle || request.projectName;
+  const fallbackTitle = taskTitle || projectName;
   const meta: PersonalRecordMeta = {
     id,
-    title: deriveRecordTitle(request.bodyMarkdown, fallbackTitle),
+    title: deriveRecordTitle(bodyMarkdown, fallbackTitle),
     scopeType,
-    status: normalizeRecordStatus(request.status ?? existing?.status),
+    status: normalizeRecordStatus(nextRequest.status ?? existing?.status),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-    ...(request.promotedTaskId ? { promotedTaskId: request.promotedTaskId } : existing?.promotedTaskId ? { promotedTaskId: existing.promotedTaskId } : {}),
-    ...(scopeType === "project" || scopeType === "task" ? { projectId: request.projectId, projectName: request.projectName } : {}),
-    ...(scopeType === "task" ? { taskId: request.taskId, taskTitle: request.taskTitle } : {})
+    ...(promotedTaskId ? { promotedTaskId } : existing?.promotedTaskId ? { promotedTaskId: existing.promotedTaskId } : {}),
+    ...(scopeType === "project" || scopeType === "task" ? { projectId, projectName } : {}),
+    ...(scopeType === "task" ? { taskId, taskTitle } : {})
   };
   const nextRecords = [meta, ...records.filter((record) => record.id !== id)];
   await fs.mkdir(recordsDirPath(), { recursive: true });
-  await fs.writeFile(recordBodyPath(id), request.bodyMarkdown, "utf8");
+  await fs.writeFile(recordBodyPath(id), bodyMarkdown, "utf8");
   await writeRecordIndex(nextRecords);
   notifyRecordsChanged();
-  return { ...meta, bodyMarkdown: request.bodyMarkdown };
+  return { ...meta, bodyMarkdown };
 }
 
 async function deletePersonalRecord(id: string) {

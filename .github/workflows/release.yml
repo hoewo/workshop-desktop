@@ -13,23 +13,47 @@ jobs:
   macos-arm64:
     name: Build macOS arm64
     runs-on: macos-latest
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 11.5.2
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 30))
+          done
 
       - name: Build renderer and main process
         run: pnpm run build
@@ -37,7 +61,17 @@ jobs:
       - name: Package macOS arm64 zip
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npx electron-builder --mac zip --arm64 --publish never
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if npx electron-builder --mac zip --arm64 --publish never; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 30))
+          done
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -51,29 +85,65 @@ jobs:
   windows-x64:
     name: Build Windows x64
     runs-on: windows-latest
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 11.5.2
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            pnpm install --frozen-lockfile
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -eq 3) {
+              exit $LASTEXITCODE
+            }
+            Start-Sleep -Seconds ($attempt * 30)
+          }
 
       - name: Build renderer and main process
         run: pnpm run build
 
       - name: Package Windows x64 installers
-        run: npx electron-builder --win nsis portable --x64 --publish never
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            npx electron-builder --win nsis portable --x64 --publish never
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -eq 3) {
+              exit $LASTEXITCODE
+            }
+            Start-Sleep -Seconds ($attempt * 30)
+          }
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

@@ -1,4 +1,15 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import {
+  app,
+  BrowserWindow,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  shell,
+  Tray,
+  type MenuItemConstructorOptions
+} from "electron";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -37,8 +48,12 @@ const defaultConfig: AppConfig = {
   sessionId: "",
   dailyRefreshEnabled: false,
   dailyRefreshTime: "09:00",
-  stickyAlwaysOnTop: true
+  stickyAlwaysOnTop: true,
+  showDockIcon: true,
+  globalShortcutEnabled: true
 };
+
+const PANEL_SHORTCUT_ACCELERATOR = "CommandOrControl+Alt+W";
 
 let tray: Tray | null = null;
 let windowRef: BrowserWindow | null = null;
@@ -50,6 +65,7 @@ let taskPreviewHideTimer: NodeJS.Timeout | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
 let tokenRefreshInProgress: Promise<AppConfig> | null = null;
 let isQuitting = false;
+let registeredPanelShortcut = false;
 
 const configPath = () => path.join(app.getPath("userData"), "config.json");
 
@@ -90,6 +106,8 @@ async function saveConfig(next: Partial<AppConfig>): Promise<AppConfig> {
   await fs.mkdir(app.getPath("userData"), { recursive: true });
   await fs.writeFile(configPath(), JSON.stringify(merged, null, 2), "utf8");
   if (app.isReady()) {
+    applyDockVisibility(merged);
+    registerPanelShortcut(merged);
     scheduleDailyRefresh(merged);
   }
   return merged;
@@ -106,8 +124,50 @@ function sanitizeConfig(config: AppConfig): AppConfig {
     serviceName: (config.serviceName || defaultConfig.serviceName).trim() || defaultConfig.serviceName,
     accessTokenExpiresAt: Number(config.accessTokenExpiresAt) || 0,
     refreshTokenExpiresAt: Number(config.refreshTokenExpiresAt) || 0,
-    tokenType: config.tokenType || "Bearer"
+    tokenType: config.tokenType || "Bearer",
+    showDockIcon: config.showDockIcon !== false,
+    globalShortcutEnabled: config.globalShortcutEnabled !== false
   };
+}
+
+function applyDockVisibility(config: AppConfig) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  if (config.showDockIcon) {
+    void app.dock?.show();
+  } else {
+    app.dock?.hide();
+  }
+}
+
+function unregisterPanelShortcut() {
+  if (!registeredPanelShortcut) {
+    return;
+  }
+
+  globalShortcut.unregister(PANEL_SHORTCUT_ACCELERATOR);
+  registeredPanelShortcut = false;
+}
+
+function registerPanelShortcut(config: AppConfig) {
+  if (!app.isReady()) {
+    return;
+  }
+
+  unregisterPanelShortcut();
+  if (!config.globalShortcutEnabled) {
+    return;
+  }
+
+  registeredPanelShortcut = globalShortcut.register(PANEL_SHORTCUT_ACCELERATOR, () => {
+    showWindow("screen");
+  });
+
+  if (!registeredPanelShortcut) {
+    console.warn(`Unable to register global shortcut: ${PANEL_SHORTCUT_ACCELERATOR}`);
+  }
 }
 
 function hasValidLogin(config: AppConfig) {
@@ -943,13 +1003,19 @@ function fitWindowContent(win: BrowserWindow, request?: WindowFitRequest) {
   }
 }
 
-function showWindow() {
-  if (!windowRef || !tray) {
-    return;
+type WindowOpenSource = "tray" | "screen";
+
+function positionWindowNearTray(win: BrowserWindow) {
+  if (!tray) {
+    return false;
   }
 
   const trayBounds = tray.getBounds();
-  const windowBounds = windowRef.getBounds();
+  if (trayBounds.width <= 0 || trayBounds.height <= 0) {
+    return false;
+  }
+
+  const windowBounds = win.getBounds();
   const display = screen.getDisplayNearestPoint({
     x: trayBounds.x + trayBounds.width / 2,
     y: trayBounds.y + trayBounds.height / 2
@@ -968,7 +1034,40 @@ function showWindow() {
   }
 
   y = clamp(y, workArea.y + 8, workArea.y + workArea.height - windowBounds.height - 8);
-  windowRef.setPosition(x, y, false);
+  win.setPosition(x, y, false);
+  return true;
+}
+
+function positionWindowOnScreen(win: BrowserWindow) {
+  const windowBounds = win.getBounds();
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const workArea = display.workArea;
+  const x = clamp(
+    Math.round(workArea.x + (workArea.width - windowBounds.width) / 2),
+    workArea.x + 8,
+    workArea.x + workArea.width - windowBounds.width - 8
+  );
+  const y = clamp(
+    Math.round(workArea.y + (workArea.height - windowBounds.height) / 2),
+    workArea.y + 8,
+    workArea.y + workArea.height - windowBounds.height - 8
+  );
+  win.setPosition(x, y, false);
+}
+
+function showWindow(source: WindowOpenSource = "tray") {
+  if (!windowRef) {
+    return;
+  }
+
+  hideTaskPreviewWindow();
+  if (source === "tray" && positionWindowNearTray(windowRef)) {
+    windowRef.show();
+    windowRef.focus();
+    return;
+  }
+
+  positionWindowOnScreen(windowRef);
   windowRef.show();
   windowRef.focus();
 }
@@ -983,6 +1082,37 @@ function toggleWindow() {
   } else {
     showWindow();
   }
+}
+
+function buildAppEntryMenu(source: WindowOpenSource): MenuItemConstructorOptions[] {
+  return [
+    {
+      label: "显示面板",
+      accelerator: PANEL_SHORTCUT_ACCELERATOR,
+      click: () => showWindow(source)
+    },
+    {
+      label: "任务便签",
+      click: () => void showStickyWindow()
+    },
+    {
+      label: "个人记录",
+      click: () => void showPersonalRecordWindow()
+    },
+    { type: "separator" },
+    {
+      label: "退出",
+      click: () => app.quit()
+    }
+  ];
+}
+
+function configureDockMenu() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  app.dock?.setMenu(Menu.buildFromTemplate(buildAppEntryMenu("screen")));
 }
 
 function buildApiUrl(config: AppConfig, request: ApiRequest) {
@@ -1338,58 +1468,49 @@ if (!gotLock) {
 }
 
 app.on("second-instance", () => {
-  showWindow();
+  showWindow("screen");
 });
 
 app.on("before-quit", () => {
   isQuitting = true;
 });
 
-app.whenReady().then(() => {
-  registerIpc();
+app.on("will-quit", () => {
+  unregisterPanelShortcut();
+});
 
-  if (process.platform === "darwin") {
-    app.dock?.hide();
-  }
+app.on("activate", () => {
+  showWindow("screen");
+});
+
+app.whenReady().then(async () => {
+  registerIpc();
+  const config = await readConfig();
+  applyDockVisibility(config);
+  configureDockMenu();
+  registerPanelShortcut(config);
 
   windowRef = createWindow();
   tray = new Tray(createTrayIcon());
   tray.setToolTip("Workshop Todo");
   tray.on("click", toggleWindow);
-  tray.on("double-click", showWindow);
+  tray.on("double-click", () => showWindow("tray"));
   tray.on("right-click", () => {
     const menu = Menu.buildFromTemplate([
       {
         label: "刷新",
         click: () => notifyRefresh("manual")
       },
-      {
-        label: "任务便签",
-        click: () => void showStickyWindow()
-      },
-      {
-        label: "个人记录",
-        click: () => void showPersonalRecordWindow()
-      },
-      {
-        label: "显示面板",
-        click: showWindow
-      },
       { type: "separator" },
-      {
-        label: "退出",
-        click: () => app.quit()
-      }
+      ...buildAppEntryMenu("tray")
     ]);
     tray?.popUpContextMenu(menu);
   });
 
-  readConfig().then((config) => {
-    scheduleDailyRefresh(config);
-    if (!hasValidLogin(config)) {
-      setTimeout(showWindow, 400);
-    }
-  });
+  scheduleDailyRefresh(config);
+  if (!hasValidLogin(config)) {
+    setTimeout(() => showWindow("screen"), 400);
+  }
 });
 
 app.on("window-all-closed", () => {

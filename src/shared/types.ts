@@ -16,6 +16,8 @@ export interface AppConfig {
   dailyRefreshEnabled: boolean;
   dailyRefreshTime: string;
   stickyAlwaysOnTop: boolean;
+  showDockIcon: boolean;
+  globalShortcutEnabled: boolean;
 }
 
 export interface ApiEnvelope<T> {

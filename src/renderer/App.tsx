@@ -2475,6 +2475,24 @@ export default function App() {
                 <span>便签默认置顶</span>
               </label>
 
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={draftConfig.showDockIcon}
+                  onChange={(event) => setDraftConfig({ ...draftConfig, showDockIcon: event.target.checked })}
+                />
+                <span>显示 Dock 图标</span>
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={draftConfig.globalShortcutEnabled}
+                  onChange={(event) => setDraftConfig({ ...draftConfig, globalShortcutEnabled: event.target.checked })}
+                />
+                <span>全局快捷键 Command+Option+W</span>
+              </label>
+
               <div className="settings-warning">
                 <AlertTriangle size={15} />
                 <span>本地 Header 仅用于直连开发服务；生产环境应走网关。</span>

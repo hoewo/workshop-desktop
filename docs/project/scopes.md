@@ -1,6 +1,6 @@
 # Scope
 
-updated_at: 2026-06-06
+updated_at: 2026-06-08
 
 ## G-001 Scope Boundary
 
@@ -9,7 +9,7 @@ goal_id: G-001
 must_have:
   - NebulaAuth 验证码登录、token 保存、token 刷新、401 重试和登出流程可验证。
   - Workshop API 的项目、组织、任务聚合契约可验证。
-  - 当前用户任务过滤、项目分组、任务状态操作、便签窗口和托盘打开/隐藏可验证。
+  - 当前用户任务过滤、项目分组、任务状态操作、便签窗口和 Dock / 托盘 / 快捷键打开入口可验证。
   - 本机凭据存储的阶段性边界被明确记录。
   - macOS zip/目录包构建流程可复现，并记录 DMG 暂不作为当前门槛。
 nice_to_have:

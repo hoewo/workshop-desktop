@@ -1,10 +1,11 @@
 # 项目事实与约束
 
-updated_at: 2026-06-06
+updated_at: 2026-06-08
 
 ## 当前产品事实
 
-- Workshop Desktop 是一个轻量跨平台托盘端，用于快速查看和处理 Workshop 后端里的个人待办。
+- Workshop Desktop 是一个轻量跨平台桌面端，用于快速查看和处理 Workshop 后端里的个人待办。
+- 内测阶段 macOS 默认显示 Dock 图标，同时保留托盘/菜单栏入口和全局快捷键。
 - 默认网关是 `https://api.feitianchengzi.com`。
 - 当前 Workshop 业务路径是 `/workshop/v1/user`。
 - 当前使用接口包括 `GET /projects`、`GET /tasks`、`POST /tasks`、`PUT /tasks/{id}`。
@@ -18,7 +19,7 @@ updated_at: 2026-06-06
 ## 代码事实来源
 
 - `README.md`：当前能力、接口契约、登录契约、打包说明。
-- `src/main/main.ts`：Electron 托盘、窗口、便签、任务预览、配置读写、token 刷新、IPC、API 代理。
+- `src/main/main.ts`：Electron Dock / 托盘 / 快捷键入口、窗口、便签、任务预览、配置读写、token 刷新、IPC、API 代理。
 - `src/renderer/App.tsx`：登录面板、项目/组织/任务聚合、当前用户过滤、任务状态操作、预览和便签交互。
 - `src/shared/types.ts`：AppConfig、API 响应、Project、Task、TaskState、DesktopBridge 等类型。
 - `package.json`：开发、构建、打包脚本和 Electron Builder 目标。

@@ -1,6 +1,6 @@
 # Iterations
 
-updated_at: 2026-06-06
+updated_at: 2026-06-08
 
 ## I-001 真实使用链路与发布门槛验证
 
@@ -16,7 +16,7 @@ review_date: 2026-06-13
 selected_scope:
   - 登录和 token 生命周期
   - Workshop API 聚合契约
-  - 托盘、预览、便签和状态操作
+  - Dock / 托盘 / 快捷键入口、预览、便签和状态操作
   - 本机凭据边界
   - zip/目录包构建门槛
 excluded_scope:

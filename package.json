@@ -2,7 +2,7 @@
   "name": "workshop-desktop",
   "version": "0.1.5",
   "private": true,
-  "description": "A lightweight cross-platform tray client for Workshop todos.",
+  "description": "A lightweight cross-platform desktop client for Workshop todos.",
   "author": "Workshop",
   "main": "dist/main/main.js",
   "packageManager": "pnpm@11.5.2",

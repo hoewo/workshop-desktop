@@ -1,6 +1,6 @@
 # ID Registry
 
-updated_at: 2026-06-06
+updated_at: 2026-06-08
 
 ## Goals
 
@@ -20,7 +20,7 @@ updated_at: 2026-06-06
 | --- | --- | --- | --- | --- | --- |
 | `T-001` | 验证 NebulaAuth 登录与 token 生命周期 | proposed | `G-001` | `I-001` | `docs/project/tasks.md` |
 | `T-002` | 验证 Workshop API 聚合契约与当前用户过滤 | proposed | `G-001` | `I-001` | `docs/project/tasks.md` |
-| `T-003` | 验证托盘、预览和便签核心交互 | proposed | `G-001` | `I-001` | `docs/project/tasks.md` |
+| `T-003` | 验证 Dock / 托盘 / 快捷键入口、预览和便签核心交互 | proposed | `G-001` | `I-001` | `docs/project/tasks.md` |
 | `T-004` | 决定本机凭据与错误边界 | proposed | `G-001` | `I-001` | `docs/project/tasks.md` |
 | `T-005` | 固化打包发布门槛 | proposed | `G-001` | `I-001` | `docs/project/tasks.md` |
 
@@ -31,7 +31,7 @@ updated_at: 2026-06-06
 | `B-001` | 内测交付门槛需要明确 | open | `docs/project/backlog.md` |
 | `B-002` | NebulaAuth 登录和 token 刷新需要真实链路验证 | open | `docs/project/backlog.md` |
 | `B-003` | Workshop API 聚合契约可能随后端变化漂移 | open | `docs/project/backlog.md` |
-| `B-004` | 托盘、任务预览、便签窗口需要按真实桌面使用验收 | open | `docs/project/backlog.md` |
+| `B-004` | Dock / 托盘 / 快捷键入口、任务预览、便签窗口需要按真实桌面使用验收 | open | `docs/project/backlog.md` |
 | `B-005` | 本机凭据保护边界需要确认 | open | `docs/project/backlog.md` |
 | `B-006` | 发布格式和签名目标需要阶段性取舍 | open | `docs/project/backlog.md` |
 | `B-007` | 自动化验证和人工验收证据不足 | open | `docs/project/backlog.md` |

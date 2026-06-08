@@ -1,6 +1,6 @@
 # Roadmap
 
-updated_at: 2026-06-06
+updated_at: 2026-06-08
 
 Roadmap 是排序层，不是更大的 Goal。未被用户确认或 accepted Decision 支持的项保持 `proposed`。
 
@@ -38,13 +38,13 @@ roadmap:
       item_type: decision
       source: DC-004
       status: proposed
-      rationale: 这会改变轻量个人托盘端定位，不能从当前实现直接推导为当前目标。
+      rationale: 这会改变轻量个人桌面端定位，不能从当前实现直接推导为当前目标。
   not_now:
     - item: 完整桌面项目管理应用
       item_type: backlog
       source: G-001 non_goals
       status: deferred
-      rationale: 当前目标是轻量个人待办托盘端，不扩成完整项目管理客户端。
+      rationale: 当前目标是轻量个人待办桌面端，不扩成完整项目管理客户端。
     - item: DMG、签名和自动更新体系
       item_type: decision
       source: DC-003

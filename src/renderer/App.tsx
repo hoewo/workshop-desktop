@@ -5,7 +5,6 @@ import {
   Check,
   ChevronRight,
   Eye,
-  FileText,
   Folder,
   GripVertical,
   Link,
@@ -46,6 +45,7 @@ import type {
   ProjectsPayload,
   Task,
   TaskState,
+  TaskStateChangeNotice,
   TasksPayload,
   VerificationCodeType,
   WindowFitRequest
@@ -53,6 +53,7 @@ import type {
 
 const activeStates: TaskState[] = ["pending", "in_progress", "pending_review", "blocked"];
 const recordCompleteAnimationMs = 900;
+const taskCompleteAnimationMs = 850;
 
 function isVisibleTask(task: Task) {
   return activeStates.includes(task.state) && !task.deleted_at;
@@ -557,6 +558,7 @@ function TaskRow({
   task,
   busyTaskId,
   compact = false,
+  isCompleting = false,
   recordId,
   onExtract,
   onOpen,
@@ -566,6 +568,7 @@ function TaskRow({
   task: EnrichedTask;
   busyTaskId: number | null;
   compact?: boolean;
+  isCompleting?: boolean;
   recordId?: string;
   onExtract?: (task: EnrichedTask, position: { x: number; y: number }) => void;
   onOpen?: (task: EnrichedTask) => void;
@@ -606,7 +609,7 @@ function TaskRow({
 
   return (
     <article
-      className={`task-row ${compact ? "compact" : ""} ${onExtract ? "extractable" : ""} ${onOpen ? "openable" : ""} ${onRecord ? "has-record-action" : ""}`}
+      className={`task-row ${compact ? "compact" : ""} ${isCompleting ? "completing" : ""} ${onExtract ? "extractable" : ""} ${onOpen ? "openable" : ""} ${onRecord ? "has-record-action" : ""}`}
       draggable={Boolean(onExtract)}
       onClick={onOpen ? () => onOpen(task) : undefined}
       onDragStart={handleDragStart}
@@ -632,7 +635,11 @@ function TaskRow({
         ) : null}
       </div>
       <div className="task-side-actions">
-        {onRecord ? (
+        {isCompleting ? (
+          <span className="task-complete-mark" aria-label="已完成">
+            <Check size={17} strokeWidth={3} />
+          </span>
+        ) : onRecord ? (
           <button
             className={`task-record-button ${recordId ? "has-record" : ""}`}
             type="button"
@@ -642,47 +649,49 @@ function TaskRow({
             <NotebookPen size={15} />
           </button>
         ) : null}
-        <div className="task-actions">
-          {task.state !== "in_progress" ? (
-            <button
-              type="button"
-              title="开始"
-              onClick={(event) => handleTaskAction(event, () => onUpdate(task, "in_progress"))}
-              disabled={busyTaskId === task.id}
-            >
-              <Play size={15} />
-            </button>
-          ) : null}
-          {task.state !== "completed" ? (
-            <button
-              type="button"
-              title="完成"
-              onClick={(event) => handleTaskAction(event, () => onUpdate(task, "completed"))}
-              disabled={busyTaskId === task.id}
-            >
-              <Check size={16} />
-            </button>
-          ) : null}
-          {task.state !== "blocked" ? (
-            <button
-              type="button"
-              title="阻塞"
-              onClick={(event) => handleTaskAction(event, () => onUpdate(task, "blocked"))}
-              disabled={busyTaskId === task.id}
-            >
-              <PauseCircle size={16} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              title="退回待办"
-              onClick={(event) => handleTaskAction(event, () => onUpdate(task, "pending"))}
-              disabled={busyTaskId === task.id}
-            >
-              <RotateCcw size={15} />
-            </button>
-          )}
-        </div>
+        {!isCompleting ? (
+          <div className="task-actions">
+            {task.state !== "in_progress" ? (
+              <button
+                type="button"
+                title="开始"
+                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "in_progress"))}
+                disabled={busyTaskId === task.id}
+              >
+                <Play size={15} />
+              </button>
+            ) : null}
+            {task.state !== "completed" ? (
+              <button
+                type="button"
+                title="完成"
+                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "completed"))}
+                disabled={busyTaskId === task.id}
+              >
+                <Check size={16} />
+              </button>
+            ) : null}
+            {task.state !== "blocked" ? (
+              <button
+                type="button"
+                title="阻塞"
+                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "blocked"))}
+                disabled={busyTaskId === task.id}
+              >
+                <PauseCircle size={16} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                title="退回待办"
+                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "pending"))}
+                disabled={busyTaskId === task.id}
+              >
+                <RotateCcw size={15} />
+              </button>
+            )}
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -780,9 +789,6 @@ function ProjectMenuRow({
       }}
     >
       <div className="project-row-content">
-        <Folder className="project-row-icon" size={17} />
-        <span className="project-row-count">{group.count}</span>
-        <span className="project-row-name">{group.projectName}</span>
         <button
           className={`project-record-button ${recordCount > 0 ? "has-record" : ""}`}
           type="button"
@@ -794,6 +800,8 @@ function ProjectMenuRow({
         >
           <NotebookPen size={15} />
         </button>
+        <span className="project-row-name">{group.projectName}</span>
+        <span className="project-row-count">{group.count}</span>
         <ChevronRight className="project-row-arrow" size={18} />
       </div>
     </article>
@@ -913,6 +921,7 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
+  const [completingTaskIds, setCompletingTaskIds] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hoveredProjectId, setHoveredProjectId] = useState<number | null>(null);
@@ -942,6 +951,7 @@ export default function App() {
   const recordDirtyRef = useRef(false);
   const taskNoteBodyRef = useRef("");
   const taskNoteDirtyRef = useRef(false);
+  const taskCompleteTimersRef = useRef<Map<number, number>>(new Map());
   const recordSaveInFlightRef = useRef<Promise<PersonalRecord | null> | null>(null);
   const recordSaveQueuedRef = useRef(false);
   const isSingleTaskSticky = surface === "sticky" && taskFilter !== "all";
@@ -965,6 +975,15 @@ export default function App() {
   useEffect(() => {
     taskNoteDirtyRef.current = taskNoteDirty;
   }, [taskNoteDirty]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of taskCompleteTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      taskCompleteTimersRef.current.clear();
+    };
+  }, []);
 
   const loadData = useCallback(async () => {
     if (!config || !isLoggedIn(config)) {
@@ -1028,6 +1047,78 @@ export default function App() {
       setIsLoading(false);
     }
   }, [config]);
+
+  const clearTaskCompletionFeedback = useCallback((taskId: number) => {
+    const existingTimer = taskCompleteTimersRef.current.get(taskId);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+      taskCompleteTimersRef.current.delete(taskId);
+    }
+
+    setCompletingTaskIds((current) => {
+      if (!current.has(taskId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.delete(taskId);
+      return next;
+    });
+  }, []);
+
+  const markTaskCompletionFeedback = useCallback((taskId: number, onDone?: () => void) => {
+    const existingTimer = taskCompleteTimersRef.current.get(taskId);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+    }
+
+    setCompletingTaskIds((current) => {
+      const next = new Set(current);
+      next.add(taskId);
+      return next;
+    });
+
+    const timer = window.setTimeout(() => {
+      taskCompleteTimersRef.current.delete(taskId);
+      setCompletingTaskIds((current) => {
+        if (!current.has(taskId)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.delete(taskId);
+        return next;
+      });
+      onDone?.();
+    }, taskCompleteAnimationMs);
+    taskCompleteTimersRef.current.set(taskId, timer);
+  }, []);
+
+  const applyTaskStateChange = useCallback(
+    (notice: TaskStateChangeNotice, options?: { refreshAfterComplete?: boolean }) => {
+      const now = new Date().toISOString();
+      setTasks((currentTasks) =>
+        currentTasks
+          .map((task) =>
+            task.id === notice.id
+              ? {
+                  ...task,
+                  state: notice.state,
+                  updated_at: notice.updatedAt || now,
+                  completion_at: notice.state === "completed" ? notice.completionAt || task.completion_at || now : task.completion_at
+                }
+              : task
+          )
+          .sort(compareTasks)
+      );
+
+      if (notice.state === "completed") {
+        markTaskCompletionFeedback(notice.id, options?.refreshAfterComplete ? () => void loadData() : undefined);
+        return;
+      }
+
+      clearTaskCompletionFeedback(notice.id);
+    },
+    [clearTaskCompletionFeedback, loadData, markTaskCompletionFeedback]
+  );
 
   const loadRecords = useCallback(async () => {
     const nextRecords = await window.workshopDesktop.listPersonalRecords();
@@ -1249,7 +1340,21 @@ export default function App() {
     }
   }, [config, loadData]);
 
-  useEffect(() => window.workshopDesktop.onRefresh(() => void loadData()), [loadData]);
+  useEffect(
+    () =>
+      window.workshopDesktop.onRefresh((event) => {
+        if (event?.task) {
+          applyTaskStateChange(event.task, { refreshAfterComplete: event.task.state === "completed" });
+          if (event.task.state !== "completed") {
+            void loadData();
+          }
+          return;
+        }
+
+        void loadData();
+      }),
+    [applyTaskStateChange, loadData]
+  );
 
   useEffect(() => {
     if (surface !== "record" || !recordDirty) {
@@ -1359,7 +1464,7 @@ export default function App() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
-      if (!task.isMine || !isVisibleTask(task)) {
+      if (!task.isMine || (!isVisibleTask(task) && !completingTaskIds.has(task.id))) {
         return false;
       }
 
@@ -1373,12 +1478,14 @@ export default function App() {
 
       return true;
     });
-  }, [projectFilter, taskFilter, tasks]);
+  }, [completingTaskIds, projectFilter, taskFilter, tasks]);
 
   const projectTodoGroups = useMemo<ProjectTodoGroup[]>(() => {
     return projects
       .map((project) => {
-        const projectTasks = tasks.filter((task) => task.isMine && isVisibleTask(task) && task.project_id === project.id).sort(compareTasks);
+        const projectTasks = tasks
+          .filter((task) => task.isMine && (isVisibleTask(task) || completingTaskIds.has(task.id)) && task.project_id === project.id)
+          .sort(compareTasks);
         return {
           project,
           projectName: getProjectDisplayName(project),
@@ -1396,7 +1503,7 @@ export default function App() {
         }
         return a.projectName.localeCompare(b.projectName, "zh-CN");
       });
-  }, [projects, tasks]);
+  }, [completingTaskIds, projects, tasks]);
 
   const selectedProjectName = useMemo(() => {
     if (projectFilter === "all") {
@@ -1763,16 +1870,23 @@ export default function App() {
           promotedTaskId: createdTask.id
         });
       }
-      activeRecordRef.current = null;
-      recordBodyRef.current = "";
-      recordDirtyRef.current = false;
-      setActiveRecord(null);
-      setRecordBody("");
-      setRecordDirty(false);
-      setRecordSaveStatus("idle");
+
+      const now = new Date().toISOString();
+      await window.workshopDesktop.notifyTaskChanged({
+        id: createdTask.id,
+        projectId: createdTask.project_id,
+        state: createdTask.state,
+        updatedAt: createdTask.updated_at || now,
+        completionAt: createdTask.completion_at ?? null
+      });
+
       setRecordMessage("");
       await loadRecords();
-      await loadData();
+      await window.workshopDesktop.openSticky({
+        projectId: createdTask.project_id,
+        taskId: createdTask.id
+      });
+      await window.workshopDesktop.closeWindow();
     } catch (nextError) {
       setRecordMessage(nextError instanceof Error ? nextError.message : "转任务失败");
     }
@@ -1868,10 +1982,29 @@ export default function App() {
     setError("");
 
     try {
-      await api<Task>("PUT", `/tasks/${task.id}`, {
+      const updatedTask = await api<Task>("PUT", `/tasks/${task.id}`, {
         body: { state }
       });
-      await loadData();
+      const now = new Date().toISOString();
+      const notice: TaskStateChangeNotice = {
+        id: task.id,
+        projectId: task.project_id,
+        state: updatedTask?.state ?? state,
+        updatedAt: updatedTask?.updated_at ?? now,
+        completionAt: (updatedTask?.state ?? state) === "completed" ? updatedTask?.completion_at ?? task.completion_at ?? now : task.completion_at ?? null
+      };
+
+      applyTaskStateChange(notice, { refreshAfterComplete: notice.state === "completed" });
+      await window.workshopDesktop.notifyTaskChanged(notice);
+
+      if (notice.state === "completed" && isSingleTaskSticky) {
+        await closeStickyWindow();
+        return;
+      }
+
+      if (notice.state !== "completed") {
+        await loadData();
+      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "更新失败");
     } finally {
@@ -2108,7 +2241,7 @@ export default function App() {
           <section className="record-list" aria-label="记录列表">
             {visibleRecords.length === 0 ? (
               <div className="empty-state sticky-empty">
-                <FileText size={24} />
+                <NotebookPen size={24} />
                 <span>{getRecordListEmptyLabel(recordListContext)}</span>
               </div>
             ) : null}
@@ -2260,27 +2393,27 @@ export default function App() {
                       ? `${selectedProjectName} · ${filteredTasks.length} 个任务`
                       : selectedTask?.projectName || selectedProjectName || "项目"}
                   </span>
-                  {!isSingleTaskSticky && selectedProjectName && projectFilter !== "all" ? (
-                    <button
-                      className="inline-note-button"
-                      type="button"
-                      onClick={() =>
-                        void window.workshopDesktop.openPersonalRecord({
-                          scopeType: "project",
-                          projectId: Number(projectFilter),
-                          projectName: selectedProjectName
-                        })
-                      }
-                      title="记一下"
-                    >
-                      <NotebookPen size={14} />
-                    </button>
-                  ) : null}
                 </div>
               ) : null}
             </div>
           </div>
           <div className="sticky-actions">
+            {!isSingleTaskSticky && selectedProjectName && projectFilter !== "all" ? (
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() =>
+                  void window.workshopDesktop.openPersonalRecord({
+                    scopeType: "project",
+                    projectId: Number(projectFilter),
+                    projectName: selectedProjectName
+                  })
+                }
+                title="记项目"
+              >
+                <NotebookPen size={15} />
+              </button>
+            ) : null}
             {!isSingleTaskSticky ? (
               <button
                 className="icon-button"
@@ -2357,6 +2490,7 @@ export default function App() {
                     key={`${task.project_id}-${task.id}`}
                     task={task}
                     busyTaskId={busyTaskId}
+                    isCompleting={completingTaskIds.has(task.id)}
                     recordId={taskRecordsByTaskId.get(task.id)?.id}
                     onExtract={canExtractTasks ? extractTaskToSticky : undefined}
                     onOpen={openTaskDetail}
@@ -2380,16 +2514,28 @@ export default function App() {
           <h1>待办项目</h1>
         </div>
         <div className="top-actions">
-          <button className="icon-button" type="button" onClick={() => void window.workshopDesktop.openPersonalRecord()} title="个人记录">
-            <FileText size={17} />
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => void window.workshopDesktop.openPersonalRecord()}
+            title="个人记录"
+            data-tooltip="个人记录"
+          >
+            <NotebookPen size={17} />
           </button>
-          <button className="icon-button" type="button" onClick={() => void window.workshopDesktop.openSticky()} title="任务便签">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => void window.workshopDesktop.openSticky()}
+            title="任务便签"
+            data-tooltip="任务便签"
+          >
             <StickyNote size={17} />
           </button>
-          <button className="icon-button" type="button" onClick={() => void loadData()} title="刷新">
+          <button className="icon-button" type="button" onClick={() => void loadData()} title="刷新" data-tooltip="刷新">
             <RefreshCw size={17} className={isLoading ? "spin" : undefined} />
           </button>
-          <button className="icon-button" type="button" onClick={() => setSettingsOpen(true)} title="设置">
+          <button className="icon-button" type="button" onClick={() => setSettingsOpen(true)} title="设置" data-tooltip="设置">
             <Settings size={17} />
           </button>
         </div>

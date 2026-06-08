@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
   ApiRequest,
   ApiResponse,
@@ -7,7 +7,8 @@ import type {
   PersonalRecordTarget,
   SavePersonalRecordRequest,
   StickyTarget,
-  TaskPreviewRequest
+  TaskPreviewRequest,
+  WorkshopRefreshEvent
 } from "../shared/types";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -48,12 +49,13 @@ const bridge: DesktopBridge = {
   showTaskPreview: (request: TaskPreviewRequest) => ipcRenderer.invoke("taskPreview:show", request),
   keepTaskPreview: () => ipcRenderer.invoke("taskPreview:keep"),
   hideTaskPreview: () => ipcRenderer.invoke("taskPreview:hide"),
+  notifyTaskChanged: (notice) => ipcRenderer.invoke("task:changed", notice),
   closeWindow: () => ipcRenderer.invoke("window:close"),
   closeSticky: () => ipcRenderer.invoke("sticky:close"),
   fitWindowContent: (request) => ipcRenderer.invoke("window:fitContent", request),
   setStickyAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("sticky:setAlwaysOnTop", enabled),
-  onRefresh: (callback: () => void) => {
-    const listener = () => callback();
+  onRefresh: (callback) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as WorkshopRefreshEvent);
     ipcRenderer.on("workshop:refresh", listener);
     return () => ipcRenderer.removeListener("workshop:refresh", listener);
   },

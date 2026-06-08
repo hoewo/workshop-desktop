@@ -188,6 +188,19 @@ export interface TaskPreviewRequest {
   tasks: TaskPreviewItem[];
 }
 
+export interface TaskStateChangeNotice {
+  id: number;
+  projectId: number;
+  state: TaskState;
+  updatedAt?: string | null;
+  completionAt?: string | null;
+}
+
+export interface WorkshopRefreshEvent {
+  reason: "manual" | "schedule" | "task-state";
+  task?: TaskStateChangeNotice;
+}
+
 export interface StickyTarget {
   projectId?: number;
   taskId?: number;
@@ -266,10 +279,11 @@ export interface DesktopBridge {
   showTaskPreview: (request: TaskPreviewRequest) => Promise<void>;
   keepTaskPreview: () => Promise<void>;
   hideTaskPreview: () => Promise<void>;
+  notifyTaskChanged: (notice: TaskStateChangeNotice) => Promise<void>;
   closeWindow: () => Promise<void>;
   closeSticky: () => Promise<void>;
   fitWindowContent: (request: WindowFitRequest) => Promise<void>;
   setStickyAlwaysOnTop: (enabled: boolean) => Promise<AppConfig>;
-  onRefresh: (callback: () => void) => () => void;
+  onRefresh: (callback: (event: WorkshopRefreshEvent) => void) => () => void;
   onRecordsChanged: (callback: () => void) => () => void;
 }

@@ -8,7 +8,8 @@ import {
   screen,
   shell,
   Tray,
-  type MenuItemConstructorOptions
+  type MenuItemConstructorOptions,
+  type WebContents
 } from "electron";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -28,8 +29,10 @@ import type {
   SavePersonalRecordRequest,
   StickyTarget,
   TaskPreviewRequest,
+  TaskStateChangeNotice,
   TaskState,
   VerificationRequest,
+  WorkshopRefreshEvent,
   WindowFitRequest
 } from "../shared/types";
 
@@ -60,6 +63,7 @@ let windowRef: BrowserWindow | null = null;
 const stickyWindows = new Set<BrowserWindow>();
 const stickyWindowTargets = new Map<BrowserWindow, NormalizedStickyTarget>();
 const recordWindows = new Set<BrowserWindow>();
+const recordWindowTargets = new Map<BrowserWindow, NormalizedRecordTarget>();
 let taskPreviewWindowRef: BrowserWindow | null = null;
 let taskPreviewHideTimer: NodeJS.Timeout | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
@@ -381,8 +385,8 @@ function normalizeStickyTarget(target?: StickyTarget | number): NormalizedSticky
   };
 }
 
-function findExistingProjectListSticky(target: NormalizedStickyTarget) {
-  if (target.projectId === null || target.taskId !== null) {
+function findExistingTaskListSticky(target: NormalizedStickyTarget) {
+  if (target.taskId !== null) {
     return null;
   }
 
@@ -398,7 +402,7 @@ function findExistingProjectListSticky(target: NormalizedStickyTarget) {
 
 async function showStickyWindow(target?: StickyTarget | number) {
   const nextTarget = normalizeStickyTarget(target);
-  const existingWin = findExistingProjectListSticky(nextTarget);
+  const existingWin = findExistingTaskListSticky(nextTarget);
   if (existingWin) {
     hideTaskPreviewWindow();
     windowRef?.hide();
@@ -623,6 +627,41 @@ function normalizeRecordTarget(target?: PersonalRecordTarget): NormalizedRecordT
   };
 }
 
+function isRecordListTarget(target: NormalizedRecordTarget) {
+  return !target.noteId && !target.draft && target.scopeType !== "task";
+}
+
+function isSameRecordListTarget(a: NormalizedRecordTarget, b: NormalizedRecordTarget) {
+  if (!isRecordListTarget(a) || !isRecordListTarget(b) || a.scopeType !== b.scopeType) {
+    return false;
+  }
+
+  if (a.scopeType === "none") {
+    return true;
+  }
+
+  if (a.projectId !== null || b.projectId !== null) {
+    return a.projectId === b.projectId;
+  }
+
+  return Boolean(a.projectName && b.projectName && a.projectName === b.projectName);
+}
+
+function findExistingRecordListWindow(target: NormalizedRecordTarget) {
+  if (!isRecordListTarget(target)) {
+    return null;
+  }
+
+  for (const win of recordWindows) {
+    const windowTarget = recordWindowTargets.get(win);
+    if (!win.isDestroyed() && windowTarget && isSameRecordListTarget(windowTarget, target)) {
+      return win;
+    }
+  }
+
+  return null;
+}
+
 async function createRecordWindow(target: NormalizedRecordTarget) {
   const config = await readConfig();
   const opensRecordDetail = Boolean(target.noteId || target.scopeType === "project" || target.scopeType === "task");
@@ -651,9 +690,11 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
 
   win.on("closed", () => {
     recordWindows.delete(win);
+    recordWindowTargets.delete(win);
   });
 
   recordWindows.add(win);
+  recordWindowTargets.set(win, target);
   loadRenderer(win, {
     surface: "record",
     noteId: target.noteId,
@@ -690,6 +731,18 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
       });
       return;
     }
+  }
+
+  const existingWin = findExistingRecordListWindow(nextTarget);
+  if (existingWin) {
+    hideTaskPreviewWindow();
+    windowRef?.hide();
+    if (existingWin.isMinimized()) {
+      existingWin.restore();
+    }
+    existingWin.show();
+    existingWin.focus();
+    return;
   }
 
   const win = await createRecordWindow(nextTarget);
@@ -1342,11 +1395,57 @@ function millisecondsUntilNextDailyRun(time: string) {
   return next.getTime() - now.getTime();
 }
 
-function notifyRefresh(reason: "manual" | "schedule") {
-  windowRef?.webContents.send("workshop:refresh", { reason });
-  for (const win of stickyWindows) {
-    win.webContents.send("workshop:refresh", { reason });
+function isTaskState(value: unknown): value is TaskState {
+  return (
+    value === "pending" ||
+    value === "in_progress" ||
+    value === "pending_review" ||
+    value === "completed" ||
+    value === "accepted" ||
+    value === "cancelled" ||
+    value === "blocked"
+  );
+}
+
+function normalizeTaskStateChangeNotice(value: unknown): TaskStateChangeNotice | null {
+  if (!isPlainObject(value)) {
+    return null;
   }
+
+  const id = value.id;
+  const projectId = value.projectId;
+  const state = value.state;
+  if (typeof id !== "number" || !Number.isFinite(id) || typeof projectId !== "number" || !Number.isFinite(projectId) || !isTaskState(state)) {
+    return null;
+  }
+
+  return {
+    id,
+    projectId,
+    state,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+    completionAt: typeof value.completionAt === "string" ? value.completionAt : null
+  };
+}
+
+function sendWorkshopRefresh(event: WorkshopRefreshEvent, sender?: WebContents) {
+  if (windowRef && !windowRef.isDestroyed() && windowRef.webContents !== sender) {
+    windowRef.webContents.send("workshop:refresh", event);
+  }
+  for (const win of stickyWindows) {
+    if (!win.isDestroyed() && win.webContents !== sender) {
+      win.webContents.send("workshop:refresh", event);
+    }
+  }
+}
+
+function notifyRefresh(reason: "manual" | "schedule") {
+  sendWorkshopRefresh({ reason });
+}
+
+function notifyTaskChanged(notice: TaskStateChangeNotice, sender?: WebContents) {
+  hideTaskPreviewWindow();
+  sendWorkshopRefresh({ reason: "task-state", task: notice }, sender);
 }
 
 function scheduleDailyRefresh(config: AppConfig) {
@@ -1439,6 +1538,12 @@ function registerIpc() {
   ipcMain.handle("taskPreview:show", (_event, request: TaskPreviewRequest) => showTaskPreviewWindow(request));
   ipcMain.handle("taskPreview:keep", () => cancelTaskPreviewHide());
   ipcMain.handle("taskPreview:hide", () => scheduleTaskPreviewHide());
+  ipcMain.handle("task:changed", (event, notice: unknown) => {
+    const normalizedNotice = normalizeTaskStateChangeNotice(notice);
+    if (normalizedNotice) {
+      notifyTaskChanged(normalizedNotice, event.sender);
+    }
+  });
   ipcMain.handle("window:close", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
   });

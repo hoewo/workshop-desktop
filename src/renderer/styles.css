@@ -334,6 +334,7 @@ h1 {
 }
 
 .tray-menu-shell .top-actions .icon-button {
+  position: relative;
   border-color: transparent;
   background: transparent;
   color: #55605c;
@@ -343,6 +344,37 @@ h1 {
   border-color: transparent;
   background: rgba(30, 36, 34, 0.07);
   color: #1f2623;
+}
+
+.tray-menu-shell .top-actions .icon-button[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 20;
+  min-width: max-content;
+  padding: 5px 7px;
+  border-radius: 5px;
+  background: rgba(30, 36, 34, 0.92);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 520;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.tray-menu-shell .top-actions .icon-button[data-tooltip]:hover::after,
+.tray-menu-shell .top-actions .icon-button[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
 }
 
 .status-strip {
@@ -624,31 +656,28 @@ textarea:focus {
 .project-row-content {
   min-height: 35px;
   display: grid;
-  grid-template-columns: 24px 34px minmax(0, 1fr) 26px 20px;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(22px, auto) 18px;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 0 7px;
 }
 
-.project-row-icon {
-  color: #151817;
-}
-
-.project-menu-item:hover .project-row-icon,
-.project-menu-item:focus-visible .project-row-icon,
-.project-menu-item.active .project-row-icon,
 .project-menu-item:hover .project-row-arrow,
 .project-menu-item:focus-visible .project-row-arrow,
-.project-menu-item.active .project-row-arrow {
-  color: #fff;
+.project-menu-item.active .project-row-arrow,
+.project-menu-item:hover .project-row-count,
+.project-menu-item:focus-visible .project-row-count,
+.project-menu-item.active .project-row-count {
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .project-row-count {
-  color: inherit;
-  font-size: 19px;
+  color: #7a827e;
+  font-size: 16px;
   font-variant-numeric: tabular-nums;
-  font-weight: 720;
+  font-weight: 650;
   line-height: 1;
+  justify-self: end;
   text-align: right;
 }
 
@@ -750,6 +779,15 @@ textarea:focus {
 
 .task-row.compact:hover {
   background: rgba(30, 36, 34, 0.055);
+}
+
+.task-row.completing {
+  border-color: rgba(72, 120, 87, 0.28);
+  background: rgba(72, 120, 87, 0.08);
+}
+
+.task-row.completing .task-title-row h2 {
+  color: #487857;
 }
 
 .task-row.compact .task-title-row h2 {
@@ -898,6 +936,17 @@ textarea:focus {
 
 .task-row:hover .task-record-button {
   opacity: 1;
+}
+
+.task-complete-mark {
+  width: 30px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #487857;
+  color: #fff;
 }
 
 .task-actions button {
@@ -1166,12 +1215,6 @@ textarea:focus {
   min-width: 0;
 }
 
-.sticky-subtitle-row .inline-note-button {
-  width: 20px;
-  height: 18px;
-  border-radius: 5px;
-}
-
 .sticky-drag h1 {
   min-width: 0;
   overflow: hidden;
@@ -1181,25 +1224,6 @@ textarea:focus {
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.inline-note-button {
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  border-radius: 6px;
-  background: transparent;
-  color: #68706c;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-
-.inline-note-button:hover {
-  background: rgba(30, 36, 34, 0.06);
-  color: #1f6d56;
 }
 
 .sticky-actions {

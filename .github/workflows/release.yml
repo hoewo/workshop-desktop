@@ -43,6 +43,8 @@ jobs:
             ${{ runner.os }}-electron-
 
       - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         shell: bash
         run: |
           for attempt in 1 2 3; do
@@ -115,6 +117,8 @@ jobs:
             ${{ runner.os }}-electron-
 
       - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         shell: pwsh
         run: |
           for ($attempt = 1; $attempt -le 3; $attempt++) {

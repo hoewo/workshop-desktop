@@ -1,6 +1,6 @@
 {
   "name": "workshop-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "A lightweight cross-platform tray client for Workshop todos.",
   "author": "Workshop",

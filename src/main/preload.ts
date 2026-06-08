@@ -10,6 +10,27 @@ import type {
   TaskPreviewRequest
 } from "../shared/types";
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function sanitizeStickyTarget(target?: StickyTarget | number) {
+  if (typeof target === "number") {
+    return target;
+  }
+
+  return isPlainObject(target) ? target : undefined;
+}
+
+function sanitizeRecordTarget(target?: PersonalRecordTarget) {
+  return isPlainObject(target) ? target : undefined;
+}
+
 const bridge: DesktopBridge = {
   getConfig: () => ipcRenderer.invoke("config:get"),
   saveConfig: (config: Partial<AppConfig>) => ipcRenderer.invoke("config:save", config),
@@ -18,8 +39,8 @@ const bridge: DesktopBridge = {
   logoutAuth: () => ipcRenderer.invoke("auth:logout"),
   request: <T>(request: ApiRequest) => ipcRenderer.invoke("api:request", request) as Promise<ApiResponse<T>>,
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
-  openSticky: (target?: StickyTarget | number) => ipcRenderer.invoke("sticky:open", target),
-  openPersonalRecord: (target?: PersonalRecordTarget) => ipcRenderer.invoke("record:open", target),
+  openSticky: (target?: StickyTarget | number) => ipcRenderer.invoke("sticky:open", sanitizeStickyTarget(target)),
+  openPersonalRecord: (target?: PersonalRecordTarget) => ipcRenderer.invoke("record:open", sanitizeRecordTarget(target)),
   listPersonalRecords: () => ipcRenderer.invoke("record:list"),
   getPersonalRecord: (id: string) => ipcRenderer.invoke("record:get", id),
   savePersonalRecord: (record: SavePersonalRecordRequest) => ipcRenderer.invoke("record:save", record),

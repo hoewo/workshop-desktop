@@ -118,19 +118,29 @@ function getInitialTaskFilter() {
   return taskId && /^\d+$/.test(taskId) ? taskId : "all";
 }
 
+function getSafeQueryText(params: URLSearchParams, key: string, maxLength = 120) {
+  const value = params.get(key)?.trim();
+  return value && value.length <= maxLength ? value : undefined;
+}
+
+function getSafeRecordId(params: URLSearchParams, key: string) {
+  const value = getSafeQueryText(params, key, 80);
+  return value && /^[a-zA-Z0-9_-]+$/.test(value) ? value : undefined;
+}
+
 function getInitialRecordTarget(): PersonalRecordTarget {
   const params = new URLSearchParams(window.location.search);
   const projectId = params.get("project_id");
   const taskId = params.get("task_id");
   const scopeType = params.get("scope_type");
   return {
-    noteId: params.get("note_id") || undefined,
+    noteId: getSafeRecordId(params, "note_id"),
     draft: params.get("draft") === "1",
     scopeType: scopeType === "project" || scopeType === "task" ? scopeType : "none",
     projectId: projectId && /^\d+$/.test(projectId) ? Number(projectId) : undefined,
-    projectName: params.get("project_name") || undefined,
+    projectName: getSafeQueryText(params, "project_name"),
     taskId: taskId && /^\d+$/.test(taskId) ? Number(taskId) : undefined,
-    taskTitle: params.get("task_title") || undefined
+    taskTitle: getSafeQueryText(params, "task_title")
   };
 }
 

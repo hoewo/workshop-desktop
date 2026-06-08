@@ -229,6 +229,24 @@ function appendRendererQuery(searchParams: URLSearchParams, options: RendererLoa
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function safeWindowText(value: unknown, maxLength = 120) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const text = value.trim();
+  return text && text.length <= maxLength ? text : null;
+}
+
 function loadRenderer(win: BrowserWindow, options: RendererLoadOptions) {
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl) {
@@ -294,7 +312,7 @@ function normalizeStickyTarget(target?: StickyTarget | number): NormalizedSticky
     return { projectId: target, taskId: null, x: null, y: null };
   }
 
-  const nextTarget = typeof target === "object" ? target : undefined;
+  const nextTarget = isPlainObject(target) ? target : undefined;
   return {
     projectId: typeof nextTarget?.projectId === "number" && Number.isFinite(nextTarget.projectId) ? nextTarget.projectId : null,
     taskId: typeof nextTarget?.taskId === "number" && Number.isFinite(nextTarget.taskId) ? nextTarget.taskId : null,
@@ -520,16 +538,19 @@ interface NormalizedRecordTarget {
 }
 
 function normalizeRecordTarget(target?: PersonalRecordTarget): NormalizedRecordTarget {
+  const nextTarget = isPlainObject(target) ? target : undefined;
+  const noteId = safeWindowText(nextTarget?.noteId, 80);
+
   return {
-    noteId: typeof target?.noteId === "string" && target.noteId.trim() ? target.noteId.trim() : null,
-    draft: target?.draft === true,
-    scopeType: normalizeRecordScope(target?.scopeType),
-    projectId: typeof target?.projectId === "number" && Number.isFinite(target.projectId) ? target.projectId : null,
-    projectName: typeof target?.projectName === "string" && target.projectName.trim() ? target.projectName.trim() : null,
-    taskId: typeof target?.taskId === "number" && Number.isFinite(target.taskId) ? target.taskId : null,
-    taskTitle: typeof target?.taskTitle === "string" && target.taskTitle.trim() ? target.taskTitle.trim() : null,
-    x: typeof target?.x === "number" && Number.isFinite(target.x) ? target.x : null,
-    y: typeof target?.y === "number" && Number.isFinite(target.y) ? target.y : null
+    noteId: noteId && /^[a-zA-Z0-9_-]+$/.test(noteId) ? noteId : null,
+    draft: nextTarget?.draft === true,
+    scopeType: normalizeRecordScope(nextTarget?.scopeType),
+    projectId: typeof nextTarget?.projectId === "number" && Number.isFinite(nextTarget.projectId) ? nextTarget.projectId : null,
+    projectName: safeWindowText(nextTarget?.projectName),
+    taskId: typeof nextTarget?.taskId === "number" && Number.isFinite(nextTarget.taskId) ? nextTarget.taskId : null,
+    taskTitle: safeWindowText(nextTarget?.taskTitle),
+    x: typeof nextTarget?.x === "number" && Number.isFinite(nextTarget.x) ? nextTarget.x : null,
+    y: typeof nextTarget?.y === "number" && Number.isFinite(nextTarget.y) ? nextTarget.y : null
   };
 }
 

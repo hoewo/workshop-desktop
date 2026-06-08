@@ -1,0 +1,46 @@
+import { contextBridge, ipcRenderer } from "electron";
+import type {
+  ApiRequest,
+  ApiResponse,
+  AppConfig,
+  DesktopBridge,
+  PersonalRecordTarget,
+  SavePersonalRecordRequest,
+  StickyTarget,
+  TaskPreviewRequest
+} from "../shared/types";
+
+const bridge: DesktopBridge = {
+  getConfig: () => ipcRenderer.invoke("config:get"),
+  saveConfig: (config: Partial<AppConfig>) => ipcRenderer.invoke("config:save", config),
+  sendVerification: (request) => ipcRenderer.invoke("auth:sendVerification", request),
+  loginWithCode: (request) => ipcRenderer.invoke("auth:loginWithCode", request),
+  logoutAuth: () => ipcRenderer.invoke("auth:logout"),
+  request: <T>(request: ApiRequest) => ipcRenderer.invoke("api:request", request) as Promise<ApiResponse<T>>,
+  openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+  openSticky: (target?: StickyTarget | number) => ipcRenderer.invoke("sticky:open", target),
+  openPersonalRecord: (target?: PersonalRecordTarget) => ipcRenderer.invoke("record:open", target),
+  listPersonalRecords: () => ipcRenderer.invoke("record:list"),
+  getPersonalRecord: (id: string) => ipcRenderer.invoke("record:get", id),
+  savePersonalRecord: (record: SavePersonalRecordRequest) => ipcRenderer.invoke("record:save", record),
+  deletePersonalRecord: (id: string) => ipcRenderer.invoke("record:delete", id),
+  showTaskPreview: (request: TaskPreviewRequest) => ipcRenderer.invoke("taskPreview:show", request),
+  keepTaskPreview: () => ipcRenderer.invoke("taskPreview:keep"),
+  hideTaskPreview: () => ipcRenderer.invoke("taskPreview:hide"),
+  closeWindow: () => ipcRenderer.invoke("window:close"),
+  closeSticky: () => ipcRenderer.invoke("sticky:close"),
+  fitWindowContent: (request) => ipcRenderer.invoke("window:fitContent", request),
+  setStickyAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("sticky:setAlwaysOnTop", enabled),
+  onRefresh: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("workshop:refresh", listener);
+    return () => ipcRenderer.removeListener("workshop:refresh", listener);
+  },
+  onRecordsChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("record:changed", listener);
+    return () => ipcRenderer.removeListener("record:changed", listener);
+  }
+};
+
+contextBridge.exposeInMainWorld("workshopDesktop", bridge);

@@ -1,0 +1,93 @@
+{
+  "name": "workshop-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A lightweight cross-platform tray client for Workshop todos.",
+  "author": "Workshop",
+  "main": "dist/main/main.js",
+  "packageManager": "pnpm@11.5.2",
+  "scripts": {
+    "dev": "pnpm run build:main && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron dist/main/main.js\"",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "build": "pnpm run build:main && pnpm run build:renderer",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "pnpm run build && electron dist/main/main.js",
+    "pack": "pnpm run build && electron-builder --dir",
+    "dist": "pnpm run build && electron-builder",
+    "package:build": "bash scripts/package.sh build",
+    "package:dir": "bash scripts/package.sh dir",
+    "package:dist": "bash scripts/package.sh dist"
+  },
+  "dependencies": {
+    "lucide-react": "^0.561.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "@types/node": "^24.10.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^39.2.7",
+    "electron-builder": "26.8.1",
+    "playwright": "^1.60.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.workshop.todo.tray",
+    "productName": "Workshop Todo",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/app-icon.png",
+        "to": "app-icon.png"
+      },
+      {
+        "from": "resources/tray-icon.png",
+        "to": "tray-icon.png"
+      },
+      {
+        "from": "resources/tray-iconTemplate.png",
+        "to": "tray-iconTemplate.png"
+      },
+      {
+        "from": "resources/tray-iconTemplate@2x.png",
+        "to": "tray-iconTemplate@2x.png"
+      }
+    ],
+    "mac": {
+      "identity": null,
+      "icon": "resources/app-icon.icns",
+      "target": [
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "icon": "resources/app-icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "icon": "resources/app-icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    }
+  }
+}

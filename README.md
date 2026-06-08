@@ -147,11 +147,17 @@ npx --yes pnpm dev
 ./scripts/package.sh dist
 ```
 
-当前 macOS 默认生成：
+本机默认生成当前平台安装包。macOS 当前默认生成：
 
 ```text
-release/Workshop Todo-0.1.0-arm64-mac.zip
+release/Workshop Todo-<version>-arm64-mac.zip
 ```
+
+云端发布通过 GitHub Actions 生成：
+
+- macOS arm64 zip
+- Windows x64 NSIS installer
+- Windows x64 portable exe
 
 没有把 DMG 作为默认目标。当前 Electron Builder 26.8.1 在本机生成 DMG 时会触发 DMG vendor 下载错误，zip 和目录包可正常生成。
 

@@ -52,7 +52,7 @@ import type {
 } from "../shared/types";
 
 const activeStates: TaskState[] = ["pending", "in_progress", "pending_review", "blocked"];
-const recordCompleteAnimationMs = 420;
+const recordCompleteAnimationMs = 900;
 
 function isVisibleTask(task: Task) {
   return activeStates.includes(task.state) && !task.deleted_at;
@@ -2111,7 +2111,7 @@ export default function App() {
                   disabled={recordCompletingId === record.id}
                   title="完成"
                 >
-                  <Check size={14} />
+                  <Check size={18} strokeWidth={3} />
                 </button>
                 <button
                   className="record-list-main"

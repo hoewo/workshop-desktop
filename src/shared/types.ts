@@ -284,6 +284,7 @@ export interface DesktopBridge {
   closeSticky: () => Promise<void>;
   fitWindowContent: (request: WindowFitRequest) => Promise<void>;
   setStickyAlwaysOnTop: (enabled: boolean) => Promise<AppConfig>;
+  onFocusPulse: (callback: () => void) => () => void;
   onRefresh: (callback: (event: WorkshopRefreshEvent) => void) => () => void;
   onRecordsChanged: (callback: () => void) => () => void;
 }

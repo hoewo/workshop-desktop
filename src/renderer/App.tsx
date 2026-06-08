@@ -942,9 +942,12 @@ export default function App() {
   const [recordListCollapsed, setRecordListCollapsed] = useState(false);
   const [taskNoteBody, setTaskNoteBody] = useState("");
   const [taskNoteDirty, setTaskNoteDirty] = useState(false);
+  const [focusPulseVisible, setFocusPulseVisible] = useState(false);
   const recordSaveTimerRef = useRef<number | null>(null);
   const recordEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const taskNoteSaveTimerRef = useRef<number | null>(null);
+  const focusPulseTimerRef = useRef<number | null>(null);
+  const focusPulseFrameRef = useRef<number | null>(null);
   const lastWindowFitRef = useRef("");
   const activeRecordRef = useRef<PersonalRecord | null>(null);
   const recordBodyRef = useRef("");
@@ -976,14 +979,43 @@ export default function App() {
     taskNoteDirtyRef.current = taskNoteDirty;
   }, [taskNoteDirty]);
 
+  const triggerFocusPulse = useCallback(() => {
+    if (focusPulseFrameRef.current !== null) {
+      window.cancelAnimationFrame(focusPulseFrameRef.current);
+      focusPulseFrameRef.current = null;
+    }
+    if (focusPulseTimerRef.current !== null) {
+      window.clearTimeout(focusPulseTimerRef.current);
+      focusPulseTimerRef.current = null;
+    }
+
+    setFocusPulseVisible(false);
+    focusPulseFrameRef.current = window.requestAnimationFrame(() => {
+      focusPulseFrameRef.current = null;
+      setFocusPulseVisible(true);
+      focusPulseTimerRef.current = window.setTimeout(() => {
+        focusPulseTimerRef.current = null;
+        setFocusPulseVisible(false);
+      }, 1300);
+    });
+  }, []);
+
   useEffect(() => {
     return () => {
       for (const timer of taskCompleteTimersRef.current.values()) {
         window.clearTimeout(timer);
       }
       taskCompleteTimersRef.current.clear();
+      if (focusPulseFrameRef.current !== null) {
+        window.cancelAnimationFrame(focusPulseFrameRef.current);
+      }
+      if (focusPulseTimerRef.current !== null) {
+        window.clearTimeout(focusPulseTimerRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => window.workshopDesktop.onFocusPulse(triggerFocusPulse), [triggerFocusPulse]);
 
   const loadData = useCallback(async () => {
     if (!config || !isLoggedIn(config)) {
@@ -2089,7 +2121,7 @@ export default function App() {
     const canPromoteToTask = activeRecord?.scopeType === "project" && Boolean(activeRecord.projectId);
 
     return (
-      <main className={`record-shell ${activeRecord ? "record-detail-shell" : "record-list-shell"}`}>
+      <main className={`record-shell ${activeRecord ? "record-detail-shell" : "record-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
         <header className="record-titlebar">
           <div className="sticky-drag">
             <GripVertical size={15} />
@@ -2279,7 +2311,7 @@ export default function App() {
   if (!isLoggedIn(config)) {
     if (surface === "sticky") {
       return (
-        <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"}`}>
+        <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
           <header className="sticky-titlebar">
             <div className="sticky-drag">
               <GripVertical size={15} />
@@ -2380,7 +2412,7 @@ export default function App() {
     const isStickyContentCollapsed = stickyListCollapsed && !isSingleTaskSticky;
 
     return (
-      <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"}`}>
+      <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
         <header className="sticky-titlebar">
           <div className="sticky-drag">
             <GripVertical size={15} />

@@ -54,6 +54,11 @@ const bridge: DesktopBridge = {
   closeSticky: () => ipcRenderer.invoke("sticky:close"),
   fitWindowContent: (request) => ipcRenderer.invoke("window:fitContent", request),
   setStickyAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("sticky:setAlwaysOnTop", enabled),
+  onFocusPulse: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("window:focusPulse", listener);
+    return () => ipcRenderer.removeListener("window:focusPulse", listener);
+  },
   onRefresh: (callback) => {
     const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as WorkshopRefreshEvent);
     ipcRenderer.on("workshop:refresh", listener);

@@ -400,6 +400,12 @@ function findExistingTaskListSticky(target: NormalizedStickyTarget) {
   return null;
 }
 
+function pulseWindowFocus(win: BrowserWindow) {
+  if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("window:focusPulse");
+  }
+}
+
 async function showStickyWindow(target?: StickyTarget | number) {
   const nextTarget = normalizeStickyTarget(target);
   const existingWin = findExistingTaskListSticky(nextTarget);
@@ -411,6 +417,7 @@ async function showStickyWindow(target?: StickyTarget | number) {
     }
     existingWin.show();
     existingWin.focus();
+    pulseWindowFocus(existingWin);
     return;
   }
 
@@ -742,6 +749,7 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
     }
     existingWin.show();
     existingWin.focus();
+    pulseWindowFocus(existingWin);
     return;
   }
 

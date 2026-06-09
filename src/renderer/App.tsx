@@ -297,14 +297,28 @@ function cssNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function readElementChildrenHeight(element: HTMLElement) {
+function readElementHeightForFit(element: HTMLElement): number {
+  const currentHeight = element.getBoundingClientRect().height;
+  if (element.classList.contains("record-editor")) {
+    return Math.max(currentHeight, cssNumber(element.style.height));
+  }
+  if (element.classList.contains("task-note-editor")) {
+    return Math.max(currentHeight, clampNumber(element.scrollHeight, 72, 420));
+  }
+  if (element.classList.contains("task-detail") || element.classList.contains("task-note-panel")) {
+    return Math.max(currentHeight, readElementChildrenHeight(element));
+  }
+  return currentHeight;
+}
+
+function readElementChildrenHeight(element: HTMLElement): number {
   const style = window.getComputedStyle(element);
   const paddingBlock = cssNumber(style.paddingTop) + cssNumber(style.paddingBottom);
   const rowGap = cssNumber(style.rowGap || style.gap);
   const visibleChildren = Array.from(element.children).filter((child): child is HTMLElement => {
     return child instanceof HTMLElement && window.getComputedStyle(child).display !== "none";
   });
-  const childrenHeight = visibleChildren.reduce((height, child) => height + child.getBoundingClientRect().height, 0);
+  const childrenHeight = visibleChildren.reduce<number>((height, child) => height + readElementHeightForFit(child), 0);
   return paddingBlock + childrenHeight + Math.max(0, visibleChildren.length - 1) * rowGap;
 }
 
@@ -319,7 +333,7 @@ function readShellContentHeight() {
     });
     const childrenHeight = visibleChildren.reduce((height, child) => {
       const isList = child.classList.contains("sticky-task-list") || child.classList.contains("record-list");
-      return height + (isList ? readElementChildrenHeight(child) : child.getBoundingClientRect().height);
+      return height + (isList ? readElementChildrenHeight(child) : readElementHeightForFit(child));
     }, 0);
     return Math.ceil(paddingBlock + childrenHeight + Math.max(0, visibleChildren.length - 1) * rowGap);
   }
@@ -455,17 +469,47 @@ function MarkdownPreview({ value }: { value: string }) {
   return <div className="markdown-preview">{blocks}</div>;
 }
 
-function getRecordSubtitle(record: Pick<PersonalRecordMeta, "scopeType" | "projectName" | "taskTitle"> | null) {
+type RecordHeaderContext = {
+  scopeType: PersonalRecordScope;
+  title?: string;
+  projectName?: string;
+  taskTitle?: string;
+};
+
+function getRecordHeaderTitle(record: RecordHeaderContext | null, isDetail: boolean, recordCount: number) {
   if (!record) {
-    return "最近记录";
+    return `个人记录 ${recordCount}`;
   }
   if (record.scopeType === "task") {
-    return [record.projectName, record.taskTitle].filter(Boolean).join(" / ") || "任务备注";
+    return `${record.projectName || record.taskTitle || "任务"} · 备注`;
   }
   if (record.scopeType === "project") {
-    return record.projectName || "项目想法";
+    return `${record.projectName || "项目"} · ${isDetail ? "记录" : `记录 ${recordCount}`}`;
   }
-  return "个人";
+  return isDetail ? "个人记录" : `个人记录 ${recordCount}`;
+}
+
+function getStickyHeader({
+  filteredTaskCount,
+  isSingleTaskSticky,
+  projectFilter,
+  selectedProjectName,
+  selectedTask
+}: {
+  filteredTaskCount: number;
+  isSingleTaskSticky: boolean;
+  projectFilter: string;
+  selectedProjectName?: string;
+  selectedTask: EnrichedTask | null;
+}) {
+  const isProjectSticky = !isSingleTaskSticky && projectFilter !== "all";
+  if (isSingleTaskSticky) {
+    return `${selectedTask?.projectName || selectedProjectName || "项目"} · 任务`;
+  }
+  if (isProjectSticky) {
+    return `${selectedProjectName || "项目"} · 任务 ${filteredTaskCount}`;
+  }
+  return "全部待办";
 }
 
 function getRecordListContext(source?: Pick<PersonalRecordMeta, "scopeType" | "projectId" | "projectName"> | PersonalRecordTarget | null): RecordListContext {
@@ -717,7 +761,7 @@ function TaskDetail({
       <article className="task-detail-card">
         <div className="task-title-row">
           <span className={`state-dot ${stateTone[task.state]}`} />
-          <h2>{task.content}</h2>
+          <p className="task-detail-content">{task.content}</p>
         </div>
       </article>
 
@@ -770,7 +814,7 @@ function ProjectMenuRow({
   active: boolean;
   recordCount: number;
   onHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
-  onOpen: (projectId: number) => void;
+  onOpen: (group: ProjectTodoGroup) => void;
   onRecord: (group: ProjectTodoGroup) => void;
 }) {
   return (
@@ -780,11 +824,11 @@ function ProjectMenuRow({
       tabIndex={0}
       onMouseEnter={(event) => onHover(group, event.currentTarget.getBoundingClientRect())}
       onFocus={(event) => onHover(group, event.currentTarget.getBoundingClientRect())}
-      onClick={() => onOpen(group.project.id)}
+      onClick={() => onOpen(group)}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          onOpen(group.project.id);
+          onOpen(group);
         }
       }}
     >
@@ -1016,6 +1060,23 @@ export default function App() {
   }, []);
 
   useEffect(() => window.workshopDesktop.onFocusPulse(triggerFocusPulse), [triggerFocusPulse]);
+
+  useEffect(
+    () =>
+      window.workshopDesktop.onWindowArrangement((notice) => {
+        if (!notice.compactList) {
+          return;
+        }
+
+        if (surface === "sticky" && !isSingleTaskSticky) {
+          setStickyListCollapsed(true);
+        }
+        if (surface === "record" && !activeRecordRef.current) {
+          setRecordListCollapsed(true);
+        }
+      }),
+    [isSingleTaskSticky, surface]
+  );
 
   const loadData = useCallback(async () => {
     if (!config || !isLoggedIn(config)) {
@@ -1420,10 +1481,10 @@ export default function App() {
       return;
     }
 
-    editor.style.height = "auto";
     const nextHeight = clampNumber(editor.scrollHeight, 108, 520);
+    editor.style.minHeight = "";
     editor.style.height = `${nextHeight}px`;
-    editor.style.overflowY = editor.scrollHeight > nextHeight ? "auto" : "hidden";
+    editor.style.overflowY = "auto";
   }, [activeRecord?.id, recordBody, recordMode, surface]);
 
   useEffect(() => {
@@ -1434,8 +1495,8 @@ export default function App() {
     const isRecordDetail = surface === "record" && Boolean(activeRecord);
     const isCollapsedList =
       (surface === "sticky" && stickyListCollapsed && !isSingleTaskSticky) || (surface === "record" && recordListCollapsed && !activeRecord);
-    const minHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 132 : 112) : isRecordDetail ? 188 : 112;
-    const maxHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 440 : 720) : isRecordDetail ? 680 : 720;
+    const minHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 220 : 112) : isRecordDetail ? 220 : 112;
+    const maxHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 640 : 720) : isRecordDetail ? 680 : 720;
     let animationFrame: number | null = null;
 
     function requestWindowFit() {
@@ -1446,9 +1507,9 @@ export default function App() {
       animationFrame = window.requestAnimationFrame(() => {
         animationFrame = null;
         const contentHeight = readShellContentHeight();
-        const pickerHeight = isRecordDetail && recordScopePickerOpen ? 330 : 0;
+        const requestedHeight = isRecordDetail ? Math.max(contentHeight, window.innerHeight) : contentHeight;
         const request: WindowFitRequest = {
-          height: Math.max(contentHeight, pickerHeight),
+          height: requestedHeight,
           minWidth: surface === "record" ? 320 : 300,
           minHeight,
           maxHeight
@@ -1463,11 +1524,13 @@ export default function App() {
     }
 
     requestWindowFit();
+    window.addEventListener("resize", requestWindowFit);
 
     return () => {
       if (animationFrame !== null) {
         window.cancelAnimationFrame(animationFrame);
       }
+      window.removeEventListener("resize", requestWindowFit);
     };
   }, [
     activeRecord,
@@ -1477,11 +1540,11 @@ export default function App() {
     recordBody,
     recordMessage,
     recordMode,
-    recordScopePickerOpen,
     recordListCollapsed,
     records,
     stickyListCollapsed,
     surface,
+    taskNoteBody,
     tasks
   ]);
 
@@ -1727,6 +1790,15 @@ export default function App() {
     });
   }
 
+  function openProjectWorkspace(group: ProjectTodoGroup) {
+    void window.workshopDesktop.openSticky(group.project.id);
+    void window.workshopDesktop.openPersonalRecord({
+      scopeType: "project",
+      projectId: group.project.id,
+      projectName: group.projectName
+    });
+  }
+
   function openProjectRecord(group: ProjectTodoGroup) {
     void window.workshopDesktop.openPersonalRecord({
       scopeType: "project",
@@ -1759,18 +1831,17 @@ export default function App() {
 
   async function handleNewRecord() {
     const draftTarget = getRecordDraftTargetFromContext();
-    if (!activeRecordRef.current) {
-      void window.workshopDesktop.openPersonalRecord({
-        ...draftTarget,
-        draft: true
-      });
-      return;
+    if (activeRecordRef.current && recordDirtyRef.current) {
+      const saved = await saveRecordNow();
+      if (!saved && recordDirtyRef.current) {
+        return;
+      }
     }
 
-    if (recordDirtyRef.current) {
-      await saveRecordNow();
-    }
-    startRecordDraft(draftTarget);
+    void window.workshopDesktop.openPersonalRecord({
+      ...draftTarget,
+      draft: true
+    });
   }
 
   async function saveRecordScope(nextRecord: PersonalRecord) {
@@ -2085,6 +2156,10 @@ export default function App() {
     setDraftConfig(saved);
   }
 
+  async function handleArrangeStickyWindows() {
+    await window.workshopDesktop.arrangeStickyWindows();
+  }
+
   const loginReady = draftConfig
     ? draftConfig.authMode === "nebula"
       ? Boolean(loginTarget.trim() && loginCode.trim())
@@ -2108,6 +2183,7 @@ export default function App() {
             projectName: recordListContext.projectName
           }
         : { scopeType: "none" as const });
+    const recordHeaderTitle = getRecordHeaderTitle(recordHeaderContext, Boolean(activeRecord), visibleRecords.length);
     const saveLabel =
       recordSaveStatus === "saving"
         ? "保存中"
@@ -2124,26 +2200,21 @@ export default function App() {
       <main className={`record-shell ${activeRecord ? "record-detail-shell" : "record-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
         <header className="record-titlebar">
           <div className="sticky-drag">
-            <GripVertical size={15} />
+            <button className="sticky-arrange-button" type="button" onClick={() => void handleArrangeStickyWindows()} title="整理便签排列">
+              <GripVertical size={15} />
+            </button>
             <div className="record-title-copy">
-              <h1>{isTaskNote ? "备注" : "记录"}</h1>
-              <div className="record-subtitle-row">
-                <span>
-                  {!activeRecord && recordListCollapsed
-                    ? `${getRecordSubtitle(recordHeaderContext)} · ${visibleRecords.length} 条记录`
-                    : getRecordSubtitle(recordHeaderContext)}
-                </span>
-                {canAssignRecordToProject ? (
-                  <button
-                    className="scope-switch-button"
-                    type="button"
-                    onClick={() => setRecordScopePickerOpen((open) => !open)}
-                    title="分配到项目"
-                  >
-                    <Folder size={14} strokeWidth={2.8} />
-                  </button>
-                ) : null}
-              </div>
+              <h1>{recordHeaderTitle}</h1>
+              {canAssignRecordToProject ? (
+                <button
+                  className="scope-switch-button"
+                  type="button"
+                  onClick={() => setRecordScopePickerOpen((open) => !open)}
+                  title="分配到项目"
+                >
+                  <Folder size={14} strokeWidth={2.8} />
+                </button>
+              ) : null}
               {canAssignRecordToProject && recordScopePickerOpen ? (
                 <div className="scope-popover">
                   <input
@@ -2314,7 +2385,9 @@ export default function App() {
         <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
           <header className="sticky-titlebar">
             <div className="sticky-drag">
-              <GripVertical size={15} />
+              <button className="sticky-arrange-button" type="button" onClick={() => void handleArrangeStickyWindows()} title="整理便签排列">
+                <GripVertical size={15} />
+              </button>
               <h1>待办便签</h1>
             </div>
             <button className="icon-button" type="button" onClick={() => void closeStickyWindow()} title="关闭">
@@ -2410,23 +2483,23 @@ export default function App() {
 
   if (surface === "sticky") {
     const isStickyContentCollapsed = stickyListCollapsed && !isSingleTaskSticky;
+    const stickyHeader = getStickyHeader({
+      filteredTaskCount: filteredTasks.length,
+      isSingleTaskSticky,
+      projectFilter,
+      selectedProjectName,
+      selectedTask
+    });
 
     return (
       <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
         <header className="sticky-titlebar">
           <div className="sticky-drag">
-            <GripVertical size={15} />
-            <div className={`sticky-title-copy ${isSingleTaskSticky || selectedProjectName ? "stacked" : ""}`}>
-              <h1>{isSingleTaskSticky || selectedProjectName ? "任务" : "全部待办"}</h1>
-              {isSingleTaskSticky || selectedProjectName ? (
-                <div className="sticky-subtitle-row">
-                  <span>
-                    {stickyListCollapsed && !isSingleTaskSticky && selectedProjectName
-                      ? `${selectedProjectName} · ${filteredTasks.length} 个任务`
-                      : selectedTask?.projectName || selectedProjectName || "项目"}
-                  </span>
-                </div>
-              ) : null}
+            <button className="sticky-arrange-button" type="button" onClick={() => void handleArrangeStickyWindows()} title="整理便签排列">
+              <GripVertical size={15} />
+            </button>
+            <div className="sticky-title-copy">
+              <h1>{stickyHeader}</h1>
             </div>
           </div>
           <div className="sticky-actions">
@@ -2602,7 +2675,7 @@ export default function App() {
             active={hoveredProjectId === group.project.id}
             recordCount={projectRecordCounts.get(group.project.id) ?? 0}
             onHover={showProjectTaskPreview}
-            onOpen={(projectId) => void window.workshopDesktop.openSticky(projectId)}
+            onOpen={openProjectWorkspace}
             onRecord={openProjectRecord}
           />
         ))}

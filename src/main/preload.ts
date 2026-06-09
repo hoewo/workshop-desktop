@@ -8,6 +8,7 @@ import type {
   SavePersonalRecordRequest,
   StickyTarget,
   TaskPreviewRequest,
+  WindowArrangementNotice,
   WorkshopRefreshEvent
 } from "../shared/types";
 
@@ -52,12 +53,18 @@ const bridge: DesktopBridge = {
   notifyTaskChanged: (notice) => ipcRenderer.invoke("task:changed", notice),
   closeWindow: () => ipcRenderer.invoke("window:close"),
   closeSticky: () => ipcRenderer.invoke("sticky:close"),
+  arrangeStickyWindows: () => ipcRenderer.invoke("sticky:arrange"),
   fitWindowContent: (request) => ipcRenderer.invoke("window:fitContent", request),
   setStickyAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("sticky:setAlwaysOnTop", enabled),
   onFocusPulse: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("window:focusPulse", listener);
     return () => ipcRenderer.removeListener("window:focusPulse", listener);
+  },
+  onWindowArrangement: (callback) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as WindowArrangementNotice);
+    ipcRenderer.on("window:arrangement", listener);
+    return () => ipcRenderer.removeListener("window:arrangement", listener);
   },
   onRefresh: (callback) => {
     const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as WorkshopRefreshEvent);

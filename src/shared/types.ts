@@ -262,6 +262,10 @@ export interface WindowFitRequest {
   maxHeight?: number;
 }
 
+export interface WindowArrangementNotice {
+  compactList?: boolean;
+}
+
 export interface DesktopBridge {
   getConfig: () => Promise<AppConfig>;
   saveConfig: (config: Partial<AppConfig>) => Promise<AppConfig>;
@@ -282,9 +286,11 @@ export interface DesktopBridge {
   notifyTaskChanged: (notice: TaskStateChangeNotice) => Promise<void>;
   closeWindow: () => Promise<void>;
   closeSticky: () => Promise<void>;
+  arrangeStickyWindows: () => Promise<void>;
   fitWindowContent: (request: WindowFitRequest) => Promise<void>;
   setStickyAlwaysOnTop: (enabled: boolean) => Promise<AppConfig>;
   onFocusPulse: (callback: () => void) => () => void;
+  onWindowArrangement: (callback: (notice: WindowArrangementNotice) => void) => () => void;
   onRefresh: (callback: (event: WorkshopRefreshEvent) => void) => () => void;
   onRecordsChanged: (callback: () => void) => () => void;
 }

@@ -57,6 +57,11 @@ const defaultConfig: AppConfig = {
 };
 
 const PANEL_SHORTCUT_ACCELERATOR = "CommandOrControl+Alt+W";
+const NEW_PERSONAL_RECORD_SHORTCUT_ACCELERATOR = "CommandOrControl+Alt+N";
+const NOTE_ARRANGE_WIDTH = 360;
+const NOTE_ARRANGE_MARGIN = 12;
+const NOTE_ARRANGE_GAP = 12;
+const NOTE_ARRANGE_LIST_HEIGHT = 56;
 
 let tray: Tray | null = null;
 let windowRef: BrowserWindow | null = null;
@@ -70,6 +75,7 @@ let refreshTimer: NodeJS.Timeout | null = null;
 let tokenRefreshInProgress: Promise<AppConfig> | null = null;
 let isQuitting = false;
 let registeredPanelShortcut = false;
+let registeredNewPersonalRecordShortcut = false;
 
 const configPath = () => path.join(app.getPath("userData"), "config.json");
 
@@ -111,7 +117,7 @@ async function saveConfig(next: Partial<AppConfig>): Promise<AppConfig> {
   await fs.writeFile(configPath(), JSON.stringify(merged, null, 2), "utf8");
   if (app.isReady()) {
     applyDockVisibility(merged);
-    registerPanelShortcut(merged);
+    registerGlobalShortcuts(merged);
     scheduleDailyRefresh(merged);
   }
   return merged;
@@ -146,21 +152,24 @@ function applyDockVisibility(config: AppConfig) {
   }
 }
 
-function unregisterPanelShortcut() {
-  if (!registeredPanelShortcut) {
-    return;
+function unregisterGlobalShortcuts() {
+  if (registeredPanelShortcut) {
+    globalShortcut.unregister(PANEL_SHORTCUT_ACCELERATOR);
+    registeredPanelShortcut = false;
   }
 
-  globalShortcut.unregister(PANEL_SHORTCUT_ACCELERATOR);
-  registeredPanelShortcut = false;
+  if (registeredNewPersonalRecordShortcut) {
+    globalShortcut.unregister(NEW_PERSONAL_RECORD_SHORTCUT_ACCELERATOR);
+    registeredNewPersonalRecordShortcut = false;
+  }
 }
 
-function registerPanelShortcut(config: AppConfig) {
+function registerGlobalShortcuts(config: AppConfig) {
   if (!app.isReady()) {
     return;
   }
 
-  unregisterPanelShortcut();
+  unregisterGlobalShortcuts();
   if (!config.globalShortcutEnabled) {
     return;
   }
@@ -171,6 +180,14 @@ function registerPanelShortcut(config: AppConfig) {
 
   if (!registeredPanelShortcut) {
     console.warn(`Unable to register global shortcut: ${PANEL_SHORTCUT_ACCELERATOR}`);
+  }
+
+  registeredNewPersonalRecordShortcut = globalShortcut.register(NEW_PERSONAL_RECORD_SHORTCUT_ACCELERATOR, () => {
+    void showNewPersonalRecordWindow();
+  });
+
+  if (!registeredNewPersonalRecordShortcut) {
+    console.warn(`Unable to register global shortcut: ${NEW_PERSONAL_RECORD_SHORTCUT_ACCELERATOR}`);
   }
 }
 
@@ -385,14 +402,52 @@ function normalizeStickyTarget(target?: StickyTarget | number): NormalizedSticky
   };
 }
 
-function findExistingTaskListSticky(target: NormalizedStickyTarget) {
-  if (target.taskId !== null) {
-    return null;
+function isSameStickyTarget(a: NormalizedStickyTarget, b: NormalizedStickyTarget) {
+  if (a.taskId !== null || b.taskId !== null) {
+    return (
+      a.taskId !== null &&
+      b.taskId !== null &&
+      a.taskId === b.taskId &&
+      (a.projectId === b.projectId || a.projectId === null || b.projectId === null)
+    );
   }
 
+  return a.projectId === b.projectId;
+}
+
+function getCursorDisplay() {
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+}
+
+function getTargetDisplay(x: number | null, y: number | null) {
+  return x !== null && y !== null ? screen.getDisplayNearestPoint({ x, y }) : getCursorDisplay();
+}
+
+function isWindowOnDisplay(win: BrowserWindow, displayId: number) {
+  return screen.getDisplayMatching(win.getBounds()).id === displayId;
+}
+
+function showInCurrentWorkspace(win: BrowserWindow) {
+  if (process.platform === "darwin") {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.show();
+    win.focus();
+    setTimeout(() => {
+      if (!win.isDestroyed()) {
+        win.setVisibleOnAllWorkspaces(false);
+      }
+    }, 80);
+    return;
+  }
+
+  win.show();
+  win.focus();
+}
+
+function findExistingStickyWindow(target: NormalizedStickyTarget, displayId?: number) {
   for (const win of stickyWindows) {
     const windowTarget = stickyWindowTargets.get(win);
-    if (!win.isDestroyed() && windowTarget?.projectId === target.projectId && windowTarget.taskId === null) {
+    if (!win.isDestroyed() && windowTarget && isSameStickyTarget(windowTarget, target) && (!displayId || isWindowOnDisplay(win, displayId))) {
       return win;
     }
   }
@@ -406,25 +461,28 @@ function pulseWindowFocus(win: BrowserWindow) {
   }
 }
 
+function focusExistingNoteWindow(win: BrowserWindow) {
+  hideTaskPreviewWindow();
+  windowRef?.hide();
+  if (win.isMinimized()) {
+    win.restore();
+  }
+  showInCurrentWorkspace(win);
+  pulseWindowFocus(win);
+}
+
 async function showStickyWindow(target?: StickyTarget | number) {
   const nextTarget = normalizeStickyTarget(target);
-  const existingWin = findExistingTaskListSticky(nextTarget);
+  const display = getTargetDisplay(nextTarget.x, nextTarget.y);
+  const existingWin = findExistingStickyWindow(nextTarget, display.id);
   if (existingWin) {
-    hideTaskPreviewWindow();
-    windowRef?.hide();
-    if (existingWin.isMinimized()) {
-      existingWin.restore();
-    }
-    existingWin.show();
-    existingWin.focus();
-    pulseWindowFocus(existingWin);
+    focusExistingNoteWindow(existingWin);
     return;
   }
 
   const win = await createStickyWindow(nextTarget);
   if (nextTarget.x !== null && nextTarget.y !== null) {
     const bounds = win.getBounds();
-    const display = screen.getDisplayNearestPoint({ x: nextTarget.x, y: nextTarget.y });
     const workArea = display.workArea;
     win.setPosition(
       clamp(Math.round(nextTarget.x - 24), workArea.x + 8, workArea.x + workArea.width - bounds.width - 8),
@@ -433,7 +491,7 @@ async function showStickyWindow(target?: StickyTarget | number) {
     );
   } else {
     const bounds = win.getBounds();
-    const workArea = screen.getPrimaryDisplay().workArea;
+    const workArea = display.workArea;
     const offset = (stickyWindows.size % 6) * 22;
     win.setPosition(
       clamp(Math.round(workArea.x + (workArea.width - bounds.width) / 2 + offset), workArea.x + 8, workArea.x + workArea.width - bounds.width - 8),
@@ -444,8 +502,7 @@ async function showStickyWindow(target?: StickyTarget | number) {
 
   hideTaskPreviewWindow();
   windowRef?.hide();
-  win.show();
-  win.focus();
+  showInCurrentWorkspace(win);
 }
 
 const recordsDirPath = () => path.join(app.getPath("userData"), "personal-records");
@@ -669,6 +726,29 @@ function findExistingRecordListWindow(target: NormalizedRecordTarget) {
   return null;
 }
 
+function isSameRecordTarget(a: NormalizedRecordTarget, b: NormalizedRecordTarget) {
+  if (a.noteId || b.noteId) {
+    return Boolean(a.noteId && b.noteId && a.noteId === b.noteId);
+  }
+
+  return isSameRecordListTarget(a, b);
+}
+
+function findExistingRecordWindow(target: NormalizedRecordTarget, displayId?: number) {
+  if (target.draft) {
+    return null;
+  }
+
+  for (const win of recordWindows) {
+    const windowTarget = recordWindowTargets.get(win);
+    if (!win.isDestroyed() && windowTarget && isSameRecordTarget(windowTarget, target) && (!displayId || isWindowOnDisplay(win, displayId))) {
+      return win;
+    }
+  }
+
+  return null;
+}
+
 async function createRecordWindow(target: NormalizedRecordTarget) {
   const config = await readConfig();
   const opensRecordDetail = Boolean(target.noteId || target.scopeType === "project" || target.scopeType === "task");
@@ -717,6 +797,7 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
 
 async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
   const nextTarget = normalizeRecordTarget(target);
+  const display = getTargetDisplay(nextTarget.x, nextTarget.y);
   if (nextTarget.scopeType === "task" && nextTarget.projectId !== null && nextTarget.taskId !== null) {
     await showStickyWindow({
       projectId: nextTarget.projectId,
@@ -724,6 +805,12 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
       x: nextTarget.x ?? undefined,
       y: nextTarget.y ?? undefined
     });
+    return;
+  }
+
+  const existingWin = findExistingRecordWindow(nextTarget, display.id);
+  if (existingWin) {
+    focusExistingNoteWindow(existingWin);
     return;
   }
 
@@ -740,23 +827,9 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
     }
   }
 
-  const existingWin = findExistingRecordListWindow(nextTarget);
-  if (existingWin) {
-    hideTaskPreviewWindow();
-    windowRef?.hide();
-    if (existingWin.isMinimized()) {
-      existingWin.restore();
-    }
-    existingWin.show();
-    existingWin.focus();
-    pulseWindowFocus(existingWin);
-    return;
-  }
-
   const win = await createRecordWindow(nextTarget);
   if (nextTarget.x !== null && nextTarget.y !== null) {
     const bounds = win.getBounds();
-    const display = screen.getDisplayNearestPoint({ x: nextTarget.x, y: nextTarget.y });
     const workArea = display.workArea;
     win.setPosition(
       clamp(Math.round(nextTarget.x - 24), workArea.x + 8, workArea.x + workArea.width - bounds.width - 8),
@@ -765,7 +838,7 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
     );
   } else {
     const bounds = win.getBounds();
-    const workArea = screen.getPrimaryDisplay().workArea;
+    const workArea = display.workArea;
     const offset = (recordWindows.size % 6) * 22;
     win.setPosition(
       clamp(Math.round(workArea.x + (workArea.width - bounds.width) / 2 + offset), workArea.x + 8, workArea.x + workArea.width - bounds.width - 8),
@@ -776,8 +849,34 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
 
   hideTaskPreviewWindow();
   windowRef?.hide();
-  win.show();
-  win.focus();
+  showInCurrentWorkspace(win);
+}
+
+function syncRecordWindowTarget(sender: WebContents, record: PersonalRecord) {
+  if (record.status === "completed") {
+    return;
+  }
+
+  const win = BrowserWindow.fromWebContents(sender);
+  if (!win || win.isDestroyed() || !recordWindows.has(win)) {
+    return;
+  }
+
+  recordWindowTargets.set(win, {
+    noteId: record.id,
+    draft: false,
+    scopeType: record.scopeType,
+    projectId: typeof record.projectId === "number" && Number.isFinite(record.projectId) ? record.projectId : null,
+    projectName: safeWindowText(record.projectName),
+    taskId: typeof record.taskId === "number" && Number.isFinite(record.taskId) ? record.taskId : null,
+    taskTitle: safeWindowText(record.taskTitle),
+    x: null,
+    y: null
+  });
+}
+
+async function showNewPersonalRecordWindow() {
+  await showPersonalRecordWindow({ draft: true });
 }
 
 function escapeHtml(value: string) {
@@ -1064,6 +1163,175 @@ function fitWindowContent(win: BrowserWindow, request?: WindowFitRequest) {
   }
 }
 
+type ArrangeColumn = "task" | "project-record" | "personal-record";
+type ArrangeRole = "list" | "detail";
+
+interface ArrangeItem {
+  win: BrowserWindow;
+  column: ArrangeColumn;
+  role: ArrangeRole;
+  projectId: number | null;
+  sourceOrder: number;
+  bounds: Electron.Rectangle;
+  minHeight: number;
+}
+
+function compareArrangeItems(a: ArrangeItem, b: ArrangeItem) {
+  if (a.role !== b.role) {
+    return a.role === "list" ? -1 : 1;
+  }
+
+  if (a.bounds.y !== b.bounds.y) {
+    return a.bounds.y - b.bounds.y;
+  }
+
+  return a.bounds.x - b.bounds.x;
+}
+
+function getStickyArrangeItem(win: BrowserWindow, sourceOrder: number): ArrangeItem | null {
+  const target = stickyWindowTargets.get(win);
+  if (!target) {
+    return null;
+  }
+
+  const role: ArrangeRole = target.taskId === null ? "list" : "detail";
+  return {
+    win,
+    column: "task",
+    role,
+    projectId: target.projectId,
+    sourceOrder,
+    bounds: win.getBounds(),
+    minHeight: role === "list" ? NOTE_ARRANGE_LIST_HEIGHT : 132
+  };
+}
+
+async function getRecordArrangeItem(win: BrowserWindow, sourceOrder: number): Promise<ArrangeItem | null> {
+  const target = recordWindowTargets.get(win);
+  if (!target) {
+    return null;
+  }
+
+  const record = target.noteId ? await getPersonalRecord(target.noteId).catch(() => null) : null;
+  const scopeType = record?.scopeType ?? target.scopeType;
+  const projectId = typeof record?.projectId === "number" ? record.projectId : target.projectId;
+  const role: ArrangeRole = isRecordListTarget(target) ? "list" : "detail";
+  const column: ArrangeColumn = scopeType === "project" ? "project-record" : scopeType === "task" ? "task" : "personal-record";
+
+  return {
+    win,
+    column,
+    role,
+    projectId: column === "personal-record" ? null : projectId,
+    sourceOrder,
+    bounds: win.getBounds(),
+    minHeight: role === "list" ? NOTE_ARRANGE_LIST_HEIGHT : column === "task" ? 132 : 188
+  };
+}
+
+async function getArrangeableNoteItems(sourceWin: BrowserWindow, displayId: number) {
+  const stickyItems = [...stickyWindows]
+    .filter((win) => !win.isDestroyed() && !win.isMinimized() && win.isVisible() && isWindowOnDisplay(win, displayId))
+    .map((win, index) => getStickyArrangeItem(win, index))
+    .filter((item): item is ArrangeItem => Boolean(item));
+  const recordItems = (
+    await Promise.all(
+      [...recordWindows]
+        .filter((win) => !win.isDestroyed() && !win.isMinimized() && win.isVisible() && isWindowOnDisplay(win, displayId))
+        .map((win, index) => getRecordArrangeItem(win, stickyItems.length + index))
+    )
+  ).filter((item): item is ArrangeItem => Boolean(item));
+  const items = [...stickyItems, ...recordItems];
+  const sourceItem = items.find((item) => item.win === sourceWin) ?? null;
+
+  if (sourceItem?.column === "personal-record") {
+    return items.filter((item) => item.column === "personal-record");
+  }
+
+  if (sourceItem?.projectId !== null && sourceItem?.projectId !== undefined) {
+    return items.filter((item) => item.column === "personal-record" || item.projectId === sourceItem.projectId);
+  }
+
+  return items;
+}
+
+function fitColumnHeights(items: ArrangeItem[], availableHeight: number) {
+  const heights = new Map<BrowserWindow, number>();
+  for (const item of items) {
+    const initialHeight = item.role === "list" ? Math.min(item.bounds.height, NOTE_ARRANGE_LIST_HEIGHT) : item.bounds.height;
+    heights.set(item.win, clamp(initialHeight, item.minHeight, availableHeight));
+  }
+
+  const totalHeight = () => items.reduce((sum, item) => sum + (heights.get(item.win) ?? item.minHeight), 0) + Math.max(0, items.length - 1) * NOTE_ARRANGE_GAP;
+  let overflow = totalHeight() - availableHeight;
+  const detailItems = items.filter((item) => item.role === "detail");
+
+  while (overflow > 0) {
+    const shrinkableItems = detailItems.filter((item) => (heights.get(item.win) ?? item.minHeight) > item.minHeight);
+    if (shrinkableItems.length === 0) {
+      break;
+    }
+
+    const shrinkStep = Math.max(1, Math.ceil(overflow / shrinkableItems.length));
+    for (const item of shrinkableItems) {
+      const height = heights.get(item.win) ?? item.minHeight;
+      const shrink = Math.min(height - item.minHeight, shrinkStep, overflow);
+      heights.set(item.win, height - shrink);
+      overflow -= shrink;
+      if (overflow <= 0) {
+        break;
+      }
+    }
+  }
+
+  return heights;
+}
+
+async function arrangeStickyWindows(sourceWin: BrowserWindow | null) {
+  if (!sourceWin || sourceWin.isDestroyed()) {
+    return { count: 0 };
+  }
+
+  hideTaskPreviewWindow();
+  const display = screen.getDisplayMatching(sourceWin.getBounds());
+  const workArea = display.workArea;
+  const noteItems = await getArrangeableNoteItems(sourceWin, display.id);
+  if (noteItems.length === 0) {
+    return { count: 0 };
+  }
+
+  const columnOrder: ArrangeColumn[] = ["task", "project-record", "personal-record"];
+  const activeColumns = columnOrder.filter((column) => noteItems.some((item) => item.column === column));
+  const maxWidth = Math.max(160, Math.floor((workArea.width - NOTE_ARRANGE_MARGIN * 2 - NOTE_ARRANGE_GAP * Math.max(0, activeColumns.length - 1)) / activeColumns.length));
+  const width = Math.min(NOTE_ARRANGE_WIDTH, maxWidth);
+  const minX = workArea.x + NOTE_ARRANGE_MARGIN;
+  const maxX = workArea.x + workArea.width - width - NOTE_ARRANGE_MARGIN;
+  const minY = workArea.y + NOTE_ARRANGE_MARGIN;
+  const availableHeight = Math.max(56, workArea.height - NOTE_ARRANGE_MARGIN * 2);
+
+  for (const [columnIndex, column] of activeColumns.entries()) {
+    const columnItems = noteItems.filter((item) => item.column === column).sort(compareArrangeItems);
+    const heights = fitColumnHeights(columnItems, availableHeight);
+    const x = clamp(maxX - columnIndex * (width + NOTE_ARRANGE_GAP), minX, Math.max(minX, maxX));
+    let nextY = minY;
+
+    for (const item of columnItems) {
+      const height = heights.get(item.win) ?? item.minHeight;
+      if (item.role === "list") {
+        item.win.webContents.send("window:arrangement", { compactList: true });
+        item.win.setMinimumSize(width, NOTE_ARRANGE_LIST_HEIGHT);
+      }
+
+      const y = clamp(nextY, minY, workArea.y + workArea.height - height - NOTE_ARRANGE_MARGIN);
+      item.win.setBounds({ x, y, width, height }, false);
+      pulseWindowFocus(item.win);
+      nextY += height + NOTE_ARRANGE_GAP;
+    }
+  }
+
+  return { count: noteItems.length };
+}
+
 type WindowOpenSource = "tray" | "screen";
 
 function positionWindowNearTray(win: BrowserWindow) {
@@ -1123,14 +1391,12 @@ function showWindow(source: WindowOpenSource = "tray") {
 
   hideTaskPreviewWindow();
   if (source === "tray" && positionWindowNearTray(windowRef)) {
-    windowRef.show();
-    windowRef.focus();
+    showInCurrentWorkspace(windowRef);
     return;
   }
 
   positionWindowOnScreen(windowRef);
-  windowRef.show();
-  windowRef.focus();
+  showInCurrentWorkspace(windowRef);
 }
 
 function toggleWindow() {
@@ -1138,7 +1404,7 @@ function toggleWindow() {
     return;
   }
 
-  if (windowRef.isVisible()) {
+  if (windowRef.isFocused()) {
     windowRef.hide();
   } else {
     showWindow();
@@ -1155,6 +1421,11 @@ function buildAppEntryMenu(source: WindowOpenSource): MenuItemConstructorOptions
     {
       label: "任务便签",
       click: () => void showStickyWindow()
+    },
+    {
+      label: "新建个人记录",
+      accelerator: NEW_PERSONAL_RECORD_SHORTCUT_ACCELERATOR,
+      click: () => void showNewPersonalRecordWindow()
     },
     {
       label: "个人记录",
@@ -1541,7 +1812,11 @@ function registerIpc() {
   ipcMain.handle("record:open", (_event, target?: PersonalRecordTarget) => showPersonalRecordWindow(target));
   ipcMain.handle("record:list", () => listPersonalRecords());
   ipcMain.handle("record:get", (_event, id: string) => getPersonalRecord(id));
-  ipcMain.handle("record:save", (_event, record: SavePersonalRecordRequest) => savePersonalRecord(record));
+  ipcMain.handle("record:save", async (event, record: SavePersonalRecordRequest) => {
+    const saved = await savePersonalRecord(record);
+    syncRecordWindowTarget(event.sender, saved);
+    return saved;
+  });
   ipcMain.handle("record:delete", (_event, id: string) => deletePersonalRecord(id));
   ipcMain.handle("taskPreview:show", (_event, request: TaskPreviewRequest) => showTaskPreviewWindow(request));
   ipcMain.handle("taskPreview:keep", () => cancelTaskPreviewHide());
@@ -1558,6 +1833,7 @@ function registerIpc() {
   ipcMain.handle("sticky:close", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
+  ipcMain.handle("sticky:arrange", (event) => arrangeStickyWindows(BrowserWindow.fromWebContents(event.sender)));
   ipcMain.handle("window:fitContent", (event, request: WindowFitRequest) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) {
@@ -1589,7 +1865,7 @@ app.on("before-quit", () => {
 });
 
 app.on("will-quit", () => {
-  unregisterPanelShortcut();
+  unregisterGlobalShortcuts();
 });
 
 app.on("activate", () => {
@@ -1601,7 +1877,7 @@ app.whenReady().then(async () => {
   const config = await readConfig();
   applyDockVisibility(config);
   configureDockMenu();
-  registerPanelShortcut(config);
+  registerGlobalShortcuts(config);
 
   windowRef = createWindow();
   tray = new Tray(createTrayIcon());

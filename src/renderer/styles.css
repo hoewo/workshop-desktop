@@ -821,7 +821,7 @@ textarea:focus {
 
 .task-title-row {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   gap: 8px;
 }
@@ -956,12 +956,16 @@ textarea:focus {
 
 .task-detail {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .task-detail-card,
 .task-note-panel {
+  min-width: 0;
   width: 100%;
   padding: 10px;
   border: 1px solid rgba(30, 36, 34, 0.1);
@@ -970,14 +974,32 @@ textarea:focus {
   color: #1f2623;
 }
 
-.task-detail-card .task-title-row h2 {
-  -webkit-line-clamp: 4;
+.task-detail-card {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.task-detail-content {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: #1f2623;
+  font-size: 13px;
+  font-weight: 640;
+  line-height: 1.42;
+  display: block;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .task-note-panel {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 4px;
+  min-height: 0;
   text-align: left;
 }
 
@@ -989,9 +1011,11 @@ textarea:focus {
 
 .task-note-editor {
   width: 100%;
-  min-height: 72px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
   padding: 0;
-  resize: vertical;
+  resize: none;
   border: 0;
   outline: 0;
   background: transparent;
@@ -1012,6 +1036,7 @@ textarea:focus {
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
+  flex: 0 0 auto;
   padding-top: 2px;
 }
 
@@ -1156,9 +1181,9 @@ textarea:focus {
 }
 
 .sticky-shell.single-task-shell {
-  height: auto;
+  height: 100vh;
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .sticky-shell.window-focus-pulse::after,
@@ -1211,44 +1236,40 @@ textarea:focus {
   color: #5d6762;
 }
 
-.sticky-title-copy {
-  min-width: 0;
-  display: flex;
+.sticky-arrange-button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #5d6762;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-
-.sticky-title-copy.stacked {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sticky-title-copy span {
-  max-width: 240px;
-  overflow: hidden;
-  color: #6b736f;
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sticky-subtitle-row {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
   -webkit-app-region: no-drag;
 }
 
-.sticky-subtitle-row span {
+.sticky-arrange-button:hover {
+  background: rgba(30, 36, 34, 0.06);
+  color: #1f2623;
+}
+
+.sticky-title-copy {
   min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
 }
 
 .sticky-drag h1 {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: #1d1f22;
   font-size: 15px;
@@ -1304,8 +1325,8 @@ textarea:focus {
 }
 
 .single-task-shell .sticky-task-list {
-  flex: 0 0 auto;
-  overflow: visible;
+  flex: 1 1 auto;
+  overflow: hidden;
   padding-right: 0;
 }
 
@@ -1332,9 +1353,9 @@ textarea:focus {
 }
 
 .record-shell.record-detail-shell {
-  height: auto;
+  height: 100vh;
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .record-titlebar {
@@ -1343,7 +1364,7 @@ textarea:focus {
   gap: 8px;
   align-items: center;
   flex: 0 0 auto;
-  min-height: 40px;
+  min-height: 30px;
   -webkit-app-region: drag;
 }
 
@@ -1355,31 +1376,17 @@ textarea:focus {
   position: relative;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 5px;
 }
 
 .record-title-copy h1 {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
   font-size: 15px;
   font-weight: 740;
   line-height: 1.1;
-}
-
-.record-subtitle-row {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  -webkit-app-region: no-drag;
-}
-
-.record-subtitle-row span {
-  min-width: 0;
-  overflow: hidden;
-  color: #6b736f;
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1404,11 +1411,11 @@ textarea:focus {
 
 .scope-popover {
   position: absolute;
-  top: 38px;
+  top: 28px;
   left: 0;
   z-index: 20;
   width: 238px;
-  max-height: 260px;
+  max-height: min(260px, calc(100vh - 58px));
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -1568,6 +1575,7 @@ textarea:focus {
 .record-editor {
   min-height: 0;
   flex: 1 1 auto;
+  overflow-y: auto;
   padding: 9px;
   resize: none;
   border-radius: 8px;
@@ -1583,9 +1591,9 @@ textarea:focus {
 }
 
 .record-detail-shell .record-editor {
-  min-height: 108px;
-  flex: 0 0 auto;
-  max-height: 520px;
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: none;
 }
 
 .record-preview-panel {
@@ -1599,8 +1607,8 @@ textarea:focus {
 }
 
 .record-detail-shell .record-preview-panel {
-  flex: 0 0 auto;
-  max-height: 560px;
+  flex: 1 1 auto;
+  max-height: none;
 }
 
 .record-list {

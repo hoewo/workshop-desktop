@@ -719,6 +719,12 @@ textarea:focus {
   color: #1f6d56;
 }
 
+.record-action-button.complete:hover,
+.record-action-button.complete.active {
+  background: #266954;
+  color: #fff;
+}
+
 .project-record-button.has-record,
 .task-record-button.has-record {
   background: rgba(31, 109, 86, 0.1);
@@ -1186,6 +1192,12 @@ textarea:focus {
   overflow: hidden;
 }
 
+.sticky-shell.collapsed-shell,
+.record-shell.collapsed-shell {
+  justify-content: center;
+  gap: 0;
+}
+
 .sticky-shell.window-focus-pulse::after,
 .record-shell.window-focus-pulse::after {
   content: "";
@@ -1263,11 +1275,33 @@ textarea:focus {
   flex: 1 1 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   overflow: hidden;
 }
 
-.sticky-drag h1 {
+.sticky-title-copy .window-title-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: 100%;
+  overflow: hidden;
+  color: #1d1f22;
+  font-size: 15px;
+  font-weight: 690;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sticky-title-copy .window-title-suffix {
+  flex: 0 0 auto;
+  color: #1d1f22;
+  font-size: 15px;
+  font-weight: 690;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.sticky-drag > h1 {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -1377,17 +1411,27 @@ textarea:focus {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
-.record-title-copy h1 {
+.record-title-copy .window-title-main {
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   overflow: hidden;
+  color: #1d1f22;
   font-size: 15px;
   font-weight: 740;
   line-height: 1.1;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-title-copy .window-title-suffix {
+  flex: 0 0 auto;
+  color: #1d1f22;
+  font-size: 15px;
+  font-weight: 740;
+  line-height: 1.1;
   white-space: nowrap;
 }
 
@@ -1552,6 +1596,11 @@ textarea:focus {
 .record-action-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.record-action-button.complete:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .record-action-button.danger:hover {

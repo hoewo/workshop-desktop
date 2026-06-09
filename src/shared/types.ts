@@ -229,6 +229,13 @@ export interface PersonalRecord extends PersonalRecordMeta {
   bodyMarkdown: string;
 }
 
+export interface PersonalRecordChangeNotice {
+  id: string;
+  status?: PersonalRecordStatus;
+  deleted?: boolean;
+  updatedAt?: string | null;
+}
+
 export interface PersonalRecordTarget {
   noteId?: string;
   draft?: boolean;
@@ -264,6 +271,7 @@ export interface WindowFitRequest {
 
 export interface WindowArrangementNotice {
   compactList?: boolean;
+  maxHeight?: number;
 }
 
 export interface DesktopBridge {
@@ -292,5 +300,5 @@ export interface DesktopBridge {
   onFocusPulse: (callback: () => void) => () => void;
   onWindowArrangement: (callback: (notice: WindowArrangementNotice) => void) => () => void;
   onRefresh: (callback: (event: WorkshopRefreshEvent) => void) => () => void;
-  onRecordsChanged: (callback: () => void) => () => void;
+  onRecordsChanged: (callback: (notice: PersonalRecordChangeNotice | null) => void) => () => void;
 }

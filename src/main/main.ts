@@ -22,6 +22,7 @@ import type {
   LoginPayload,
   LoginRequest,
   PersonalRecord,
+  PersonalRecordChangeNotice,
   PersonalRecordMeta,
   PersonalRecordScope,
   PersonalRecordStatus,
@@ -61,7 +62,8 @@ const NEW_PERSONAL_RECORD_SHORTCUT_ACCELERATOR = "CommandOrControl+Alt+N";
 const NOTE_ARRANGE_WIDTH = 360;
 const NOTE_ARRANGE_MARGIN = 12;
 const NOTE_ARRANGE_GAP = 12;
-const NOTE_ARRANGE_LIST_HEIGHT = 56;
+const NOTE_ARRANGE_LIST_MIN_HEIGHT = 180;
+const NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT = 56;
 
 let tray: Tray | null = null;
 let windowRef: BrowserWindow | null = null;
@@ -579,18 +581,18 @@ async function listPersonalRecords() {
   return records.filter((record) => record.status === "active");
 }
 
-function notifyRecordsChanged() {
+function notifyRecordsChanged(notice: PersonalRecordChangeNotice | null = null) {
   if (windowRef && !windowRef.isDestroyed()) {
-    windowRef.webContents.send("record:changed");
+    windowRef.webContents.send("record:changed", notice);
   }
   for (const win of stickyWindows) {
     if (!win.isDestroyed()) {
-      win.webContents.send("record:changed");
+      win.webContents.send("record:changed", notice);
     }
   }
   for (const win of recordWindows) {
     if (!win.isDestroyed()) {
-      win.webContents.send("record:changed");
+      win.webContents.send("record:changed", notice);
     }
   }
 }
@@ -650,7 +652,7 @@ async function savePersonalRecord(request: SavePersonalRecordRequest): Promise<P
   await fs.mkdir(recordsDirPath(), { recursive: true });
   await fs.writeFile(recordBodyPath(id), bodyMarkdown, "utf8");
   await writeRecordIndex(nextRecords);
-  notifyRecordsChanged();
+  notifyRecordsChanged({ id: meta.id, status: meta.status, updatedAt: meta.updatedAt });
   return { ...meta, bodyMarkdown };
 }
 
@@ -659,7 +661,7 @@ async function deletePersonalRecord(id: string) {
   const records = await readRecordIndex();
   await writeRecordIndex(records.filter((record) => record.id !== safeId));
   await fs.unlink(recordBodyPath(safeId)).catch(() => undefined);
-  notifyRecordsChanged();
+  notifyRecordsChanged({ id: safeId, deleted: true });
 }
 
 interface NormalizedRecordTarget {
@@ -1174,6 +1176,7 @@ interface ArrangeItem {
   sourceOrder: number;
   bounds: Electron.Rectangle;
   minHeight: number;
+  collapsedHeight?: number;
 }
 
 function compareArrangeItems(a: ArrangeItem, b: ArrangeItem) {
@@ -1186,6 +1189,11 @@ function compareArrangeItems(a: ArrangeItem, b: ArrangeItem) {
   }
 
   return a.bounds.x - b.bounds.x;
+}
+
+function getCurrentWindowMinHeight(win: BrowserWindow, fallback: number) {
+  const [, minHeight] = win.getMinimumSize();
+  return Number.isFinite(minHeight) && minHeight > 0 ? Math.max(56, Math.round(minHeight)) : fallback;
 }
 
 function getStickyArrangeItem(win: BrowserWindow, sourceOrder: number): ArrangeItem | null {
@@ -1202,7 +1210,8 @@ function getStickyArrangeItem(win: BrowserWindow, sourceOrder: number): ArrangeI
     projectId: target.projectId,
     sourceOrder,
     bounds: win.getBounds(),
-    minHeight: role === "list" ? NOTE_ARRANGE_LIST_HEIGHT : 132
+    minHeight: role === "list" ? NOTE_ARRANGE_LIST_MIN_HEIGHT : getCurrentWindowMinHeight(win, 132),
+    collapsedHeight: role === "list" ? NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT : undefined
   };
 }
 
@@ -1225,7 +1234,8 @@ async function getRecordArrangeItem(win: BrowserWindow, sourceOrder: number): Pr
     projectId: column === "personal-record" ? null : projectId,
     sourceOrder,
     bounds: win.getBounds(),
-    minHeight: role === "list" ? NOTE_ARRANGE_LIST_HEIGHT : column === "task" ? 132 : 188
+    minHeight: role === "list" ? NOTE_ARRANGE_LIST_MIN_HEIGHT : getCurrentWindowMinHeight(win, column === "task" ? 132 : 188),
+    collapsedHeight: role === "list" ? NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT : undefined
   };
 }
 
@@ -1257,14 +1267,28 @@ async function getArrangeableNoteItems(sourceWin: BrowserWindow, displayId: numb
 
 function fitColumnHeights(items: ArrangeItem[], availableHeight: number) {
   const heights = new Map<BrowserWindow, number>();
+  const collapsedLists = new Set<BrowserWindow>();
   for (const item of items) {
-    const initialHeight = item.role === "list" ? Math.min(item.bounds.height, NOTE_ARRANGE_LIST_HEIGHT) : item.bounds.height;
-    heights.set(item.win, clamp(initialHeight, item.minHeight, availableHeight));
+    heights.set(item.win, clamp(item.bounds.height, item.role === "list" ? item.collapsedHeight ?? item.minHeight : item.minHeight, availableHeight));
   }
 
   const totalHeight = () => items.reduce((sum, item) => sum + (heights.get(item.win) ?? item.minHeight), 0) + Math.max(0, items.length - 1) * NOTE_ARRANGE_GAP;
   let overflow = totalHeight() - availableHeight;
+  const listItems = items.filter((item) => item.role === "list");
   const detailItems = items.filter((item) => item.role === "detail");
+
+  for (const item of listItems) {
+    if (overflow <= 0) {
+      break;
+    }
+
+    const height = heights.get(item.win) ?? item.minHeight;
+    const shrink = Math.min(Math.max(0, height - item.minHeight), overflow);
+    if (shrink > 0) {
+      heights.set(item.win, height - shrink);
+      overflow -= shrink;
+    }
+  }
 
   while (overflow > 0) {
     const shrinkableItems = detailItems.filter((item) => (heights.get(item.win) ?? item.minHeight) > item.minHeight);
@@ -1284,7 +1308,22 @@ function fitColumnHeights(items: ArrangeItem[], availableHeight: number) {
     }
   }
 
-  return heights;
+  for (const item of listItems) {
+    if (overflow <= 0) {
+      break;
+    }
+
+    const collapsedHeight = item.collapsedHeight ?? item.minHeight;
+    const height = heights.get(item.win) ?? item.minHeight;
+    const shrink = Math.min(Math.max(0, height - collapsedHeight), overflow);
+    if (shrink > 0) {
+      heights.set(item.win, height - shrink);
+      collapsedLists.add(item.win);
+      overflow -= shrink;
+    }
+  }
+
+  return { heights, collapsedLists };
 }
 
 async function arrangeStickyWindows(sourceWin: BrowserWindow | null) {
@@ -1311,15 +1350,19 @@ async function arrangeStickyWindows(sourceWin: BrowserWindow | null) {
 
   for (const [columnIndex, column] of activeColumns.entries()) {
     const columnItems = noteItems.filter((item) => item.column === column).sort(compareArrangeItems);
-    const heights = fitColumnHeights(columnItems, availableHeight);
+    const { heights, collapsedLists } = fitColumnHeights(columnItems, availableHeight);
     const x = clamp(maxX - columnIndex * (width + NOTE_ARRANGE_GAP), minX, Math.max(minX, maxX));
     let nextY = minY;
 
     for (const item of columnItems) {
       const height = heights.get(item.win) ?? item.minHeight;
+      const shouldCollapseList = item.role === "list" && collapsedLists.has(item.win);
+      item.win.webContents.send("window:arrangement", {
+        compactList: shouldCollapseList,
+        maxHeight: height
+      });
       if (item.role === "list") {
-        item.win.webContents.send("window:arrangement", { compactList: true });
-        item.win.setMinimumSize(width, NOTE_ARRANGE_LIST_HEIGHT);
+        item.win.setMinimumSize(width, shouldCollapseList ? NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT : NOTE_ARRANGE_LIST_MIN_HEIGHT);
       }
 
       const y = clamp(nextY, minY, workArea.y + workArea.height - height - NOTE_ARRANGE_MARGIN);

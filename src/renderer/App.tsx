@@ -38,6 +38,7 @@ import type {
   Organization,
   OrganizationsPayload,
   PersonalRecord,
+  PersonalRecordChangeNotice,
   PersonalRecordMeta,
   PersonalRecordScope,
   PersonalRecordTarget,
@@ -297,16 +298,56 @@ function cssNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function readLineHeight(element: HTMLElement) {
+  const style = window.getComputedStyle(element);
+  const lineHeight = cssNumber(style.lineHeight);
+  if (lineHeight > 0) {
+    return lineHeight;
+  }
+
+  const fontSize = cssNumber(style.fontSize);
+  return fontSize > 0 ? fontSize * 1.4 : 20;
+}
+
+function readVerticalBorderHeight(element: HTMLElement) {
+  const style = window.getComputedStyle(element);
+  return cssNumber(style.borderTopWidth) + cssNumber(style.borderBottomWidth);
+}
+
+function readTextareaHeightForFit(element: HTMLTextAreaElement, maxHeight: number) {
+  const previousHeight = element.style.height;
+  const previousMinHeight = element.style.minHeight;
+  const previousFlex = element.style.flex;
+
+  element.style.height = "auto";
+  element.style.minHeight = "0";
+  element.style.flex = "0 0 auto";
+
+  try {
+    const borderHeight = readVerticalBorderHeight(element);
+    const minHeight = Math.ceil(readLineHeight(element) + borderHeight);
+    return clampNumber(Math.ceil(element.scrollHeight + borderHeight), minHeight, maxHeight);
+  } finally {
+    element.style.height = previousHeight;
+    element.style.minHeight = previousMinHeight;
+    element.style.flex = previousFlex;
+  }
+}
+
 function readElementHeightForFit(element: HTMLElement): number {
   const currentHeight = element.getBoundingClientRect().height;
-  if (element.classList.contains("record-editor")) {
-    return Math.max(currentHeight, cssNumber(element.style.height));
+  if (element instanceof HTMLTextAreaElement && element.classList.contains("record-editor")) {
+    return readTextareaHeightForFit(element, 520);
   }
-  if (element.classList.contains("task-note-editor")) {
-    return Math.max(currentHeight, clampNumber(element.scrollHeight, 72, 420));
+  if (element instanceof HTMLTextAreaElement && element.classList.contains("task-note-editor")) {
+    return readTextareaHeightForFit(element, 420);
   }
-  if (element.classList.contains("task-detail") || element.classList.contains("task-note-panel")) {
-    return Math.max(currentHeight, readElementChildrenHeight(element));
+  if (
+    element.classList.contains("task-detail") ||
+    element.classList.contains("task-note-panel") ||
+    element.classList.contains("record-preview-panel")
+  ) {
+    return readElementChildrenHeight(element);
   }
   return currentHeight;
 }
@@ -314,12 +355,13 @@ function readElementHeightForFit(element: HTMLElement): number {
 function readElementChildrenHeight(element: HTMLElement): number {
   const style = window.getComputedStyle(element);
   const paddingBlock = cssNumber(style.paddingTop) + cssNumber(style.paddingBottom);
+  const borderBlock = cssNumber(style.borderTopWidth) + cssNumber(style.borderBottomWidth);
   const rowGap = cssNumber(style.rowGap || style.gap);
   const visibleChildren = Array.from(element.children).filter((child): child is HTMLElement => {
     return child instanceof HTMLElement && window.getComputedStyle(child).display !== "none";
   });
   const childrenHeight = visibleChildren.reduce<number>((height, child) => height + readElementHeightForFit(child), 0);
-  return paddingBlock + childrenHeight + Math.max(0, visibleChildren.length - 1) * rowGap;
+  return borderBlock + paddingBlock + childrenHeight + Math.max(0, visibleChildren.length - 1) * rowGap;
 }
 
 function readShellContentHeight() {
@@ -476,17 +518,41 @@ type RecordHeaderContext = {
   taskTitle?: string;
 };
 
-function getRecordHeaderTitle(record: RecordHeaderContext | null, isDetail: boolean, recordCount: number) {
+type HeaderTitleContent =
+  | {
+      variant: "plain";
+      text: string;
+    }
+  | {
+      variant: "scoped";
+      context: string;
+      suffix: string;
+    };
+
+function WindowHeaderTitle({ title }: { title: HeaderTitleContent }) {
+  if (title.variant === "plain") {
+    return <h1 className="window-title-main window-title-plain">{title.text}</h1>;
+  }
+
+  return (
+    <>
+      <h1 className="window-title-main">{title.context}</h1>
+      <span className="window-title-suffix">· {title.suffix}</span>
+    </>
+  );
+}
+
+function getRecordHeaderTitle(record: RecordHeaderContext | null, isDetail: boolean, recordCount: number): HeaderTitleContent {
   if (!record) {
-    return `个人记录 ${recordCount}`;
+    return { variant: "plain", text: `个人记录 ${recordCount}` };
   }
   if (record.scopeType === "task") {
-    return `${record.projectName || record.taskTitle || "任务"} · 备注`;
+    return { variant: "scoped", context: record.projectName || record.taskTitle || "任务", suffix: "备注" };
   }
   if (record.scopeType === "project") {
-    return `${record.projectName || "项目"} · ${isDetail ? "记录" : `记录 ${recordCount}`}`;
+    return { variant: "scoped", context: record.projectName || "项目", suffix: isDetail ? "记录" : `记录 ${recordCount}` };
   }
-  return isDetail ? "个人记录" : `个人记录 ${recordCount}`;
+  return { variant: "plain", text: isDetail ? "个人记录" : `个人记录 ${recordCount}` };
 }
 
 function getStickyHeader({
@@ -501,15 +567,15 @@ function getStickyHeader({
   projectFilter: string;
   selectedProjectName?: string;
   selectedTask: EnrichedTask | null;
-}) {
+}): HeaderTitleContent {
   const isProjectSticky = !isSingleTaskSticky && projectFilter !== "all";
   if (isSingleTaskSticky) {
-    return `${selectedTask?.projectName || selectedProjectName || "项目"} · 任务`;
+    return { variant: "scoped", context: selectedTask?.projectName || selectedProjectName || "项目", suffix: "任务" };
   }
   if (isProjectSticky) {
-    return `${selectedProjectName || "项目"} · 任务 ${filteredTaskCount}`;
+    return { variant: "scoped", context: selectedProjectName || "项目", suffix: `任务 ${filteredTaskCount}` };
   }
-  return "全部待办";
+  return { variant: "plain", text: "全部待办" };
 }
 
 function getRecordListContext(source?: Pick<PersonalRecordMeta, "scopeType" | "projectId" | "projectName"> | PersonalRecordTarget | null): RecordListContext {
@@ -992,6 +1058,8 @@ export default function App() {
   const taskNoteSaveTimerRef = useRef<number | null>(null);
   const focusPulseTimerRef = useRef<number | null>(null);
   const focusPulseFrameRef = useRef<number | null>(null);
+  const arrangementHeightTimerRef = useRef<number | null>(null);
+  const arrangementMaxHeightRef = useRef<number | null>(null);
   const lastWindowFitRef = useRef("");
   const activeRecordRef = useRef<PersonalRecord | null>(null);
   const recordBodyRef = useRef("");
@@ -999,6 +1067,7 @@ export default function App() {
   const taskNoteBodyRef = useRef("");
   const taskNoteDirtyRef = useRef(false);
   const taskCompleteTimersRef = useRef<Map<number, number>>(new Map());
+  const recordCompleteTimerRef = useRef<number | null>(null);
   const recordSaveInFlightRef = useRef<Promise<PersonalRecord | null> | null>(null);
   const recordSaveQueuedRef = useRef(false);
   const isSingleTaskSticky = surface === "sticky" && taskFilter !== "all";
@@ -1050,11 +1119,17 @@ export default function App() {
         window.clearTimeout(timer);
       }
       taskCompleteTimersRef.current.clear();
+      if (recordCompleteTimerRef.current !== null) {
+        window.clearTimeout(recordCompleteTimerRef.current);
+      }
       if (focusPulseFrameRef.current !== null) {
         window.cancelAnimationFrame(focusPulseFrameRef.current);
       }
       if (focusPulseTimerRef.current !== null) {
         window.clearTimeout(focusPulseTimerRef.current);
+      }
+      if (arrangementHeightTimerRef.current !== null) {
+        window.clearTimeout(arrangementHeightTimerRef.current);
       }
     };
   }, []);
@@ -1064,15 +1139,26 @@ export default function App() {
   useEffect(
     () =>
       window.workshopDesktop.onWindowArrangement((notice) => {
-        if (!notice.compactList) {
-          return;
+        if (typeof notice.maxHeight === "number" && Number.isFinite(notice.maxHeight) && notice.maxHeight > 0) {
+          arrangementMaxHeightRef.current = notice.maxHeight;
+          lastWindowFitRef.current = "";
+          if (arrangementHeightTimerRef.current !== null) {
+            window.clearTimeout(arrangementHeightTimerRef.current);
+          }
+          arrangementHeightTimerRef.current = window.setTimeout(() => {
+            arrangementHeightTimerRef.current = null;
+            arrangementMaxHeightRef.current = null;
+            lastWindowFitRef.current = "";
+          }, 1400);
         }
 
-        if (surface === "sticky" && !isSingleTaskSticky) {
-          setStickyListCollapsed(true);
-        }
-        if (surface === "record" && !activeRecordRef.current) {
-          setRecordListCollapsed(true);
+        if (notice.compactList) {
+          if (surface === "sticky" && !isSingleTaskSticky) {
+            setStickyListCollapsed(true);
+          }
+          if (surface === "record" && !activeRecordRef.current) {
+            setRecordListCollapsed(true);
+          }
         }
       }),
     [isSingleTaskSticky, surface]
@@ -1183,6 +1269,27 @@ export default function App() {
       onDone?.();
     }, taskCompleteAnimationMs);
     taskCompleteTimersRef.current.set(taskId, timer);
+  }, []);
+
+  const clearRecordCompletionFeedback = useCallback(() => {
+    if (recordCompleteTimerRef.current !== null) {
+      window.clearTimeout(recordCompleteTimerRef.current);
+      recordCompleteTimerRef.current = null;
+    }
+    setRecordCompletingId(null);
+  }, []);
+
+  const markRecordCompletionFeedback = useCallback((recordId: string, onDone?: () => void) => {
+    if (recordCompleteTimerRef.current !== null) {
+      window.clearTimeout(recordCompleteTimerRef.current);
+    }
+
+    setRecordCompletingId(recordId);
+    recordCompleteTimerRef.current = window.setTimeout(() => {
+      recordCompleteTimerRef.current = null;
+      setRecordCompletingId((current) => (current === recordId ? null : current));
+      onDone?.();
+    }, recordCompleteAnimationMs);
   }, []);
 
   const applyTaskStateChange = useCallback(
@@ -1425,7 +1532,19 @@ export default function App() {
     });
   }, [loadRecords, openRecordById, recordTarget, startRecordDraft, surface]);
 
-  useEffect(() => window.workshopDesktop.onRecordsChanged(() => void loadRecords()), [loadRecords]);
+  useEffect(
+    () =>
+      window.workshopDesktop.onRecordsChanged((notice: PersonalRecordChangeNotice | null) => {
+        if (notice?.status === "completed") {
+          markRecordCompletionFeedback(notice.id, () => void loadRecords());
+          return;
+        }
+
+        clearRecordCompletionFeedback();
+        void loadRecords();
+      }),
+    [clearRecordCompletionFeedback, loadRecords, markRecordCompletionFeedback]
+  );
 
   useEffect(() => {
     if (config && isLoggedIn(config)) {
@@ -1481,7 +1600,7 @@ export default function App() {
       return;
     }
 
-    const nextHeight = clampNumber(editor.scrollHeight, 108, 520);
+    const nextHeight = readTextareaHeightForFit(editor, 520);
     editor.style.minHeight = "";
     editor.style.height = `${nextHeight}px`;
     editor.style.overflowY = "auto";
@@ -1493,10 +1612,11 @@ export default function App() {
     }
 
     const isRecordDetail = surface === "record" && Boolean(activeRecord);
+    const isDetailWindow = (surface === "sticky" && isSingleTaskSticky) || isRecordDetail;
     const isCollapsedList =
       (surface === "sticky" && stickyListCollapsed && !isSingleTaskSticky) || (surface === "record" && recordListCollapsed && !activeRecord);
-    const minHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 220 : 112) : isRecordDetail ? 220 : 112;
-    const maxHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 640 : 720) : isRecordDetail ? 680 : 720;
+    const fixedMinHeight = isCollapsedList ? 56 : 112;
+    const baseMaxHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 640 : 720) : isRecordDetail ? 680 : 720;
     let animationFrame: number | null = null;
 
     function requestWindowFit() {
@@ -1507,9 +1627,12 @@ export default function App() {
       animationFrame = window.requestAnimationFrame(() => {
         animationFrame = null;
         const contentHeight = readShellContentHeight();
-        const requestedHeight = isRecordDetail ? Math.max(contentHeight, window.innerHeight) : contentHeight;
+        const minHeight = isDetailWindow ? Math.min(Math.max(contentHeight, 56), baseMaxHeight) : fixedMinHeight;
+        const maxHeight = arrangementMaxHeightRef.current
+          ? Math.min(baseMaxHeight, Math.max(minHeight, arrangementMaxHeightRef.current))
+          : baseMaxHeight;
         const request: WindowFitRequest = {
-          height: requestedHeight,
+          height: contentHeight,
           minWidth: surface === "record" ? 320 : 300,
           minHeight,
           maxHeight
@@ -1914,34 +2037,89 @@ export default function App() {
     await window.workshopDesktop.closeWindow();
   }
 
+  async function saveRecordAsCompleted(record: PersonalRecord) {
+    return window.workshopDesktop.savePersonalRecord({
+      id: record.id || undefined,
+      bodyMarkdown: record.bodyMarkdown,
+      scopeType: record.scopeType,
+      status: "completed",
+      projectId: record.projectId,
+      projectName: record.projectName,
+      taskId: record.taskId,
+      taskTitle: record.taskTitle,
+      promotedTaskId: record.promotedTaskId
+    });
+  }
+
   async function completeRecord(record: PersonalRecordMeta) {
-    setRecordCompletingId(record.id);
+    markRecordCompletionFeedback(record.id, () => void loadRecords());
     setRecordMessage("");
 
     try {
       const fullRecord = await window.workshopDesktop.getPersonalRecord(record.id);
       if (!fullRecord) {
+        clearRecordCompletionFeedback();
         await loadRecords();
         return;
       }
 
-      await window.workshopDesktop.savePersonalRecord({
-        id: fullRecord.id,
-        bodyMarkdown: fullRecord.bodyMarkdown,
-        scopeType: fullRecord.scopeType,
-        status: "completed",
-        projectId: fullRecord.projectId,
-        projectName: fullRecord.projectName,
-        taskId: fullRecord.taskId,
-        taskTitle: fullRecord.taskTitle,
-        promotedTaskId: fullRecord.promotedTaskId
-      });
-      await new Promise((resolve) => window.setTimeout(resolve, recordCompleteAnimationMs));
-      await loadRecords();
+      await saveRecordAsCompleted(fullRecord);
     } catch (nextError) {
+      clearRecordCompletionFeedback();
       setRecordMessage(nextError instanceof Error ? nextError.message : "完成失败");
-    } finally {
-      setRecordCompletingId(null);
+    }
+  }
+
+  async function completeActiveRecord() {
+    const initialRecord = activeRecordRef.current;
+    if (!initialRecord) {
+      return;
+    }
+
+    markRecordCompletionFeedback(initialRecord.id || "active-record");
+    setRecordMessage("");
+
+    try {
+      if (recordSaveTimerRef.current) {
+        window.clearTimeout(recordSaveTimerRef.current);
+        recordSaveTimerRef.current = null;
+      }
+
+      if (recordSaveInFlightRef.current) {
+        const saved = await recordSaveInFlightRef.current;
+        if (!saved && recordDirtyRef.current) {
+          clearRecordCompletionFeedback();
+          return;
+        }
+      }
+
+      const recordToComplete = activeRecordRef.current ?? initialRecord;
+      const bodyToComplete = recordBodyRef.current;
+      if (!recordToComplete.id && !bodyToComplete.trim()) {
+        clearRecordCompletionFeedback();
+        await window.workshopDesktop.closeWindow();
+        return;
+      }
+
+      const completed = await saveRecordAsCompleted({
+        ...recordToComplete,
+        bodyMarkdown: bodyToComplete,
+        status: "completed"
+      });
+      activeRecordRef.current = completed;
+      recordBodyRef.current = completed.bodyMarkdown;
+      recordDirtyRef.current = false;
+      setActiveRecord(completed);
+      setRecordBody(completed.bodyMarkdown);
+      setRecordDirty(false);
+      setRecordSaveStatus("saved");
+      setRecordMessage("");
+      markRecordCompletionFeedback(completed.id);
+      await new Promise((resolve) => window.setTimeout(resolve, recordCompleteAnimationMs));
+      await window.workshopDesktop.closeWindow();
+    } catch (nextError) {
+      clearRecordCompletionFeedback();
+      setRecordMessage(nextError instanceof Error ? nextError.message : "完成失败");
     }
   }
 
@@ -2184,8 +2362,12 @@ export default function App() {
           }
         : { scopeType: "none" as const });
     const recordHeaderTitle = getRecordHeaderTitle(recordHeaderContext, Boolean(activeRecord), visibleRecords.length);
+    const activeRecordCompletionId = activeRecord?.id || "active-record";
+    const isActiveRecordCompleting = Boolean(activeRecord && recordCompletingId === activeRecordCompletionId);
     const saveLabel =
-      recordSaveStatus === "saving"
+      isActiveRecordCompleting || activeRecord?.status === "completed"
+        ? "已完成"
+        : recordSaveStatus === "saving"
         ? "保存中"
         : recordSaveStatus === "error"
           ? "保存失败"
@@ -2197,14 +2379,18 @@ export default function App() {
     const canPromoteToTask = activeRecord?.scopeType === "project" && Boolean(activeRecord.projectId);
 
     return (
-      <main className={`record-shell ${activeRecord ? "record-detail-shell" : "record-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
+      <main
+        className={`record-shell ${activeRecord ? "record-detail-shell" : "record-list-shell"} ${
+          !activeRecord && recordListCollapsed ? "collapsed-shell" : ""
+        } ${focusPulseVisible ? "window-focus-pulse" : ""}`}
+      >
         <header className="record-titlebar">
           <div className="sticky-drag">
             <button className="sticky-arrange-button" type="button" onClick={() => void handleArrangeStickyWindows()} title="整理便签排列">
               <GripVertical size={15} />
             </button>
             <div className="record-title-copy">
-              <h1>{recordHeaderTitle}</h1>
+              <WindowHeaderTitle title={recordHeaderTitle} />
               {canAssignRecordToProject ? (
                 <button
                   className="scope-switch-button"
@@ -2329,6 +2515,15 @@ export default function App() {
               </div>
               <span className={`record-save-state ${recordSaveStatus}`}>{saveLabel}</span>
               <div className="record-toolbar-actions">
+                <button
+                  className={`record-action-button complete ${isActiveRecordCompleting ? "active" : ""}`}
+                  type="button"
+                  onClick={() => void completeActiveRecord()}
+                  disabled={isActiveRecordCompleting}
+                  title={isActiveRecordCompleting ? "已完成" : "完成"}
+                >
+                  <Check size={16} strokeWidth={3} />
+                </button>
                 {canPromoteToTask ? (
                   <button className="record-action-button" type="button" onClick={() => void createTaskFromRecord()} title="转为任务">
                     <Send size={15} />
@@ -2492,14 +2687,14 @@ export default function App() {
     });
 
     return (
-      <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
+      <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${isStickyContentCollapsed ? "collapsed-shell" : ""} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
         <header className="sticky-titlebar">
           <div className="sticky-drag">
             <button className="sticky-arrange-button" type="button" onClick={() => void handleArrangeStickyWindows()} title="整理便签排列">
               <GripVertical size={15} />
             </button>
             <div className="sticky-title-copy">
-              <h1>{stickyHeader}</h1>
+              <WindowHeaderTitle title={stickyHeader} />
             </div>
           </div>
           <div className="sticky-actions">

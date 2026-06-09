@@ -4,6 +4,7 @@ import type {
   ApiResponse,
   AppConfig,
   DesktopBridge,
+  PersonalRecordChangeNotice,
   PersonalRecordTarget,
   SavePersonalRecordRequest,
   StickyTarget,
@@ -71,8 +72,8 @@ const bridge: DesktopBridge = {
     ipcRenderer.on("workshop:refresh", listener);
     return () => ipcRenderer.removeListener("workshop:refresh", listener);
   },
-  onRecordsChanged: (callback: () => void) => {
-    const listener = () => callback();
+  onRecordsChanged: (callback) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown) => callback((payload as PersonalRecordChangeNotice | null) ?? null);
     ipcRenderer.on("record:changed", listener);
     return () => ipcRenderer.removeListener("record:changed", listener);
   }

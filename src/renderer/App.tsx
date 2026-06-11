@@ -22,6 +22,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
   ShieldCheck,
   StickyNote,
@@ -647,6 +648,19 @@ function recordMatchesListContext(record: PersonalRecordMeta, context: RecordLis
   return true;
 }
 
+function recordMatchesSearch(record: PersonalRecordMeta, tokens: string[]) {
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  const searchableText = [record.title, record.projectName, record.taskTitle]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return tokens.every((token) => searchableText.includes(token));
+}
+
 function findTaskRecord(records: PersonalRecordMeta[], taskId?: number) {
   if (taskId === undefined) {
     return undefined;
@@ -654,7 +668,10 @@ function findTaskRecord(records: PersonalRecordMeta[], taskId?: number) {
   return records.find((record) => record.scopeType === "task" && record.taskId === taskId);
 }
 
-function getRecordListEmptyLabel(context: RecordListContext) {
+function getRecordListEmptyLabel(context: RecordListContext, hasSearchQuery = false) {
+  if (hasSearchQuery) {
+    return "没有匹配记录";
+  }
   return context.scopeType === "project" ? "还没有项目记录" : "还没有个人记录";
 }
 
@@ -1112,6 +1129,7 @@ export default function App() {
   const [recordMessage, setRecordMessage] = useState("");
   const [recordScopePickerOpen, setRecordScopePickerOpen] = useState(false);
   const [recordProjectQuery, setRecordProjectQuery] = useState("");
+  const [recordSearchQuery, setRecordSearchQuery] = useState("");
   const [recordCompletingId, setRecordCompletingId] = useState<string | null>(null);
   const [stickyListCollapsed, setStickyListCollapsed] = useState(false);
   const [recordListCollapsed, setRecordListCollapsed] = useState(false);
@@ -1731,6 +1749,7 @@ export default function App() {
     recordMessage,
     recordMode,
     recordListCollapsed,
+    recordSearchQuery,
     records,
     stickyListCollapsed,
     surface,
@@ -1804,12 +1823,24 @@ export default function App() {
       .filter(({ projectName }) => !query || projectName.toLowerCase().includes(query))
       .slice(0, 8);
   }, [projects, recordProjectQuery]);
-  const visibleRecords = useMemo(() => records.filter((record) => recordMatchesListContext(record, recordListContext)), [records, recordListContext]);
+  const contextualRecords = useMemo(
+    () => records.filter((record) => recordMatchesListContext(record, recordListContext)),
+    [records, recordListContext]
+  );
+  const recordSearchTokens = useMemo(
+    () => recordSearchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean),
+    [recordSearchQuery]
+  );
+  const visibleRecords = useMemo(
+    () => contextualRecords.filter((record) => recordMatchesSearch(record, recordSearchTokens)),
+    [contextualRecords, recordSearchTokens]
+  );
+  const hasRecordSearchQuery = recordSearchTokens.length > 0;
   useEffect(() => {
-    if (surface === "record" && recordsLoaded && !activeRecord && visibleRecords.length === 0) {
+    if (surface === "record" && recordsLoaded && !activeRecord && contextualRecords.length === 0) {
       setRecordListCollapsed(true);
     }
-  }, [activeRecord, recordListContext, recordsLoaded, surface, visibleRecords.length]);
+  }, [activeRecord, contextualRecords.length, recordListContext, recordsLoaded, surface]);
 
   const taskRecordsByTaskId = useMemo(() => {
     const byTaskId = new Map<number, PersonalRecordMeta>();
@@ -2571,6 +2602,29 @@ export default function App() {
                   onClick={() => void handleProjectDirectoryClick(recordListContext.projectId as number, "record")}
                 />
               ) : null}
+              {!activeRecord && !recordListCollapsed ? (
+                <div className="record-list-search" role="search">
+                  <Search size={13} aria-hidden="true" />
+                  <input
+                    value={recordSearchQuery}
+                    onChange={(event) => setRecordSearchQuery(event.target.value)}
+                    placeholder="搜索记录"
+                    aria-label="搜索记录"
+                    spellCheck={false}
+                  />
+                  {recordSearchQuery ? (
+                    <button
+                      className="record-search-clear"
+                      type="button"
+                      onClick={() => setRecordSearchQuery("")}
+                      title="清空搜索"
+                      aria-label="清空搜索"
+                    >
+                      <X size={12} />
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {canAssignRecordToProject && recordScopePickerOpen ? (
                 <div className="scope-popover">
                   <input
@@ -2726,7 +2780,7 @@ export default function App() {
             {visibleRecords.length === 0 ? (
               <div className="empty-state sticky-empty">
                 <NotebookPen size={24} />
-                <span>{getRecordListEmptyLabel(recordListContext)}</span>
+                <span>{getRecordListEmptyLabel(recordListContext, hasRecordSearchQuery)}</span>
               </div>
             ) : null}
             {visibleRecords.map((record) => (

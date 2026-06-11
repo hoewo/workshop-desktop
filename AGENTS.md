@@ -64,6 +64,13 @@ npx --yes pnpm app:record:create -- --title "记录标题" --body-file ./path/to
 
 如果桌面端没有运行，CLI 报错后应停止并告知用户；不要改为直接写 `~/Library/Application Support/workshop-desktop/personal-records/`。
 
+## Workshop Desktop 派发的执行
+
+当环境变量 `WORKSHOP_DESKTOP_SERVER_PORT` 和 `WORKSHOP_DESKTOP_SERVER_TOKEN` 存在时，本次执行由 Workshop Desktop 派发。派发不附带额外说明：执行内容就是用户消息本身，项目 ID 用上文声明的本 repo Workshop 项目 ID，运行与任务/记录的关联由 Workshop Desktop 的运行状态表持有。此时适用：
+
+- 回写遵循上文 AI 记录边界与密度规则，方式优先用上文 CLI（它会自动使用这两个环境变量）；无法使用 CLI 时，直接 `POST http://127.0.0.1:${WORKSHOP_DESKTOP_SERVER_PORT}/rpc`，请求头 `Authorization: Bearer ${WORKSHOP_DESKTOP_SERVER_TOKEN}`，请求体 `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<正文>","scopeType":"project","projectId":98}}`。
+- 派发注入的 token 仅允许 `record.create`，不要尝试其他方法。
+
 ## 提交前检查
 
 代码变更收尾前：

@@ -44,14 +44,20 @@ export class CodexAppServerClient {
 
   constructor(private readonly options: CodexAppServerOptions) {}
 
-  async startTurn(input: { cwd: string; prompt: string; events: CodexTurnEvents }): Promise<{ threadId: string; turnId: string }> {
+  async startTurn(input: {
+    cwd: string;
+    prompt: string;
+    developerInstructions?: string;
+    events: CodexTurnEvents;
+  }): Promise<{ threadId: string; turnId: string }> {
     await this.ensureStarted();
 
     const thread = (await this.request("thread/start", {
       cwd: input.cwd,
       approvalPolicy: "never",
       sandbox: "workspace-write",
-      threadSource: "user"
+      threadSource: "user",
+      ...(input.developerInstructions ? { developerInstructions: input.developerInstructions } : {})
     })) as { thread?: { id?: string } };
     const threadId = thread?.thread?.id;
     if (!threadId) {

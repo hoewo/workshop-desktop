@@ -481,44 +481,15 @@ function normalizeSendToCodexParams(params: unknown): NormalizedSendToCodexParam
   };
 }
 
-function buildCodexPrompt(request: NormalizedSendToCodexParams, bridgeAvailable: boolean) {
-  const sourceLabel = request.kind === "task" ? "Workshop 任务" : "Workshop 记录";
-  const sourceLines = [
-    `来源：${sourceLabel}`,
-    `项目：${request.projectName || `#${request.projectId}`}`,
-    request.taskId ? `任务 ID：${request.taskId}` : "",
-    request.recordId ? `记录 ID：${request.recordId}` : ""
-  ].filter(Boolean);
-  const contentLines = [
-    `标题：${request.title}`,
-    request.bodyMarkdown?.trim() ? `内容：\n${request.bodyMarkdown.trim()}` : ""
-  ].filter(Boolean);
-  const recordParams = request.taskId
-    ? `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<markdown 正文>","scopeType":"task","projectId":${request.projectId},"taskId":${request.taskId}}}`
-    : `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<markdown 正文>","scopeType":"project","projectId":${request.projectId}}}`;
-  const writebackLines = bridgeAvailable
-    ? [
-        "任务完成后，评估是否需要把简短结论沉淀为一条 Workshop 记录。回写通道是 Workshop Desktop app server，",
-        "连接信息在环境变量 WORKSHOP_DESKTOP_SERVER_PORT 和 WORKSHOP_DESKTOP_SERVER_TOKEN 中（该 token 只允许 record.create）：",
-        "",
-        'curl -s -X POST "http://127.0.0.1:${WORKSHOP_DESKTOP_SERVER_PORT}/rpc" \\',
-        '  -H "authorization: Bearer ${WORKSHOP_DESKTOP_SERVER_TOKEN}" \\',
-        '  -H "content-type: application/json" \\',
-        `  -d '${recordParams}'`,
-        "",
-        "不要把临时思考直接写入 repo 文档。"
-      ]
-    : ["任务完成后，把简短结论写在最终输出里。不要把临时思考直接写入 repo 文档。"];
-
-  return [
-    "这是来自 Workshop Desktop 的本地执行请求。",
-    ...sourceLines,
-    "",
-    "请在当前项目目录中处理这个请求。若需要修改代码或文档，先读取并遵守本 repo 的 AGENTS.md。",
-    ...writebackLines,
-    "",
-    ...contentLines
-  ].join("\n");
+// 派发不包装：turn 输入只有用户内容。规则（回写通道、文档纪律）和项目 ID
+// 由目标项目的 AGENTS.md 声明；运行与任务/记录的关联由运行状态表持有。
+function buildCodexUserInput(request: NormalizedSendToCodexParams) {
+  const body = request.bodyMarkdown?.trim() ?? "";
+  if (!body) {
+    return request.title;
+  }
+  const firstLine = body.split("\n", 1)[0] ?? "";
+  return firstLine.includes(request.title) ? body : `${request.title}\n\n${body}`;
 }
 
 async function getProjectLocalDirectory(projectId: number) {
@@ -641,7 +612,7 @@ function getCodexClient() {
 async function sendToCodex(params: unknown): Promise<SendToCodexResponse> {
   const request = normalizeSendToCodexParams(params);
   const localDirectory = await getProjectLocalDirectory(request.projectId);
-  const prompt = buildCodexPrompt(request, Boolean(appServerInfo));
+  const userInput = buildCodexUserInput(request);
   const run: CodexRunMeta = {
     runId: `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`,
     backend: request.backend,
@@ -656,7 +627,7 @@ async function sendToCodex(params: unknown): Promise<SendToCodexResponse> {
     startedAt: new Date().toISOString()
   };
 
-  return request.backend === "exec" ? sendToCodexExec(run, prompt) : sendToCodexAppServer(run, prompt);
+  return request.backend === "exec" ? sendToCodexExec(run, userInput) : sendToCodexAppServer(run, userInput);
 }
 
 async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<SendToCodexResponse> {

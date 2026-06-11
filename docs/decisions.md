@@ -143,4 +143,5 @@ Consequences:
 - AI 自动创建远端 Workshop 任务前是否必须先生成任务候选并由用户确认？
 - Codex 运行除主面板状态行外，是否需要完整日志视图和系统级完成通知？
 - 发送到 Codex 前是否需要让用户预览最终组装的 prompt？
-- 是否改接 `codex app-server daemon` 共享实例，以换取 Codex app 的实时可见（当前为列表可见）？
+- 是否改接 `codex app-server daemon` 共享实例，以换取 Codex app 的实时可见？当前为列表可见；实测（CLI/app 0.133.0）turn 进行中在 Codex app 打开该线程，页面可能挂住，需重启 Codex app 才恢复，执行本身不受影响。
+- 派发执行是否需要工作区隔离（per-run worktree 或要求干净工作区）？实测派发 agent 与本地未提交修改在同一 checkout 并发写作。

@@ -627,6 +627,86 @@ textarea:focus {
   background-clip: content-box;
 }
 
+.codex-run-list {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(30, 36, 34, 0.1);
+}
+
+.codex-run-list-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6d716e;
+}
+
+.codex-run-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.codex-run-row:hover {
+  background: rgba(30, 36, 34, 0.06);
+}
+
+.codex-run-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9aa09c;
+}
+
+.codex-run-row.status-running .codex-run-dot {
+  background: #3478f6;
+  animation: codex-run-pulse 1.4s ease-in-out infinite;
+}
+
+.codex-run-row.status-completed .codex-run-dot {
+  background: #2f9e60;
+}
+
+.codex-run-row.status-failed .codex-run-dot {
+  background: #d64545;
+}
+
+.codex-run-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #1d1f22;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-run-meta {
+  flex: 0 0 auto;
+  color: #6d716e;
+  font-size: 11px;
+}
+
+@keyframes codex-run-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .project-menu-item {
   position: relative;
   flex: 0 0 auto;
@@ -1049,6 +1129,22 @@ textarea:focus {
 .task-detail-actions button {
   width: 30px;
   height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #26312d;
+  cursor: pointer;
+}
+
+.task-detail-actions button:hover {
+  background: rgba(30, 36, 34, 0.06);
+}
+
+.task-detail-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .empty-state {
@@ -1274,6 +1370,16 @@ textarea:focus {
   max-width: 100%;
   flex: 1 1 auto;
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.window-title-line {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
   align-items: center;
   gap: 4px;
   overflow: hidden;
@@ -1299,6 +1405,34 @@ textarea:focus {
   font-weight: 690;
   line-height: 1.1;
   white-space: nowrap;
+}
+
+.project-directory-subtitle {
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #66716c;
+  cursor: pointer;
+  display: block;
+  font-size: 10.5px;
+  font-weight: 620;
+  line-height: 1.15;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+}
+
+.project-directory-subtitle:hover {
+  color: #1f6f55;
+  text-decoration: underline;
+}
+
+.project-directory-subtitle.unbound {
+  color: #8a6d43;
 }
 
 .sticky-drag > h1 {
@@ -1345,6 +1479,11 @@ textarea:focus {
 
 .sticky-notice {
   flex: 0 0 auto;
+}
+
+.sticky-notice.success {
+  background: rgba(38, 105, 84, 0.08);
+  color: #2b6553;
 }
 
 .sticky-task-list {
@@ -1410,8 +1549,10 @@ textarea:focus {
   position: relative;
   min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  overflow: hidden;
 }
 
 .record-title-copy .window-title-main {

@@ -8,3 +8,4 @@ output/
 *.log
 .env
 .env.*
+/思考.md

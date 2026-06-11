@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   StickyNote,
   Send,
+  SquareTerminal,
   Trash2,
   WifiOff,
   X
@@ -34,6 +35,8 @@ import { DragEvent, FormEvent, MouseEvent, useCallback, useEffect, useMemo, useR
 import type { ReactNode } from "react";
 import type {
   AppConfig,
+  CodexRunMeta,
+  CodexRunStatus,
   CurrentUserPayload,
   Organization,
   OrganizationsPayload,
@@ -53,6 +56,13 @@ import type {
 } from "../shared/types";
 
 const activeStates: TaskState[] = ["pending", "in_progress", "pending_review", "blocked"];
+
+const codexRunStatusLabels: Record<CodexRunStatus, string> = {
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+  interrupted: "已中断"
+};
 const recordCompleteAnimationMs = 900;
 const taskCompleteAnimationMs = 850;
 
@@ -542,6 +552,33 @@ function WindowHeaderTitle({ title }: { title: HeaderTitleContent }) {
   );
 }
 
+function ProjectDirectorySubtitle({
+  localDirectory,
+  onClick
+}: {
+  localDirectory?: string;
+  onClick: () => void;
+}) {
+  const label = localDirectory?.trim() || "请绑定本地目录";
+  return (
+    <button
+      className={`project-directory-subtitle ${localDirectory ? "bound" : "unbound"}`}
+      type="button"
+      onClick={onClick}
+      title={localDirectory ? `打开 ${localDirectory}` : "绑定本地目录"}
+    >
+      {label}
+    </button>
+  );
+}
+
+function getProjectLocalDirectory(config: AppConfig | null, projectId?: number) {
+  if (!config || projectId === undefined || !Number.isFinite(projectId)) {
+    return "";
+  }
+  return config.projectLocalDirectories[String(projectId)] || "";
+}
+
 function getRecordHeaderTitle(record: RecordHeaderContext | null, isDetail: boolean, recordCount: number): HeaderTitleContent {
   if (!record) {
     return { variant: "plain", text: `个人记录 ${recordCount}` };
@@ -813,6 +850,7 @@ function TaskDetail({
   noteBody,
   onNoteBlur,
   onNoteChange,
+  onSendToCodex,
   onUpdate
 }: {
   task: EnrichedTask;
@@ -820,6 +858,7 @@ function TaskDetail({
   noteBody: string;
   onNoteBlur: () => void;
   onNoteChange: (body: string) => void;
+  onSendToCodex: (task: EnrichedTask) => void;
   onUpdate: (task: EnrichedTask, state: TaskState) => void;
 }) {
   return (
@@ -844,6 +883,9 @@ function TaskDetail({
       </label>
 
       <div className="task-detail-actions">
+        <button type="button" title="发送到 Codex" onClick={() => onSendToCodex(task)} disabled={busyTaskId === task.id}>
+          <SquareTerminal size={15} />
+        </button>
         {task.state !== "in_progress" ? (
           <button type="button" title="开始" onClick={() => onUpdate(task, "in_progress")} disabled={busyTaskId === task.id}>
             <Play size={15} />
@@ -1033,10 +1075,33 @@ export default function App() {
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
   const [completingTaskIds, setCompletingTaskIds] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState("");
+  const [taskMessage, setTaskMessage] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hoveredProjectId, setHoveredProjectId] = useState<number | null>(null);
   const [recordTarget] = useState(getInitialRecordTarget);
   const [records, setRecords] = useState<PersonalRecordMeta[]>([]);
+  const [codexRuns, setCodexRuns] = useState<CodexRunMeta[]>([]);
+
+  useEffect(() => {
+    if (getSurface() !== "tray") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    window.workshopDesktop
+      .listCodexRuns()
+      .then((runs) => {
+        if (!cancelled) {
+          setCodexRuns(runs);
+        }
+      })
+      .catch(() => undefined);
+    const unsubscribe = window.workshopDesktop.onCodexRunsChanged((runs) => setCodexRuns(runs));
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
   const [recordsLoaded, setRecordsLoaded] = useState(false);
   const [activeRecord, setActiveRecord] = useState<PersonalRecord | null>(null);
   const [recordListContext, setRecordListContext] = useState<RecordListContext>(() => getRecordListContext(recordTarget));
@@ -1173,6 +1238,7 @@ export default function App() {
 
     setIsLoading(true);
     setError("");
+    setTaskMessage("");
 
     try {
       const currentUser = await api<CurrentUserPayload>("GET", "/users").catch(() => null);
@@ -1616,6 +1682,7 @@ export default function App() {
     const isCollapsedList =
       (surface === "sticky" && stickyListCollapsed && !isSingleTaskSticky) || (surface === "record" && recordListCollapsed && !activeRecord);
     const fixedMinHeight = isCollapsedList ? 56 : 112;
+    const detailMinHeight = surface === "sticky" && isSingleTaskSticky ? 132 : 188;
     const baseMaxHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 640 : 720) : isRecordDetail ? 680 : 720;
     let animationFrame: number | null = null;
 
@@ -1627,7 +1694,7 @@ export default function App() {
       animationFrame = window.requestAnimationFrame(() => {
         animationFrame = null;
         const contentHeight = readShellContentHeight();
-        const minHeight = isDetailWindow ? Math.min(Math.max(contentHeight, 56), baseMaxHeight) : fixedMinHeight;
+        const minHeight = isDetailWindow ? Math.min(detailMinHeight, baseMaxHeight) : fixedMinHeight;
         const maxHeight = arrangementMaxHeightRef.current
           ? Math.min(baseMaxHeight, Math.max(minHeight, arrangementMaxHeightRef.current))
           : baseMaxHeight;
@@ -1857,6 +1924,33 @@ export default function App() {
       await saveTaskNoteNow();
     }
     await window.workshopDesktop.closeSticky();
+  }
+
+  async function sendTaskToCodex(task: EnrichedTask) {
+    setError("");
+    setTaskMessage("");
+
+    try {
+      if (taskNoteSaveTimerRef.current) {
+        window.clearTimeout(taskNoteSaveTimerRef.current);
+        taskNoteSaveTimerRef.current = null;
+      }
+      if (taskNoteDirtyRef.current) {
+        await saveTaskNoteNow();
+      }
+
+      const sendResult = await window.workshopDesktop.sendToCodex({
+        kind: "task",
+        projectId: task.project_id,
+        projectName: task.projectName,
+        taskId: task.id,
+        title: task.content,
+        bodyMarkdown: taskNoteBodyRef.current
+      });
+      setTaskMessage(sendResult.backend === "app-server" ? "已启动 Codex 执行，可在 Codex app 查看" : "后台执行已启动");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "发送失败");
+    }
   }
 
   useEffect(() => {
@@ -2173,6 +2267,43 @@ export default function App() {
     }
   }
 
+  async function sendActiveRecordToCodex() {
+    const initialRecord = activeRecordRef.current;
+    if (!initialRecord) {
+      return;
+    }
+
+    setRecordMessage("");
+    try {
+      if (recordSaveTimerRef.current) {
+        window.clearTimeout(recordSaveTimerRef.current);
+        recordSaveTimerRef.current = null;
+      }
+
+      const saved = recordDirtyRef.current || !initialRecord.id ? await saveRecordNow() : initialRecord;
+      if (!saved) {
+        setRecordMessage("记录为空");
+        return;
+      }
+      if (!saved.projectId) {
+        setRecordMessage("需要先关联项目");
+        return;
+      }
+
+      const sendResult = await window.workshopDesktop.sendToCodex({
+        kind: "record",
+        projectId: saved.projectId,
+        projectName: saved.projectName,
+        recordId: saved.id,
+        title: deriveRecordTitle(recordBodyRef.current, saved.title),
+        bodyMarkdown: recordBodyRef.current
+      });
+      setRecordMessage(sendResult.backend === "app-server" ? "已启动 Codex 执行，可在 Codex app 查看" : "后台执行已启动");
+    } catch (nextError) {
+      setRecordMessage(nextError instanceof Error ? nextError.message : "发送失败");
+    }
+  }
+
   async function saveConfig(nextConfig: AppConfig) {
     setIsSavingConfig(true);
     try {
@@ -2182,6 +2313,36 @@ export default function App() {
       return saved;
     } finally {
       setIsSavingConfig(false);
+    }
+  }
+
+  async function handleProjectDirectoryClick(projectId: number, source: "sticky" | "record") {
+    const localDirectory = getProjectLocalDirectory(config, projectId);
+    if (source === "sticky") {
+      setError("");
+      setTaskMessage("");
+    } else {
+      setRecordMessage("");
+    }
+
+    try {
+      if (localDirectory) {
+        await window.workshopDesktop.openProjectLocalDirectory(projectId);
+        return;
+      }
+
+      const saved = await window.workshopDesktop.bindProjectLocalDirectory(projectId);
+      if (saved) {
+        setConfig(saved);
+        setDraftConfig(saved);
+      }
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : "本地目录操作失败";
+      if (source === "sticky") {
+        setError(message);
+      } else {
+        setRecordMessage(message);
+      }
     }
   }
 
@@ -2261,6 +2422,7 @@ export default function App() {
   async function updateTaskState(task: EnrichedTask, state: TaskState) {
     setBusyTaskId(task.id);
     setError("");
+    setTaskMessage("");
 
     try {
       const updatedTask = await api<Task>("PUT", `/tasks/${task.id}`, {
@@ -2390,16 +2552,24 @@ export default function App() {
               <GripVertical size={15} />
             </button>
             <div className="record-title-copy">
-              <WindowHeaderTitle title={recordHeaderTitle} />
-              {canAssignRecordToProject ? (
-                <button
-                  className="scope-switch-button"
-                  type="button"
-                  onClick={() => setRecordScopePickerOpen((open) => !open)}
-                  title="分配到项目"
-                >
-                  <Folder size={14} strokeWidth={2.8} />
-                </button>
+              <div className="window-title-line">
+                <WindowHeaderTitle title={recordHeaderTitle} />
+                {canAssignRecordToProject ? (
+                  <button
+                    className="scope-switch-button"
+                    type="button"
+                    onClick={() => setRecordScopePickerOpen((open) => !open)}
+                    title="分配到项目"
+                  >
+                    <Folder size={14} strokeWidth={2.8} />
+                  </button>
+                ) : null}
+              </div>
+              {!activeRecord && recordListContext.scopeType === "project" && recordListContext.projectId !== undefined ? (
+                <ProjectDirectorySubtitle
+                  localDirectory={getProjectLocalDirectory(config, recordListContext.projectId)}
+                  onClick={() => void handleProjectDirectoryClick(recordListContext.projectId as number, "record")}
+                />
               ) : null}
               {canAssignRecordToProject && recordScopePickerOpen ? (
                 <div className="scope-popover">
@@ -2454,6 +2624,13 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {!activeRecord && recordMessage ? (
+          <div className="record-message">
+            <Link size={14} />
+            <span>{recordMessage}</span>
+          </div>
+        ) : null}
 
         {activeRecord ? (
           <>
@@ -2515,6 +2692,15 @@ export default function App() {
               </div>
               <span className={`record-save-state ${recordSaveStatus}`}>{saveLabel}</span>
               <div className="record-toolbar-actions">
+                <button
+                  className="record-action-button"
+                  type="button"
+                  onClick={() => void sendActiveRecordToCodex()}
+                  disabled={!activeRecord?.projectId}
+                  title={activeRecord?.projectId ? "发送到 Codex" : "需要先关联项目"}
+                >
+                  <SquareTerminal size={15} />
+                </button>
                 <button
                   className={`record-action-button complete ${isActiveRecordCompleting ? "active" : ""}`}
                   type="button"
@@ -2685,6 +2871,7 @@ export default function App() {
       selectedProjectName,
       selectedTask
     });
+    const stickyProjectId = !isSingleTaskSticky && projectFilter !== "all" ? Number(projectFilter) : undefined;
 
     return (
       <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${isStickyContentCollapsed ? "collapsed-shell" : ""} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
@@ -2694,7 +2881,15 @@ export default function App() {
               <GripVertical size={15} />
             </button>
             <div className="sticky-title-copy">
-              <WindowHeaderTitle title={stickyHeader} />
+              <div className="window-title-line">
+                <WindowHeaderTitle title={stickyHeader} />
+              </div>
+              {stickyProjectId !== undefined && Number.isFinite(stickyProjectId) ? (
+                <ProjectDirectorySubtitle
+                  localDirectory={getProjectLocalDirectory(config, stickyProjectId)}
+                  onClick={() => void handleProjectDirectoryClick(stickyProjectId, "sticky")}
+                />
+              ) : null}
             </div>
           </div>
           <div className="sticky-actions">
@@ -2738,6 +2933,13 @@ export default function App() {
           </div>
         </header>
 
+        {taskMessage && !isStickyContentCollapsed ? (
+          <div className="notice sticky-notice success" role="status">
+            <SquareTerminal size={16} />
+            <span>{taskMessage}</span>
+          </div>
+        ) : null}
+
         {error && !isStickyContentCollapsed ? (
           <div className="notice sticky-notice" role="alert">
             <WifiOff size={16} />
@@ -2760,6 +2962,7 @@ export default function App() {
                     setTaskNoteBody(body);
                     setTaskNoteDirty(true);
                   }}
+                  onSendToCodex={(task) => void sendTaskToCodex(task)}
                   onUpdate={(nextTask, state) => void updateTaskState(nextTask, state)}
                 />
               ) : (
@@ -2875,6 +3078,25 @@ export default function App() {
           />
         ))}
       </section>
+
+      {codexRuns.length > 0 ? (
+        <section className="codex-run-list" aria-label="Codex 运行">
+          <div className="codex-run-list-title">
+            <SquareTerminal size={13} />
+            <span>Codex 运行</span>
+          </div>
+          {codexRuns.slice(0, 5).map((run) => (
+            <div key={run.runId} className={`codex-run-row status-${run.status}`} title={run.lastMessage || run.title}>
+              <span className="codex-run-dot" aria-hidden="true" />
+              <span className="codex-run-title">{run.title}</span>
+              <span className="codex-run-meta">
+                {run.projectName ? `${run.projectName} · ` : ""}
+                {codexRunStatusLabels[run.status] ?? run.status}
+              </span>
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       {settingsOpen ? (
         <div className="settings-backdrop" role="presentation">

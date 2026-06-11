@@ -1,6 +1,6 @@
 {
   "name": "workshop-desktop",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "description": "A lightweight cross-platform desktop client for Workshop todos.",
   "author": "Workshop",
@@ -17,7 +17,10 @@
     "dist": "pnpm run build && electron-builder",
     "package:build": "bash scripts/package.sh build",
     "package:dir": "bash scripts/package.sh dir",
-    "package:dist": "bash scripts/package.sh dist"
+    "package:dist": "bash scripts/package.sh dist",
+    "check:precommit": "bash scripts/pre-commit-check.sh",
+    "app:cli": "node scripts/workshop-desktop-cli.mjs",
+    "app:record:create": "node scripts/workshop-desktop-cli.mjs record create"
   },
   "dependencies": {
     "lucide-react": "^0.561.0",

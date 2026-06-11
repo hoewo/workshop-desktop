@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   globalShortcut,
   ipcMain,
   Menu,
@@ -12,22 +13,31 @@ import {
   type WebContents
 } from "electron";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import * as http from "node:http";
 import path from "node:path";
+import type { AddressInfo } from "node:net";
+import { CodexAppServerClient } from "./codexAppServer";
 import type {
   ApiRequest,
   ApiResponse,
   AppConfig,
   AuthTokens,
+  CodexRunBackend,
+  CodexRunMeta,
   LoginPayload,
   LoginRequest,
   PersonalRecord,
   PersonalRecordChangeNotice,
   PersonalRecordMeta,
+  PersonalRecordOrigin,
   PersonalRecordScope,
   PersonalRecordStatus,
   PersonalRecordTarget,
   SavePersonalRecordRequest,
+  SendToCodexRequest,
+  SendToCodexResponse,
   StickyTarget,
   TaskPreviewRequest,
   TaskStateChangeNotice,
@@ -54,7 +64,8 @@ const defaultConfig: AppConfig = {
   dailyRefreshTime: "09:00",
   stickyAlwaysOnTop: true,
   showDockIcon: true,
-  globalShortcutEnabled: true
+  globalShortcutEnabled: true,
+  projectLocalDirectories: {}
 };
 
 const PANEL_SHORTCUT_ACCELERATOR = "CommandOrControl+Alt+W";
@@ -64,6 +75,11 @@ const NOTE_ARRANGE_MARGIN = 12;
 const NOTE_ARRANGE_GAP = 12;
 const NOTE_ARRANGE_LIST_MIN_HEIGHT = 180;
 const NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT = 56;
+const customUserDataPath = process.env.WORKSHOP_DESKTOP_USER_DATA?.trim();
+
+if (customUserDataPath) {
+  app.setPath("userData", customUserDataPath);
+}
 
 let tray: Tray | null = null;
 let windowRef: BrowserWindow | null = null;
@@ -78,8 +94,11 @@ let tokenRefreshInProgress: Promise<AppConfig> | null = null;
 let isQuitting = false;
 let registeredPanelShortcut = false;
 let registeredNewPersonalRecordShortcut = false;
+let appServer: http.Server | null = null;
+let appServerInfo: { port: number; token: string; agentToken: string } | null = null;
 
 const configPath = () => path.join(app.getPath("userData"), "config.json");
+const appServerConnectionPath = () => path.join(app.getPath("userData"), "app-server.json");
 
 function bundledResourcePath(fileName: string) {
   return app.isPackaged ? path.join(process.resourcesPath, fileName) : path.join(process.cwd(), "resources", fileName);
@@ -138,8 +157,27 @@ function sanitizeConfig(config: AppConfig): AppConfig {
     refreshTokenExpiresAt: Number(config.refreshTokenExpiresAt) || 0,
     tokenType: config.tokenType || "Bearer",
     showDockIcon: config.showDockIcon !== false,
-    globalShortcutEnabled: config.globalShortcutEnabled !== false
+    globalShortcutEnabled: config.globalShortcutEnabled !== false,
+    projectLocalDirectories: sanitizeProjectLocalDirectories(config.projectLocalDirectories)
   };
+}
+
+function sanitizeProjectLocalDirectories(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const directories: Record<string, string> = {};
+  for (const [projectId, directory] of Object.entries(value)) {
+    if (!/^\d+$/.test(projectId) || typeof directory !== "string") {
+      continue;
+    }
+    const trimmed = directory.trim();
+    if (trimmed) {
+      directories[projectId] = trimmed;
+    }
+  }
+  return directories;
 }
 
 function applyDockVisibility(config: AppConfig) {
@@ -328,6 +366,491 @@ function safeWindowText(value: unknown, maxLength = 120) {
 
   const text = value.trim();
   return text && text.length <= maxLength ? text : null;
+}
+
+interface AppServerRpcRequest {
+  method: string;
+  params?: unknown;
+}
+
+interface CreateRecordParams {
+  title?: string | null;
+  bodyMarkdown: string;
+  scopeType?: PersonalRecordScope;
+  projectId?: number;
+  projectName?: string;
+  taskId?: number;
+  taskTitle?: string;
+  open?: boolean;
+}
+
+interface NormalizedSendToCodexParams {
+  kind: "task" | "record";
+  backend: CodexRunBackend;
+  projectId: number;
+  projectName?: string;
+  title: string;
+  bodyMarkdown?: string;
+  taskId?: number;
+  recordId?: string;
+}
+
+function writeAppServerJson(response: http.ServerResponse, statusCode: number, payload: unknown) {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  });
+  response.end(JSON.stringify(payload));
+}
+
+async function readAppServerJson(request: http.IncomingMessage) {
+  const chunks: Buffer[] = [];
+  let totalLength = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalLength += buffer.length;
+    if (totalLength > 1024 * 1024) {
+      throw new Error("请求体过大");
+    }
+    chunks.push(buffer);
+  }
+
+  const body = Buffer.concat(chunks).toString("utf8").trim();
+  return body ? JSON.parse(body) : {};
+}
+
+function getAppServerBearer(request: http.IncomingMessage) {
+  const authorization = request.headers.authorization;
+  if (typeof authorization === "string" && authorization.startsWith("Bearer ")) {
+    return authorization.slice("Bearer ".length).trim();
+  }
+
+  const tokenHeader = request.headers["x-workshop-desktop-token"];
+  return typeof tokenHeader === "string" ? tokenHeader.trim() : "";
+}
+
+function normalizeAppServerRecordParams(params: unknown): CreateRecordParams {
+  const value = isPlainObject(params) ? params : {};
+  const title = safeWindowText(value.title, 200);
+  const rawBody = typeof value.bodyMarkdown === "string" ? value.bodyMarkdown : typeof value.body === "string" ? value.body : "";
+  const bodyMarkdown = title && !/^#{1,6}\s/.test(rawBody.trim()) ? `# ${title}\n\n${rawBody.trim()}`.trimEnd() : rawBody;
+  const scopeType = normalizeRecordScope(value.scopeType);
+  const projectId = typeof value.projectId === "number" && Number.isFinite(value.projectId) ? value.projectId : undefined;
+  const taskId = typeof value.taskId === "number" && Number.isFinite(value.taskId) ? value.taskId : undefined;
+
+  return {
+    title,
+    bodyMarkdown: bodyMarkdown.trim() || (title ? `# ${title}` : ""),
+    scopeType,
+    projectId,
+    projectName: safeWindowText(value.projectName) ?? undefined,
+    taskId,
+    taskTitle: safeWindowText(value.taskTitle) ?? undefined,
+    open: value.open === true
+  };
+}
+
+function normalizeSendToCodexParams(params: unknown): NormalizedSendToCodexParams {
+  const value = isPlainObject(params) ? params : {};
+  const projectId = typeof value.projectId === "number" && Number.isFinite(value.projectId) ? value.projectId : NaN;
+  const kind = value.kind === "record" ? "record" : value.kind === "task" ? "task" : null;
+  const title = safeWindowText(value.title, 300);
+  const bodyMarkdown = typeof value.bodyMarkdown === "string" ? value.bodyMarkdown.slice(0, 24_000) : undefined;
+  const taskId = typeof value.taskId === "number" && Number.isFinite(value.taskId) ? value.taskId : undefined;
+  const recordId = safeWindowText(value.recordId, 120) ?? undefined;
+
+  if (!kind) {
+    throw new Error("codex.send 需要 kind 为 task 或 record");
+  }
+  if (!Number.isFinite(projectId)) {
+    throw new Error("codex.send 需要 projectId");
+  }
+  if (!title && !bodyMarkdown?.trim()) {
+    throw new Error("codex.send 需要 title 或 bodyMarkdown");
+  }
+
+  return {
+    kind,
+    backend: value.backend === "exec" ? "exec" : "app-server",
+    projectId,
+    projectName: safeWindowText(value.projectName) ?? undefined,
+    title: title ?? (kind === "task" ? "Workshop 任务" : "Workshop 记录"),
+    bodyMarkdown,
+    taskId,
+    recordId
+  };
+}
+
+function buildCodexPrompt(request: NormalizedSendToCodexParams, bridgeAvailable: boolean) {
+  const sourceLabel = request.kind === "task" ? "Workshop 任务" : "Workshop 记录";
+  const sourceLines = [
+    `来源：${sourceLabel}`,
+    `项目：${request.projectName || `#${request.projectId}`}`,
+    request.taskId ? `任务 ID：${request.taskId}` : "",
+    request.recordId ? `记录 ID：${request.recordId}` : ""
+  ].filter(Boolean);
+  const contentLines = [
+    `标题：${request.title}`,
+    request.bodyMarkdown?.trim() ? `内容：\n${request.bodyMarkdown.trim()}` : ""
+  ].filter(Boolean);
+  const recordParams = request.taskId
+    ? `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<markdown 正文>","scopeType":"task","projectId":${request.projectId},"taskId":${request.taskId}}}`
+    : `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<markdown 正文>","scopeType":"project","projectId":${request.projectId}}}`;
+  const writebackLines = bridgeAvailable
+    ? [
+        "任务完成后，评估是否需要把简短结论沉淀为一条 Workshop 记录。回写通道是 Workshop Desktop app server，",
+        "连接信息在环境变量 WORKSHOP_DESKTOP_SERVER_PORT 和 WORKSHOP_DESKTOP_SERVER_TOKEN 中（该 token 只允许 record.create）：",
+        "",
+        'curl -s -X POST "http://127.0.0.1:${WORKSHOP_DESKTOP_SERVER_PORT}/rpc" \\',
+        '  -H "authorization: Bearer ${WORKSHOP_DESKTOP_SERVER_TOKEN}" \\',
+        '  -H "content-type: application/json" \\',
+        `  -d '${recordParams}'`,
+        "",
+        "不要把临时思考直接写入 repo 文档。"
+      ]
+    : ["任务完成后，把简短结论写在最终输出里。不要把临时思考直接写入 repo 文档。"];
+
+  return [
+    "这是来自 Workshop Desktop 的本地执行请求。",
+    ...sourceLines,
+    "",
+    "请在当前项目目录中处理这个请求。若需要修改代码或文档，先读取并遵守本 repo 的 AGENTS.md。",
+    ...writebackLines,
+    "",
+    ...contentLines
+  ].join("\n");
+}
+
+async function getProjectLocalDirectory(projectId: number) {
+  const config = await readConfig();
+  const directory = config.projectLocalDirectories[String(projectId)]?.trim();
+  if (!directory) {
+    throw new Error("请先绑定本地目录");
+  }
+
+  const stat = await fs.stat(directory).catch(() => null);
+  if (!stat?.isDirectory()) {
+    throw new Error("本地目录不存在，请重新绑定");
+  }
+
+  return directory;
+}
+
+async function resolveCodexExecutable() {
+  const candidates = [
+    process.env.WORKSHOP_DESKTOP_CODEX_BIN?.trim(),
+    "/opt/homebrew/bin/codex",
+    "/usr/local/bin/codex",
+    "codex"
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    if (!path.isAbsolute(candidate)) {
+      return candidate;
+    }
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return "codex";
+}
+
+function codexEnvironment(): NodeJS.ProcessEnv {
+  const existingPath = process.env.PATH || "";
+  const commonPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  const pathEntries = new Set([...commonPaths, ...existingPath.split(path.delimiter).filter(Boolean)]);
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: [...pathEntries].join(path.delimiter)
+  };
+  if (appServerInfo) {
+    // 受限 token：被派发的 agent 只能回写记录，不能再触发 codex.send。
+    env.WORKSHOP_DESKTOP_SERVER_PORT = String(appServerInfo.port);
+    env.WORKSHOP_DESKTOP_SERVER_TOKEN = appServerInfo.agentToken;
+  }
+  return env;
+}
+
+const CODEX_RUNS_LIMIT = 100;
+let codexRunsQueue: Promise<unknown> = Promise.resolve();
+let codexClient: CodexAppServerClient | null = null;
+
+const codexRunsDirPath = () => path.join(app.getPath("userData"), "codex-runs");
+const codexRunsIndexPath = () => path.join(codexRunsDirPath(), "index.json");
+
+async function readCodexRuns(): Promise<CodexRunMeta[]> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(codexRunsIndexPath(), "utf8"));
+    return Array.isArray(parsed) ? (parsed as CodexRunMeta[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function notifyCodexRunsChanged(runs: CodexRunMeta[]) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send("codexRuns:changed", runs);
+    }
+  }
+}
+
+function mutateCodexRuns(mutate: (runs: CodexRunMeta[]) => CodexRunMeta[]): Promise<CodexRunMeta[]> {
+  const next = codexRunsQueue.then(async () => {
+    const runs = mutate(await readCodexRuns()).slice(0, CODEX_RUNS_LIMIT);
+    await fs.mkdir(codexRunsDirPath(), { recursive: true });
+    const tempPath = `${codexRunsIndexPath()}.tmp`;
+    await fs.writeFile(tempPath, JSON.stringify(runs, null, 2), "utf8");
+    await fs.rename(tempPath, codexRunsIndexPath());
+    notifyCodexRunsChanged(runs);
+    return runs;
+  });
+  codexRunsQueue = next.catch(() => undefined);
+  return next;
+}
+
+function upsertCodexRun(run: CodexRunMeta) {
+  return mutateCodexRuns((runs) => [run, ...runs.filter((existing) => existing.runId !== run.runId)]);
+}
+
+function updateCodexRun(runId: string, patch: Partial<CodexRunMeta>) {
+  return mutateCodexRuns((runs) => runs.map((run) => (run.runId === runId ? { ...run, ...patch } : run)));
+}
+
+// 应用上次退出时仍在运行的 run 已无法追踪，标记为中断。
+function reconcileCodexRunsOnStartup() {
+  return mutateCodexRuns((runs) => runs.map((run) => (run.status === "running" ? { ...run, status: "interrupted" } : run)));
+}
+
+function getCodexClient() {
+  if (!codexClient) {
+    codexClient = new CodexAppServerClient({
+      resolveExecutable: resolveCodexExecutable,
+      buildEnvironment: codexEnvironment,
+      clientVersion: app.getVersion(),
+      log: (message) => console.warn(`[codex] ${message}`)
+    });
+  }
+  return codexClient;
+}
+
+async function sendToCodex(params: unknown): Promise<SendToCodexResponse> {
+  const request = normalizeSendToCodexParams(params);
+  const localDirectory = await getProjectLocalDirectory(request.projectId);
+  const prompt = buildCodexPrompt(request, Boolean(appServerInfo));
+  const run: CodexRunMeta = {
+    runId: `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`,
+    backend: request.backend,
+    kind: request.kind,
+    title: request.title,
+    projectId: request.projectId,
+    projectName: request.projectName,
+    taskId: request.taskId,
+    recordId: request.recordId,
+    cwd: localDirectory,
+    status: "running",
+    startedAt: new Date().toISOString()
+  };
+
+  return request.backend === "exec" ? sendToCodexExec(run, prompt) : sendToCodexAppServer(run, prompt);
+}
+
+async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<SendToCodexResponse> {
+  await upsertCodexRun(run);
+  try {
+    const { threadId, turnId } = await getCodexClient().startTurn({
+      cwd: run.cwd,
+      prompt,
+      events: {
+        onAgentMessage: (text) => {
+          void updateCodexRun(run.runId, { lastMessage: text.slice(0, 600) });
+        },
+        onCompleted: (status, detail) => {
+          void updateCodexRun(run.runId, {
+            status,
+            completedAt: new Date().toISOString(),
+            ...(detail ? { lastMessage: detail.slice(0, 600) } : {})
+          });
+        }
+      }
+    });
+    await updateCodexRun(run.runId, { threadId, turnId });
+    return { localDirectory: run.cwd, runId: run.runId, backend: "app-server", threadId };
+  } catch (error) {
+    await updateCodexRun(run.runId, {
+      status: "failed",
+      completedAt: new Date().toISOString(),
+      lastMessage: error instanceof Error ? error.message : "codex 启动失败"
+    });
+    throw error;
+  }
+}
+
+async function sendToCodexExec(run: CodexRunMeta, prompt: string): Promise<SendToCodexResponse> {
+  const codexBin = await resolveCodexExecutable();
+  const outputPath = path.join(codexRunsDirPath(), `${run.runId}.md`);
+  await fs.mkdir(codexRunsDirPath(), { recursive: true });
+  await upsertCodexRun({ ...run, outputPath });
+
+  const child = spawn(codexBin, ["exec", "-C", run.cwd, "-o", outputPath, prompt], {
+    cwd: run.cwd,
+    detached: true,
+    env: codexEnvironment(),
+    stdio: "ignore"
+  });
+  child.on("exit", (code) => {
+    void finalizeCodexExecRun(run.runId, outputPath, code);
+  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", () => resolve());
+      child.once("error", (error) => reject(error));
+    });
+  } catch (error) {
+    await updateCodexRun(run.runId, {
+      status: "failed",
+      completedAt: new Date().toISOString(),
+      lastMessage: error instanceof Error ? error.message : "codex 启动失败"
+    });
+    throw error;
+  }
+
+  child.unref();
+  return { localDirectory: run.cwd, runId: run.runId, backend: "exec" };
+}
+
+async function finalizeCodexExecRun(runId: string, outputPath: string, code: number | null) {
+  let lastMessage = "";
+  if (code === 0) {
+    const output = await fs.readFile(outputPath, "utf8").catch(() => "");
+    lastMessage = output.trim().slice(-600);
+  } else {
+    lastMessage = `codex exec 退出码 ${String(code)}`;
+  }
+  await updateCodexRun(runId, {
+    status: code === 0 ? "completed" : "failed",
+    completedAt: new Date().toISOString(),
+    ...(lastMessage ? { lastMessage } : {})
+  });
+}
+
+type AppServerScope = "full" | "agent";
+
+async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
+  const rpc = isPlainObject(payload) ? (payload as Partial<AppServerRpcRequest>) : {};
+  if (rpc.method === "codex.send") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 codex.send");
+    }
+    return sendToCodex(rpc.params);
+  }
+
+  if (rpc.method === "record.create") {
+    const params = normalizeAppServerRecordParams(rpc.params);
+    if (!params.bodyMarkdown.trim()) {
+      throw new Error("record.create 需要 title 或 bodyMarkdown");
+    }
+
+    const record = await savePersonalRecord({
+      bodyMarkdown: params.bodyMarkdown,
+      scopeType: params.scopeType ?? "none",
+      origin: "agent",
+      projectId: params.projectId,
+      projectName: params.projectName,
+      taskId: params.taskId,
+      taskTitle: params.taskTitle
+    });
+
+    if (params.open) {
+      await showPersonalRecordWindow({ noteId: record.id });
+    }
+
+    return { record };
+  }
+
+  throw new Error(`不支持的 app server 方法：${String(rpc.method ?? "")}`);
+}
+
+async function startAppServer() {
+  if (appServer) {
+    return;
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const agentToken = crypto.randomBytes(32).toString("hex");
+  const server = http.createServer(async (request, response) => {
+    try {
+      if (request.method === "GET" && request.url === "/health") {
+        writeAppServerJson(response, 200, { ok: true, app: "workshop-desktop" });
+        return;
+      }
+
+      if (request.method !== "POST" || request.url !== "/rpc") {
+        writeAppServerJson(response, 404, { ok: false, error: "not_found" });
+        return;
+      }
+
+      const bearer = getAppServerBearer(request);
+      const scope: AppServerScope | null = bearer === token ? "full" : bearer === agentToken ? "agent" : null;
+      if (!scope) {
+        writeAppServerJson(response, 401, { ok: false, error: "unauthorized" });
+        return;
+      }
+
+      const payload = await readAppServerJson(request);
+      const result = await handleAppServerRpc(payload, scope);
+      writeAppServerJson(response, 200, { ok: true, result });
+    } catch (error) {
+      writeAppServerJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "app server request failed" });
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const address = server.address() as AddressInfo | null;
+  if (!address?.port) {
+    server.close();
+    throw new Error("app server failed to bind a local port");
+  }
+
+  appServer = server;
+  appServerInfo = { port: address.port, token, agentToken };
+  await fs.mkdir(app.getPath("userData"), { recursive: true });
+  await fs.writeFile(
+    appServerConnectionPath(),
+    JSON.stringify(
+      {
+        version: 1,
+        host: "127.0.0.1",
+        port: address.port,
+        token,
+        pid: process.pid,
+        startedAt: new Date().toISOString()
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await fs.chmod(appServerConnectionPath(), 0o600).catch(() => undefined);
+}
+
+function stopAppServer() {
+  appServer?.close();
+  appServer = null;
+  appServerInfo = null;
+  void fs.unlink(appServerConnectionPath()).catch(() => undefined);
 }
 
 function loadRenderer(win: BrowserWindow, options: RendererLoadOptions) {
@@ -637,11 +1160,14 @@ async function savePersonalRecord(request: SavePersonalRecordRequest): Promise<P
   const existing = records.find((record) => record.id === id);
   const now = new Date().toISOString();
   const fallbackTitle = taskTitle || projectName;
+  // origin 跟随创建者，后续编辑不改变来源。
+  const requestedOrigin: PersonalRecordOrigin = nextRequest.origin === "agent" ? "agent" : "human";
   const meta: PersonalRecordMeta = {
     id,
     title: deriveRecordTitle(bodyMarkdown, fallbackTitle),
     scopeType,
     status: normalizeRecordStatus(nextRequest.status ?? existing?.status),
+    origin: existing?.origin ?? requestedOrigin,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     ...(promotedTaskId ? { promotedTaskId } : existing?.promotedTaskId ? { promotedTaskId: existing.promotedTaskId } : {}),
@@ -1843,6 +2369,51 @@ async function performApiRequest<T>(request: ApiRequest): Promise<ApiResponse<T>
   }
 }
 
+async function bindProjectLocalDirectory(projectId: number, owner?: BrowserWindow | null) {
+  if (!Number.isFinite(projectId)) {
+    throw new Error("项目 ID 无效");
+  }
+
+  const result = owner
+    ? await dialog.showOpenDialog(owner, {
+        properties: ["openDirectory", "createDirectory"],
+        title: "绑定本地目录"
+      })
+    : await dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+        title: "绑定本地目录"
+      });
+  const [directory] = result.filePaths;
+  if (result.canceled || !directory) {
+    return null;
+  }
+
+  const config = await readConfig();
+  return saveConfig({
+    projectLocalDirectories: {
+      ...config.projectLocalDirectories,
+      [String(projectId)]: directory
+    }
+  });
+}
+
+async function openProjectLocalDirectory(projectId: number) {
+  if (!Number.isFinite(projectId)) {
+    throw new Error("项目 ID 无效");
+  }
+
+  const config = await readConfig();
+  const directory = config.projectLocalDirectories[String(projectId)]?.trim();
+  if (!directory) {
+    throw new Error("请先绑定本地目录");
+  }
+
+  const error = await shell.openPath(directory);
+  if (error) {
+    throw new Error(error);
+  }
+}
+
 function registerIpc() {
   ipcMain.handle("config:get", () => readConfig());
   ipcMain.handle("config:save", (_event, config: Partial<AppConfig>) => saveConfig(config));
@@ -1892,6 +2463,12 @@ function registerIpc() {
     }
     return saveConfig({ stickyAlwaysOnTop: enabled });
   });
+  ipcMain.handle("projectDirectory:bind", (event, projectId: number) =>
+    bindProjectLocalDirectory(projectId, BrowserWindow.fromWebContents(event.sender))
+  );
+  ipcMain.handle("projectDirectory:open", (_event, projectId: number) => openProjectLocalDirectory(projectId));
+  ipcMain.handle("codex:send", (_event, request: SendToCodexRequest) => sendToCodex(request));
+  ipcMain.handle("codexRuns:list", () => readCodexRuns());
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -1908,6 +2485,8 @@ app.on("before-quit", () => {
 });
 
 app.on("will-quit", () => {
+  codexClient?.stop();
+  stopAppServer();
   unregisterGlobalShortcuts();
 });
 
@@ -1918,6 +2497,10 @@ app.on("activate", () => {
 app.whenReady().then(async () => {
   registerIpc();
   const config = await readConfig();
+  await startAppServer().catch((error) => {
+    console.warn(error instanceof Error ? error.message : "app server failed to start");
+  });
+  await reconcileCodexRunsOnStartup().catch(() => undefined);
   applyDockVisibility(config);
   configureDockMenu();
   registerGlobalShortcuts(config);

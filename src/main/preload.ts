@@ -3,10 +3,12 @@ import type {
   ApiRequest,
   ApiResponse,
   AppConfig,
+  CodexRunMeta,
   DesktopBridge,
   PersonalRecordChangeNotice,
   PersonalRecordTarget,
   SavePersonalRecordRequest,
+  SendToCodexRequest,
   StickyTarget,
   TaskPreviewRequest,
   WindowArrangementNotice,
@@ -34,6 +36,10 @@ function sanitizeRecordTarget(target?: PersonalRecordTarget) {
   return isPlainObject(target) ? target : undefined;
 }
 
+function sanitizeSendToCodexRequest(request?: SendToCodexRequest) {
+  return isPlainObject(request) ? request : undefined;
+}
+
 const bridge: DesktopBridge = {
   getConfig: () => ipcRenderer.invoke("config:get"),
   saveConfig: (config: Partial<AppConfig>) => ipcRenderer.invoke("config:save", config),
@@ -57,6 +63,15 @@ const bridge: DesktopBridge = {
   arrangeStickyWindows: () => ipcRenderer.invoke("sticky:arrange"),
   fitWindowContent: (request) => ipcRenderer.invoke("window:fitContent", request),
   setStickyAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("sticky:setAlwaysOnTop", enabled),
+  bindProjectLocalDirectory: (projectId: number) => ipcRenderer.invoke("projectDirectory:bind", projectId),
+  openProjectLocalDirectory: (projectId: number) => ipcRenderer.invoke("projectDirectory:open", projectId),
+  sendToCodex: (request: SendToCodexRequest) => ipcRenderer.invoke("codex:send", sanitizeSendToCodexRequest(request)),
+  listCodexRuns: () => ipcRenderer.invoke("codexRuns:list"),
+  onCodexRunsChanged: (callback) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown) => callback(Array.isArray(payload) ? (payload as CodexRunMeta[]) : []);
+    ipcRenderer.on("codexRuns:changed", listener);
+    return () => ipcRenderer.removeListener("codexRuns:changed", listener);
+  },
   onFocusPulse: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("window:focusPulse", listener);

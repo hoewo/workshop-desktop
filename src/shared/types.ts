@@ -18,6 +18,7 @@ export interface AppConfig {
   stickyAlwaysOnTop: boolean;
   showDockIcon: boolean;
   globalShortcutEnabled: boolean;
+  projectLocalDirectories: Record<string, string>;
 }
 
 export interface ApiEnvelope<T> {
@@ -210,12 +211,15 @@ export interface StickyTarget {
 
 export type PersonalRecordScope = "none" | "project" | "task";
 export type PersonalRecordStatus = "active" | "completed" | "promoted";
+// 缺省视为 human，兼容没有 origin 字段的历史记录。
+export type PersonalRecordOrigin = "human" | "agent";
 
 export interface PersonalRecordMeta {
   id: string;
   title: string;
   scopeType: PersonalRecordScope;
   status: PersonalRecordStatus;
+  origin?: PersonalRecordOrigin;
   projectId?: number;
   projectName?: string;
   taskId?: number;
@@ -253,11 +257,54 @@ export interface SavePersonalRecordRequest {
   bodyMarkdown: string;
   scopeType: PersonalRecordScope;
   status?: PersonalRecordStatus;
+  origin?: PersonalRecordOrigin;
   projectId?: number;
   projectName?: string;
   taskId?: number;
   taskTitle?: string;
   promotedTaskId?: number;
+}
+
+export type CodexSendKind = "task" | "record";
+export type CodexRunBackend = "exec" | "app-server";
+export type CodexRunStatus = "running" | "completed" | "failed" | "interrupted";
+
+export interface SendToCodexRequest {
+  kind: CodexSendKind;
+  projectId: number;
+  projectName?: string;
+  title: string;
+  bodyMarkdown?: string;
+  taskId?: number;
+  recordId?: string;
+  backend?: CodexRunBackend;
+}
+
+export interface SendToCodexResponse {
+  localDirectory: string;
+  runId: string;
+  backend: CodexRunBackend;
+  threadId?: string;
+}
+
+// 运行是执行遥测，不是知识对象；它不参与记录/任务的晋升流程。
+export interface CodexRunMeta {
+  runId: string;
+  backend: CodexRunBackend;
+  kind: CodexSendKind;
+  title: string;
+  projectId: number;
+  projectName?: string;
+  taskId?: number;
+  recordId?: string;
+  cwd: string;
+  threadId?: string;
+  turnId?: string;
+  status: CodexRunStatus;
+  lastMessage?: string;
+  outputPath?: string;
+  startedAt: string;
+  completedAt?: string;
 }
 
 export interface WindowFitRequest {
@@ -297,6 +344,11 @@ export interface DesktopBridge {
   arrangeStickyWindows: () => Promise<void>;
   fitWindowContent: (request: WindowFitRequest) => Promise<void>;
   setStickyAlwaysOnTop: (enabled: boolean) => Promise<AppConfig>;
+  bindProjectLocalDirectory: (projectId: number) => Promise<AppConfig | null>;
+  openProjectLocalDirectory: (projectId: number) => Promise<void>;
+  sendToCodex: (request: SendToCodexRequest) => Promise<SendToCodexResponse>;
+  listCodexRuns: () => Promise<CodexRunMeta[]>;
+  onCodexRunsChanged: (callback: (runs: CodexRunMeta[]) => void) => () => void;
   onFocusPulse: (callback: () => void) => () => void;
   onWindowArrangement: (callback: (notice: WindowArrangementNotice) => void) => () => void;
   onRefresh: (callback: (event: WorkshopRefreshEvent) => void) => () => void;

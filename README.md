@@ -2,6 +2,12 @@
 
 Workshop Desktop 是一个轻量跨平台桌面端，用于快速查看和处理 Workshop 后端里的个人待办。内测阶段默认保留 Dock 图标，同时支持系统托盘/菜单栏入口和全局快捷键，避免菜单栏图标过多时找不到应用入口。
 
+## 项目背景
+
+Workshop Desktop 来源于一个 AI 开发流程判断：个人思考、任务执行、项目事实和通用方法不应该混在同一个默认上下文里。
+
+本项目承载其中的“个人捕捉与执行转化”部分：帮助用户在桌面端快速记录个人想法、查看个人任务、打开任务工作面，并在想法成熟后推进为 Workshop 任务。repo 文档只保存会约束代码和 AI 执行的长期事实，不收录全部个人思考材料。
+
 ## 当前能力
 
 - 启动时若没有有效登录配置，会自动打开登录面板
@@ -21,6 +27,7 @@ Workshop Desktop 是一个轻量跨平台桌面端，用于快速查看和处理
 - 个人记录分为个人、项目、任务三类；项目记录可多条，任务记录按任务唯一
 - 项目列表和任务列表会提示是否已有个人记录
 - 任务列表采用紧凑展示，长任务标题在列表中截断，详情中查看完整内容
+- 启动后提供仅本机可访问的 app server，允许本地 CLI/AI 通过正式接口新增个人记录
 
 ## 后端契约
 
@@ -138,6 +145,24 @@ npx --yes pnpm dev
 ./scripts/package.sh build
 ```
 
+提交前检查：
+
+```bash
+git config core.hooksPath .githooks
+bash scripts/pre-commit-check.sh
+```
+
+启用后，每次 `git commit` 前都会执行主进程类型检查、渲染层类型检查和前端生产构建；任一检查失败都会阻止提交。
+
+本地 AI/CLI 能力验证：
+
+```bash
+npx --yes pnpm dev
+npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI 写入。" --open
+```
+
+该命令要求 Workshop Desktop 正在运行；CLI 会通过本机 app server 请求桌面端新增记录，不直接写内部数据文件。
+
 打包本平台目录包：
 
 ```bash
@@ -171,6 +196,12 @@ release/Workshop Todo-<version>-arm64-mac.zip
 
 如果你要走自己的签名/下载源，可在命令前覆盖环境变量。
 
-## 项目规划
+## 项目文档
 
-当前治理和交付规划入口见 [docs/project-plan.md](docs/project-plan.md)。README 继续保留产品能力、接口契约和开发运行说明；Goal、Iteration、Task、Decision、Roadmap 等执行状态放在 `docs/project/` 下维护。
+本 repo 采用最小 AI 开发上下文，不默认维护完整治理文档树。
+
+- [AGENTS.md](AGENTS.md)：AI 协作和提交前文档审查规则
+- [docs/architecture.md](docs/architecture.md)：架构边界和运行模块
+- [docs/domain.md](docs/domain.md)：项目、任务、个人记录等领域概念
+- [docs/testing.md](docs/testing.md)：开发、构建、打包和验证方式
+- [docs/decisions.md](docs/decisions.md)：已接受决策和仍需确认的问题

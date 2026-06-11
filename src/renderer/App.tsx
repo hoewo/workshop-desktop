@@ -1130,6 +1130,7 @@ export default function App() {
   const [recordScopePickerOpen, setRecordScopePickerOpen] = useState(false);
   const [recordProjectQuery, setRecordProjectQuery] = useState("");
   const [recordSearchQuery, setRecordSearchQuery] = useState("");
+  const [recordSearchOpen, setRecordSearchOpen] = useState(false);
   const [recordCompletingId, setRecordCompletingId] = useState<string | null>(null);
   const [stickyListCollapsed, setStickyListCollapsed] = useState(false);
   const [recordListCollapsed, setRecordListCollapsed] = useState(false);
@@ -1138,6 +1139,7 @@ export default function App() {
   const [focusPulseVisible, setFocusPulseVisible] = useState(false);
   const recordSaveTimerRef = useRef<number | null>(null);
   const recordEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const recordSearchInputRef = useRef<HTMLInputElement | null>(null);
   const taskNoteSaveTimerRef = useRef<number | null>(null);
   const focusPulseTimerRef = useRef<number | null>(null);
   const focusPulseFrameRef = useRef<number | null>(null);
@@ -1691,6 +1693,14 @@ export default function App() {
   }, [activeRecord?.id, recordBody, recordMode, surface]);
 
   useEffect(() => {
+    if (surface !== "record" || activeRecord || !recordSearchOpen) {
+      return;
+    }
+
+    recordSearchInputRef.current?.focus();
+  }, [activeRecord, recordSearchOpen, surface]);
+
+  useEffect(() => {
     if (surface !== "sticky" && surface !== "record") {
       return undefined;
     }
@@ -1749,6 +1759,7 @@ export default function App() {
     recordMessage,
     recordMode,
     recordListCollapsed,
+    recordSearchOpen,
     recordSearchQuery,
     records,
     stickyListCollapsed,
@@ -2570,6 +2581,7 @@ export default function App() {
     const isTaskNote = activeRecord?.scopeType === "task";
     const canAssignRecordToProject = activeRecord?.scopeType === "none";
     const canPromoteToTask = activeRecord?.scopeType === "project" && Boolean(activeRecord.projectId);
+    const isRecordSearchExpanded = recordSearchOpen || hasRecordSearchQuery;
 
     return (
       <main
@@ -2602,29 +2614,6 @@ export default function App() {
                   onClick={() => void handleProjectDirectoryClick(recordListContext.projectId as number, "record")}
                 />
               ) : null}
-              {!activeRecord && !recordListCollapsed ? (
-                <div className="record-list-search" role="search">
-                  <Search size={13} aria-hidden="true" />
-                  <input
-                    value={recordSearchQuery}
-                    onChange={(event) => setRecordSearchQuery(event.target.value)}
-                    placeholder="搜索记录"
-                    aria-label="搜索记录"
-                    spellCheck={false}
-                  />
-                  {recordSearchQuery ? (
-                    <button
-                      className="record-search-clear"
-                      type="button"
-                      onClick={() => setRecordSearchQuery("")}
-                      title="清空搜索"
-                      aria-label="清空搜索"
-                    >
-                      <X size={12} />
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
               {canAssignRecordToProject && recordScopePickerOpen ? (
                 <div className="scope-popover">
                   <input
@@ -2650,6 +2639,57 @@ export default function App() {
             </div>
           </div>
           <div className="sticky-actions">
+            {!activeRecord ? (
+              <div className={`record-search-control ${isRecordSearchExpanded ? "expanded" : ""}`} role="search">
+                <button
+                  className="record-search-toggle"
+                  type="button"
+                  onClick={() => {
+                    setRecordListCollapsed(false);
+                    setRecordSearchOpen(true);
+                  }}
+                  title="搜索记录"
+                  aria-label="搜索记录"
+                >
+                  <Search size={14} />
+                </button>
+                {isRecordSearchExpanded ? (
+                  <>
+                    <input
+                      ref={recordSearchInputRef}
+                      value={recordSearchQuery}
+                      onChange={(event) => setRecordSearchQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          setRecordSearchQuery("");
+                          setRecordSearchOpen(false);
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      placeholder="搜索"
+                      aria-label="搜索记录"
+                      spellCheck={false}
+                    />
+                    <button
+                      className="record-search-clear"
+                      type="button"
+                      onClick={() => {
+                        if (recordSearchQuery) {
+                          setRecordSearchQuery("");
+                          recordSearchInputRef.current?.focus();
+                          return;
+                        }
+                        setRecordSearchOpen(false);
+                      }}
+                      title={recordSearchQuery ? "清空搜索" : "关闭搜索"}
+                      aria-label={recordSearchQuery ? "清空搜索" : "关闭搜索"}
+                    >
+                      <X size={12} />
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
             {!activeRecord ? (
               <button
                 className="icon-button"

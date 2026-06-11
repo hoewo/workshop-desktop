@@ -1435,64 +1435,6 @@ textarea:focus {
   color: #8a6d43;
 }
 
-.record-list-search {
-  position: relative;
-  width: min(100%, 220px);
-  height: 26px;
-  display: flex;
-  align-items: center;
-  margin-top: 3px;
-  color: #66716c;
-  -webkit-app-region: no-drag;
-}
-
-.record-list-search > svg {
-  position: absolute;
-  left: 8px;
-  pointer-events: none;
-}
-
-.record-list-search input {
-  height: 26px;
-  padding: 0 27px 0 27px;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.68);
-  color: #1f2623;
-  font-size: 11.5px;
-  font-weight: 620;
-}
-
-.record-list-search input::placeholder {
-  color: #7a837e;
-}
-
-.record-list-search input:focus {
-  box-shadow: none;
-}
-
-.record-list-search:focus-within {
-  color: #1f6d56;
-}
-
-.record-search-clear {
-  position: absolute;
-  right: 3px;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
-  background: transparent;
-  color: #68716d;
-  cursor: pointer;
-}
-
-.record-search-clear:hover {
-  background: rgba(30, 36, 34, 0.07);
-  color: #1f2623;
-}
-
 .sticky-drag > h1 {
   min-width: 0;
   max-width: 100%;
@@ -1533,6 +1475,80 @@ textarea:focus {
   border-color: transparent;
   background: transparent;
   color: #266954;
+}
+
+.record-search-control {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: #68706c;
+  transition:
+    width 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.record-search-control.expanded {
+  width: min(176px, 46vw);
+  border-color: rgba(30, 36, 34, 0.1);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 4px 14px rgba(30, 36, 34, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.record-search-toggle,
+.record-search-clear {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.record-search-toggle:hover,
+.record-search-clear:hover {
+  background: rgba(30, 36, 34, 0.07);
+  color: #1f2623;
+}
+
+.record-search-control.expanded .record-search-toggle {
+  color: #1f6d56;
+}
+
+.record-search-control input {
+  min-width: 0;
+  height: 24px;
+  flex: 1 1 auto;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: #1f2623;
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.record-search-control input::placeholder {
+  color: #7a837e;
+}
+
+.record-search-control input:focus {
+  box-shadow: none;
 }
 
 .sticky-notice {

@@ -94,6 +94,8 @@ npx --yes pnpm release -- major
 - 等待 `Release` GitHub Actions workflow 结束。
 - 使用 `gh release view` 校验 GitHub Release 资产。
 
+也可以在 GitHub Actions 页面手动触发 `Release` workflow。手动触发不会修改 `package.json`，需要勾选 `confirm_release`，确认它会在 macOS 和 Windows 构建成功后创建当前 `package.json` 版本对应的 `vX.Y.Z` tag，再发布 GitHub Release。如果该 tag 已存在，workflow 会在构建前失败；需要先通过 release 脚本或手工提交方式提升版本号。
+
 tag 约定使用 annotated `vX.Y.Z`：
 
 ```bash

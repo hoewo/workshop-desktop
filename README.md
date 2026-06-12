@@ -176,7 +176,7 @@ npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI �
 ./scripts/package.sh dist
 ```
 
-本机默认生成当前平台安装包。macOS 云端发布生成签名、公证后的 DMG + zip；本地无签名 secrets 时仍可只构建 zip 做本机验证。
+本机默认生成当前平台安装包。macOS 云端发布生成签名、公证后的 zip；本地无签名 secrets 时仍可只构建 zip 做本机验证。
 
 ```text
 release/Workshop.Todo-<version>-arm64-mac.zip
@@ -184,11 +184,11 @@ release/Workshop.Todo-<version>-arm64-mac.zip
 
 云端发布通过 GitHub Actions 生成：
 
-- macOS arm64 DMG、zip、zip blockmap、`latest-mac.yml`
+- macOS arm64 zip、zip blockmap、`latest-mac.yml`
 - Windows x64 NSIS installer
 - Windows x64 portable exe
 
-macOS 自动更新使用 `electron-updater` 访问公开 GitHub Release。客户端直接读取 Release 里的 `latest-mac.yml`、安装包和 blockmap，不再内置 GitHub token。
+macOS 自动更新使用 `electron-updater` 访问公开 GitHub Release。客户端直接读取 Release 里的 `latest-mac.yml`、zip 和 blockmap，不再内置 GitHub token。
 
 脚本默认设置：
 

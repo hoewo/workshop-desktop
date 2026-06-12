@@ -50,14 +50,14 @@ Consequences:
 
 Status: accepted
 
-Decision: macOS 本地无签名 secrets 的验证包可以只使用 zip。
+Decision: macOS 本地无签名 secrets 的验证包可以只使用 zip；正式 macOS release 当前也使用签名、公证后的 zip。
 
 Rationale: 当前 Electron Builder 配置目标是 zip，本机生成 DMG 存在已知 vendor 下载阻碍。
 
 Consequences:
 
 - `./scripts/package.sh dist` 在本机无签名 secrets 时仍可作为 zip 验证路径。
-- 正式 macOS release 的签名、公证、DMG 和自动更新由 D-010 约束。
+- 正式 macOS release 的签名、公证和自动更新由 D-010 约束。
 
 ### D-005 提供本地 app server 作为 AI bridge
 
@@ -138,9 +138,9 @@ Consequences:
 
 Status: accepted
 
-Decision: macOS 发布版使用签名、公证后的 DMG + zip，通过公开 GitHub Release 提供 `latest-mac.yml`、安装包和 blockmap；客户端用 `electron-updater` 检查和下载更新，下载完成后由用户确认重启安装。
+Decision: macOS 发布版使用签名、公证后的 zip，通过公开 GitHub Release 提供 `latest-mac.yml`、zip 和 blockmap；客户端用 `electron-updater` 检查和下载更新，下载完成后由用户确认重启安装。
 
-Rationale: 仓库和 Release 已公开，公开 GitHub Release 可以最快提供 Mac 用户本机更新体验，并避免在客户端内置可被提取的 GitHub token。服务器/CDN 下载源尚未配置好，后续可再迁移到 generic HTTPS 更新源。
+Rationale: 仓库和 Release 已公开，公开 GitHub Release 可以最快提供 Mac 用户本机更新体验，并避免在客户端内置可被提取的 GitHub token。electron-builder 26.8.1 当前生成 DMG 会触发 DMG vendor 错误；自动更新不依赖 DMG，因此正式 release 先使用 zip。服务器/CDN 下载源尚未配置好，后续可再迁移到 generic HTTPS 更新源。
 
 Consequences:
 

@@ -125,7 +125,7 @@ jobs:
         shell: bash
         run: |
           for attempt in 1 2 3; do
-            if npx electron-builder --mac dmg zip --arm64 --publish never; then
+            if npx electron-builder --mac zip --arm64 --publish never; then
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then
@@ -139,7 +139,6 @@ jobs:
         with:
           name: workshop-todo-macos-arm64
           path: |
-            release/*.dmg
             release/*.zip
             release/*.zip.blockmap
             release/latest-mac.yml

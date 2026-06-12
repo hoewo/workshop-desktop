@@ -84,7 +84,6 @@
       "icon": "resources/app-icon.icns",
       "artifactName": "Workshop.Todo-${version}-${arch}-${os}.${ext}",
       "target": [
-        "dmg",
         "zip"
       ],
       "hardenedRuntime": true,

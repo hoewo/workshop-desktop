@@ -1,10 +1,10 @@
 import type { ApiResponse, AppConfig, PersonalRecordTarget } from "../../shared/types";
 
-export type Surface = "tray" | "sticky" | "record";
+export type Surface = "tray" | "sticky" | "record" | "settings" | "update";
 
 export function getSurface(): Surface {
   const surface = new URLSearchParams(window.location.search).get("surface");
-  return surface === "sticky" || surface === "record" ? surface : "tray";
+  return surface === "sticky" || surface === "record" || surface === "settings" || surface === "update" ? surface : "tray";
 }
 
 export function getInitialProjectFilter() {

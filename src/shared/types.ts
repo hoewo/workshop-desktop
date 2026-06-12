@@ -370,6 +370,7 @@ export interface DesktopBridge {
   createTask: (request: CreateTaskRequest) => Promise<ApiResponse<Task>>;
   updateTask: (request: UpdateTaskRequest) => Promise<ApiResponse<Task>>;
   openExternal: (url: string) => Promise<void>;
+  openSettings: () => Promise<void>;
   openSticky: (target?: StickyTarget | number) => Promise<void>;
   openPersonalRecord: (target?: PersonalRecordTarget) => Promise<void>;
   listPersonalRecords: () => Promise<PersonalRecordMeta[]>;
@@ -392,6 +393,7 @@ export interface DesktopBridge {
   getUpdateStatus: () => Promise<AppUpdateStatus>;
   checkForUpdates: () => Promise<AppUpdateStatus>;
   installUpdate: () => Promise<void>;
+  onConfigChanged: (callback: (config: AppConfig) => void) => () => void;
   onCodexRunsChanged: (callback: (runs: CodexRunMeta[]) => void) => () => void;
   onUpdateStatus: (callback: (status: AppUpdateStatus) => void) => () => void;
   onFocusPulse: (callback: () => void) => () => void;

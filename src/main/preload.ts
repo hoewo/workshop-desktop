@@ -52,6 +52,7 @@ const bridge: DesktopBridge = {
   createTask: (request) => ipcRenderer.invoke("workshop:createTask", request),
   updateTask: (request) => ipcRenderer.invoke("workshop:updateTask", request),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+  openSettings: () => ipcRenderer.invoke("settings:open"),
   openSticky: (target?: StickyTarget | number) => ipcRenderer.invoke("sticky:open", sanitizeStickyTarget(target)),
   openPersonalRecord: (target?: PersonalRecordTarget) => ipcRenderer.invoke("record:open", sanitizeRecordTarget(target)),
   listPersonalRecords: () => ipcRenderer.invoke("record:list"),
@@ -74,6 +75,11 @@ const bridge: DesktopBridge = {
   getUpdateStatus: () => ipcRenderer.invoke("appUpdate:getStatus"),
   checkForUpdates: () => ipcRenderer.invoke("appUpdate:check"),
   installUpdate: () => ipcRenderer.invoke("appUpdate:install"),
+  onConfigChanged: (callback) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as AppConfig);
+    ipcRenderer.on("config:changed", listener);
+    return () => ipcRenderer.removeListener("config:changed", listener);
+  },
   onCodexRunsChanged: (callback) => {
     const listener = (_event: IpcRendererEvent, payload: unknown) => callback(Array.isArray(payload) ? (payload as CodexRunMeta[]) : []);
     ipcRenderer.on("codexRuns:changed", listener);

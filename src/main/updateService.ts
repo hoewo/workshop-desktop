@@ -20,7 +20,11 @@ export class AppUpdateService {
     message: "可以检查更新"
   };
 
-  constructor(private readonly onStatus: (status: AppUpdateStatus) => void) {}
+  constructor(
+    private readonly onStatus: (status: AppUpdateStatus) => void,
+    private readonly onBeforeInstall?: () => void,
+    private readonly onInstallError?: () => void
+  ) {}
 
   getStatus() {
     return { ...this.status };
@@ -81,7 +85,26 @@ export class AppUpdateService {
       throw new Error("没有已下载的更新");
     }
 
-    autoUpdater.quitAndInstall(false, true);
+    this.setStatus({
+      ...this.status,
+      message: "正在重启并安装更新"
+    });
+    this.onBeforeInstall?.();
+
+    try {
+      autoUpdater.quitAndInstall(false, true);
+    } catch (error) {
+      this.onInstallError?.();
+      this.setStatus({
+        phase: "error",
+        currentVersion: app.getVersion(),
+        availableVersion: this.status.availableVersion,
+        message: error instanceof Error ? error.message : "安装更新失败",
+        checkedAt: this.status.checkedAt,
+        downloadedAt: this.status.downloadedAt
+      });
+      throw error;
+    }
   }
 
   private async configure() {
@@ -94,6 +117,7 @@ export class AppUpdateService {
     autoUpdater.logger = log;
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.autoRunAppAfterInstall = true;
     autoUpdater.allowPrerelease = false;
 
     autoUpdater.on("checking-for-update", () => {

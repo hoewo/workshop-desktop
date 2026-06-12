@@ -24,13 +24,14 @@ import type {
 } from "../shared/types";
 import { LoginSurface } from "./components/surfaces/LoginSurface";
 import { RecordSurface } from "./components/surfaces/RecordSurface";
+import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { StickyLoginRequiredSurface, StickySurface } from "./components/surfaces/StickySurface";
 import { TraySurface } from "./components/surfaces/TraySurface";
+import { UpdateSurface } from "./components/surfaces/UpdateSurface";
 import { useKeyedCompletionFeedback, useSingleCompletionFeedback } from "./hooks/useCompletionFeedback";
 import { useFocusPulse } from "./hooks/useFocusPulse";
 import {
   apiData,
-  canSubmitDirectLogin,
   extractList,
   getErrorMessage,
   getInitialProjectFilter,
@@ -88,7 +89,6 @@ export default function App() {
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [taskMessage, setTaskMessage] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [hoveredProjectId, setHoveredProjectId] = useState<number | null>(null);
   const [recordTarget] = useState(getInitialRecordTarget);
   const [records, setRecords] = useState<PersonalRecordMeta[]>([]);
@@ -96,7 +96,7 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
 
   useEffect(() => {
-    if (getSurface() !== "tray") {
+    if (surface !== "tray") {
       return undefined;
     }
 
@@ -114,10 +114,10 @@ export default function App() {
       cancelled = true;
       unsubscribe();
     };
-  }, []);
+  }, [surface]);
 
   useEffect(() => {
-    if (getSurface() !== "tray") {
+    if (surface !== "tray" && surface !== "settings" && surface !== "update") {
       return undefined;
     }
 
@@ -135,7 +135,7 @@ export default function App() {
       cancelled = true;
       unsubscribe();
     };
-  }, []);
+  }, [surface]);
   const [recordsLoaded, setRecordsLoaded] = useState(false);
   const [activeRecord, setActiveRecord] = useState<PersonalRecord | null>(null);
   const [recordListContext, setRecordListContext] = useState<RecordListContext>(() => getRecordListContext(recordTarget));
@@ -503,6 +503,15 @@ export default function App() {
       setDraftConfig(nextConfig);
     });
   }, []);
+
+  useEffect(
+    () =>
+      window.workshopDesktop.onConfigChanged((nextConfig) => {
+        setConfig(nextConfig);
+        setDraftConfig(nextConfig);
+      }),
+    []
+  );
 
   useEffect(() => {
     void loadRecords().then((nextRecords) => {
@@ -1395,29 +1404,21 @@ export default function App() {
     setIsLoggingIn(true);
 
     try {
-      const saved = await saveConfig(draftConfig);
+      await saveConfig({ ...draftConfig, authMode: "nebula" });
+      const response = await window.workshopDesktop.loginWithCode({
+        codeType: loginCodeType,
+        target: loginTarget.trim(),
+        code: loginCode.trim()
+      });
 
-      if (saved.authMode === "nebula") {
-        const response = await window.workshopDesktop.loginWithCode({
-          codeType: loginCodeType,
-          target: loginTarget.trim(),
-          code: loginCode.trim()
-        });
-
-        if (!response.ok) {
-          throw new Error(response.error || getErrorMessage(response.body, "登录失败"));
-        }
-
-        const loggedInConfig = await window.workshopDesktop.getConfig();
-        setConfig(loggedInConfig);
-        setDraftConfig(loggedInConfig);
-        setLoginCode("");
-        return;
+      if (!response.ok) {
+        throw new Error(response.error || getErrorMessage(response.body, "登录失败"));
       }
 
-      if (isLoggedIn(saved)) {
-        await loadData();
-      }
+      const loggedInConfig = await window.workshopDesktop.getConfig();
+      setConfig(loggedInConfig);
+      setDraftConfig(loggedInConfig);
+      setLoginCode("");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "登录失败");
     } finally {
@@ -1493,8 +1494,15 @@ export default function App() {
       return;
     }
 
-    await saveConfig(draftConfig);
-    setSettingsOpen(false);
+    setError("");
+    try {
+      await saveConfig(draftConfig);
+      if (surface === "settings") {
+        await window.workshopDesktop.closeWindow();
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "保存失败");
+    }
   }
 
   async function handleLogout() {
@@ -1519,7 +1527,9 @@ export default function App() {
     setDraftConfig(saved);
     setProjects([]);
     setTasks([]);
-    setSettingsOpen(false);
+    if (surface === "settings") {
+      await window.workshopDesktop.closeWindow();
+    }
   }
 
   async function handleCheckForUpdates() {
@@ -1549,17 +1559,30 @@ export default function App() {
     await window.workshopDesktop.arrangeStickyWindows();
   }
 
-  const loginReady = draftConfig
-    ? draftConfig.authMode === "nebula"
-      ? Boolean(loginTarget.trim() && loginCode.trim())
-      : canSubmitDirectLogin(draftConfig)
-    : false;
+  const loginReady = Boolean(draftConfig && loginTarget.trim() && loginCode.trim());
 
   if (!config || !draftConfig) {
     return (
       <main className="app-shell loading-shell">
         <LoaderCircle className="spin" size={22} />
       </main>
+    );
+  }
+
+  if (surface === "settings") {
+    return (
+      <SettingsSurface
+        draftConfig={draftConfig}
+        error={error}
+        isSavingConfig={isSavingConfig}
+        updateStatus={updateStatus}
+        onCheckForUpdates={() => void handleCheckForUpdates()}
+        onCloseWindow={() => void window.workshopDesktop.closeWindow()}
+        onInstallUpdate={() => void handleInstallUpdate()}
+        onLogout={() => void handleLogout()}
+        onSaveConfig={(event) => void handleSaveConfig(event)}
+        setDraftConfig={setDraftConfig}
+      />
     );
   }
 
@@ -1621,6 +1644,17 @@ export default function App() {
     );
   }
 
+  if (surface === "update") {
+    return (
+      <UpdateSurface
+        updateStatus={updateStatus}
+        onCheckForUpdates={() => void handleCheckForUpdates()}
+        onInstallUpdate={() => void handleInstallUpdate()}
+        onCloseWindow={() => void window.workshopDesktop.closeWindow()}
+      />
+    );
+  }
+
   if (!isLoggedIn(config)) {
     if (surface === "sticky") {
       return (
@@ -1635,7 +1669,6 @@ export default function App() {
 
     return (
       <LoginSurface
-        draftConfig={draftConfig}
         error={error}
         isLoggingIn={isLoggingIn}
         isSavingConfig={isSavingConfig}
@@ -1647,7 +1680,6 @@ export default function App() {
         sendCooldown={sendCooldown}
         onLogin={(event) => void handleLogin(event)}
         onSendVerification={() => void handleSendVerification()}
-        setDraftConfig={setDraftConfig}
         setLoginCode={setLoginCode}
         setLoginCodeType={setLoginCodeType}
         setLoginTarget={setLoginTarget}
@@ -1717,26 +1749,18 @@ export default function App() {
   return (
     <TraySurface
       codexRuns={codexRuns}
-      draftConfig={draftConfig}
       error={error}
       hoveredProjectId={hoveredProjectId}
       isLoading={isLoading}
-      isSavingConfig={isSavingConfig}
       projectRecordCounts={projectRecordCounts}
       projectTodoGroups={projectTodoGroups}
-      settingsOpen={settingsOpen}
       updateStatus={updateStatus}
       hideProjectTaskPreview={hideProjectTaskPreview}
       loadData={() => void loadData()}
-      onCheckForUpdates={() => void handleCheckForUpdates()}
-      onInstallUpdate={() => void handleInstallUpdate()}
-      onLogout={() => void handleLogout()}
+      onOpenSettings={() => void window.workshopDesktop.openSettings()}
       onProjectHover={showProjectTaskPreview}
       onProjectOpen={openProjectWorkspace}
       onProjectRecord={openProjectRecord}
-      onSaveConfig={(event) => void handleSaveConfig(event)}
-      setDraftConfig={setDraftConfig}
-      setSettingsOpen={setSettingsOpen}
     />
   );
 }

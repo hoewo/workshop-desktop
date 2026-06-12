@@ -89,6 +89,8 @@ const stickyWindows = new Set<BrowserWindow>();
 const stickyWindowTargets = new Map<BrowserWindow, NormalizedStickyTarget>();
 const recordWindows = new Set<BrowserWindow>();
 const recordWindowTargets = new Map<BrowserWindow, NormalizedRecordTarget>();
+let settingsWindowRef: BrowserWindow | null = null;
+let updateWindowRef: BrowserWindow | null = null;
 let taskPreviewWindowRef: BrowserWindow | null = null;
 let taskPreviewHideTimer: NodeJS.Timeout | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
@@ -106,7 +108,15 @@ const workshopApiService = new WorkshopApiService({ readConfig, saveConfig });
 
 function getAppUpdateService() {
   if (!appUpdateService) {
-    appUpdateService = new AppUpdateService(sendAppUpdateStatus);
+    appUpdateService = new AppUpdateService(
+      sendAppUpdateStatus,
+      () => {
+        isQuitting = true;
+      },
+      () => {
+        isQuitting = false;
+      }
+    );
   }
   return appUpdateService;
 }
@@ -151,6 +161,7 @@ async function saveConfig(next: Partial<AppConfig>): Promise<AppConfig> {
     applyDockVisibility(merged);
     registerGlobalShortcuts(merged);
     scheduleDailyRefresh(merged);
+    sendConfigChanged(merged);
   }
   return merged;
 }
@@ -326,7 +337,7 @@ function hideTrayAndPreviewIfUnfocused() {
 }
 
 interface RendererLoadOptions {
-  surface: "tray" | "sticky" | "record";
+  surface: "tray" | "sticky" | "record" | "settings" | "update";
   projectId?: number | null;
   taskId?: number | null;
   noteId?: string | null;
@@ -1194,6 +1205,121 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
   return win;
 }
 
+function createSettingsWindow() {
+  const win = new BrowserWindow({
+    width: 460,
+    height: 660,
+    minWidth: 420,
+    minHeight: 520,
+    show: false,
+    frame: true,
+    resizable: true,
+    movable: true,
+    fullscreenable: false,
+    skipTaskbar: false,
+    alwaysOnTop: false,
+    title: "设置",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 16 } : undefined,
+    backgroundColor: "#f6f6f2",
+    ...windowIconOption(),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  win.on("closed", () => {
+    if (settingsWindowRef === win) {
+      settingsWindowRef = null;
+    }
+  });
+
+  loadRenderer(win, { surface: "settings" });
+  return win;
+}
+
+function createUpdateWindow() {
+  const win = new BrowserWindow({
+    width: 640,
+    height: 300,
+    minWidth: 560,
+    minHeight: 260,
+    show: false,
+    frame: true,
+    resizable: false,
+    movable: true,
+    fullscreenable: false,
+    skipTaskbar: false,
+    alwaysOnTop: false,
+    title: "检查更新",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 16 } : undefined,
+    backgroundColor: "#f6f6f2",
+    ...windowIconOption(),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  win.on("closed", () => {
+    if (updateWindowRef === win) {
+      updateWindowRef = null;
+    }
+  });
+
+  loadRenderer(win, { surface: "update" });
+  return win;
+}
+
+function showSettingsWindow() {
+  if (!settingsWindowRef || settingsWindowRef.isDestroyed()) {
+    settingsWindowRef = createSettingsWindow();
+  }
+
+  hideTaskPreviewWindow();
+  positionWindowOnScreen(settingsWindowRef);
+  showInCurrentWorkspace(settingsWindowRef);
+}
+
+function shouldCheckFromMenu(status: AppUpdateStatus) {
+  return status.phase !== "checking" && status.phase !== "downloading" && status.phase !== "downloaded";
+}
+
+function sendCurrentUpdateStatusToWindow(win: BrowserWindow) {
+  if (win.isDestroyed()) {
+    return;
+  }
+  win.webContents.send("appUpdate:status", getAppUpdateService().getStatus());
+}
+
+function showUpdateWindow(options: { checkNow?: boolean } = {}) {
+  if (!updateWindowRef || updateWindowRef.isDestroyed()) {
+    updateWindowRef = createUpdateWindow();
+  }
+
+  hideTaskPreviewWindow();
+  positionWindowOnScreen(updateWindowRef);
+  showInCurrentWorkspace(updateWindowRef);
+
+  const win = updateWindowRef;
+  if (win.webContents.isLoading()) {
+    win.webContents.once("did-finish-load", () => sendCurrentUpdateStatusToWindow(win));
+  } else {
+    sendCurrentUpdateStatusToWindow(win);
+  }
+
+  const currentStatus = getAppUpdateService().getStatus();
+  if (options.checkNow && shouldCheckFromMenu(currentStatus)) {
+    void getAppUpdateService().checkForUpdates();
+  }
+}
+
 async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
   const nextTarget = normalizeRecordTarget(target);
   const display = getTargetDisplay(nextTarget.x, nextTarget.y);
@@ -1859,6 +1985,10 @@ function buildAppEntryMenu(source: WindowOpenSource): MenuItemConstructorOptions
       click: () => showWindow(source)
     },
     {
+      label: "设置",
+      click: () => showSettingsWindow()
+    },
+    {
       label: "任务便签",
       click: () => void showStickyWindow()
     },
@@ -1871,12 +2001,94 @@ function buildAppEntryMenu(source: WindowOpenSource): MenuItemConstructorOptions
       label: "个人记录",
       click: () => void showPersonalRecordWindow()
     },
+    {
+      label: "检查更新...",
+      click: () => showUpdateWindow({ checkNow: true })
+    },
     { type: "separator" },
     {
       label: "退出",
       click: () => app.quit()
     }
   ];
+}
+
+function configureApplicationMenu() {
+  const checkForUpdatesItem: MenuItemConstructorOptions = {
+    label: "检查更新...",
+    click: () => showUpdateWindow({ checkNow: true })
+  };
+  const editMenu: MenuItemConstructorOptions = {
+    label: "编辑",
+    submenu: [
+      { role: "undo", label: "撤销" },
+      { role: "redo", label: "重做" },
+      { type: "separator" },
+      { role: "cut", label: "剪切" },
+      { role: "copy", label: "复制" },
+      { role: "paste", label: "粘贴" },
+      { role: "selectAll", label: "全选" }
+    ]
+  };
+  const windowMenu: MenuItemConstructorOptions = {
+    label: "窗口",
+    submenu: [
+      { role: "minimize", label: "最小化" },
+      { role: "close", label: "关闭窗口" }
+    ]
+  };
+
+  if (process.platform === "darwin") {
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate([
+        {
+          label: app.name,
+          submenu: [
+            { role: "about", label: `关于 ${app.name}` },
+            { type: "separator" },
+            {
+              label: "设置...",
+              accelerator: "CommandOrControl+,",
+              click: () => showSettingsWindow()
+            },
+            { type: "separator" },
+            checkForUpdatesItem,
+            { type: "separator" },
+            { role: "services", label: "服务", submenu: [] },
+            { type: "separator" },
+            { role: "hide", label: `隐藏 ${app.name}` },
+            { role: "hideOthers", label: "隐藏其他" },
+            { role: "unhide", label: "全部显示" },
+            { type: "separator" },
+            { role: "quit", label: `退出 ${app.name}` }
+          ]
+        },
+        editMenu,
+        windowMenu
+      ])
+    );
+    return;
+  }
+
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "应用",
+        submenu: [
+          {
+            label: "设置...",
+            accelerator: "CommandOrControl+,",
+            click: () => showSettingsWindow()
+          },
+          checkForUpdatesItem,
+          { type: "separator" },
+          { role: "quit", label: "退出" }
+        ]
+      },
+      editMenu,
+      windowMenu
+    ])
+  );
 }
 
 function configureDockMenu() {
@@ -1955,9 +2167,24 @@ function sendWorkshopRefresh(event: WorkshopRefreshEvent, sender?: WebContents) 
   }
 }
 
+function sendConfigChanged(config: AppConfig) {
+  const windows = [windowRef, settingsWindowRef, updateWindowRef, ...stickyWindows, ...recordWindows];
+  for (const win of windows) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("config:changed", config);
+    }
+  }
+}
+
 function sendAppUpdateStatus(status: AppUpdateStatus) {
   if (windowRef && !windowRef.isDestroyed()) {
     windowRef.webContents.send("appUpdate:status", status);
+  }
+  if (settingsWindowRef && !settingsWindowRef.isDestroyed()) {
+    settingsWindowRef.webContents.send("appUpdate:status", status);
+  }
+  if (updateWindowRef && !updateWindowRef.isDestroyed()) {
+    updateWindowRef.webContents.send("appUpdate:status", status);
   }
   for (const win of stickyWindows) {
     if (!win.isDestroyed()) {
@@ -2062,6 +2289,7 @@ function registerIpc() {
     workshopApiService.updateTask(request)
   );
   ipcMain.handle("shell:openExternal", (_event, url: string) => shell.openExternal(url));
+  ipcMain.handle("settings:open", () => showSettingsWindow());
   ipcMain.handle("sticky:open", (_event, target?: StickyTarget | number) => showStickyWindow(target));
   ipcMain.handle("record:open", (_event, target?: PersonalRecordTarget) => showPersonalRecordWindow(target));
   ipcMain.handle("record:list", () => listPersonalRecords());
@@ -2145,6 +2373,7 @@ app.whenReady().then(async () => {
   });
   await reconcileCodexRunsOnStartup().catch(() => undefined);
   applyDockVisibility(config);
+  configureApplicationMenu();
   configureDockMenu();
   registerGlobalShortcuts(config);
 

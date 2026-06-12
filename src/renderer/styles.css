@@ -63,6 +63,73 @@ button {
   justify-content: center;
 }
 
+.update-shell {
+  gap: 16px;
+  padding: 54px 34px 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0) 48%),
+    var(--color-bg);
+}
+
+.update-window-hero {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.update-window-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.update-window-copy h1 {
+  margin: 0;
+  color: #1e2422;
+  font-size: 23px;
+  line-height: 1.18;
+  font-weight: 780;
+}
+
+.update-window-copy p {
+  margin: 0;
+  color: #46504b;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.update-window-panel {
+  align-self: stretch;
+}
+
+.update-window-panel .update-action-button {
+  min-width: 144px;
+}
+
+.update-window-footer {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.update-later-button {
+  width: auto;
+  min-width: 74px;
+  border-color: rgba(30, 36, 34, 0.12);
+  background: rgba(255, 255, 255, 0.66);
+  color: #44504a;
+}
+
+.settings-shell {
+  gap: 0;
+  padding: 52px 18px 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0) 42%),
+    var(--color-bg);
+}
+
 .login-shell {
   justify-content: center;
 }
@@ -1202,24 +1269,17 @@ textarea:focus {
   white-space: nowrap;
 }
 
-.settings-backdrop {
-  position: fixed;
-  inset: 0;
+.settings-panel {
+  min-height: 0;
   display: flex;
-  justify-content: flex-end;
-  background: rgba(30, 36, 34, 0.22);
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.settings-panel {
-  width: 332px;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 16px;
-  border-left: 1px solid rgba(30, 36, 34, 0.12);
-  background: #f8f7f2;
-  box-shadow: -12px 0 30px rgba(30, 36, 34, 0.12);
+.settings-panel header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(30, 36, 34, 0.12);
 }
 
 .settings-panel form,
@@ -1233,7 +1293,18 @@ textarea:focus {
 .settings-panel form {
   min-height: 0;
   overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 4px;
+}
+
+.settings-panel form::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-panel form::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: rgba(30, 36, 34, 0.22);
+  background-clip: content-box;
 }
 
 .settings-panel label {

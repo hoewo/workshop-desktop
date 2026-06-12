@@ -12,6 +12,7 @@
 - `docs/testing.md`
 - `docs/decisions.md`
 - 当任务涉及产品术语、记录、项目、任务或任务状态时，读取 `docs/domain.md`
+- 当任务涉及应用资产、打包、发布、GitHub Release、签名、公证或自动更新时，读取 `docs/release.md`
 
 然后再检查本次请求相关的代码路径。代码是当前运行时事实；文档负责解释意图和约束。如果代码和文档冲突，先核实现有运行行为，并指出可能过期的文档。
 
@@ -20,7 +21,8 @@
 - 修改范围保持在用户请求和相邻代码内。
 - 保持当前产品边界：Workshop Desktop 是轻量个人执行客户端，不是完整知识库或项目管理系统。
 - 个人笔记、脑暴、会议原文和未确认想法默认不进入 repo。
-- 只有当变更影响运行行为、架构边界、领域术语、启动方式、测试方式、打包方式或已接受决策时，才新增或更新 repo 文档。
+- 只有当变更影响运行行为、架构边界、领域术语、启动方式、测试方式、打包方式、应用资产、发布文档或已接受决策时，才新增或更新 repo 文档。
+- 发布文档使用 `docs/release.md` 独立维护。应用资产如果影响安装包、Release 展示、签名/公证、自动更新或分发说明，也应同步更新 `docs/release.md`。
 - 短期执行记录优先放在任务系统或当前对话中；只有成为长期项目事实后，才进入 repo 文档。
 - 需要把任务沉淀写入应用时，应优先调用本地 app server/CLI；不要把直接修改 `userData` 文件当作正式能力。
 
@@ -71,6 +73,10 @@ npx --yes pnpm app:record:create -- --title "记录标题" --body-file ./path/to
 - 回写遵循上文 AI 记录边界与密度规则，方式优先用上文 CLI（它会自动使用这两个环境变量）；无法使用 CLI 时，直接 `POST http://127.0.0.1:${WORKSHOP_DESKTOP_SERVER_PORT}/rpc`，请求头 `Authorization: Bearer ${WORKSHOP_DESKTOP_SERVER_TOKEN}`，请求体 `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<正文>","scopeType":"project","projectId":98}}`。
 - 派发注入的 token 仅允许 `record.create`，不要尝试其他方法。
 
+## 发布与自动更新流程
+
+当用户要求“提交并发布新版本”“做个新版本”“发布到 GitHub”，或处理打包、签名、公证、自动更新、发布资产问题时，先读取 `docs/release.md`。当前发布事实以 `.github/workflows/release.yml`、`scripts/release.sh`、`package.json` build 配置和 `docs/release.md` 为准。
+
 ## 提交前检查
 
 代码变更收尾前：
@@ -81,6 +87,7 @@ npx --yes pnpm app:record:create -- --title "记录标题" --body-file ./path/to
   - 它是长期项目事实，还是个人想法？
   - 它是否和代码、README 或已接受决策冲突？
   - 它是否应该合并进现有最小文档，而不是创建新文件？
+  - 如果涉及应用资产或发布文档，它是否说明了稳定归属、生成物边界和发布影响？
   - 不确定内容是否标成 open 或 proposed，而不是 accepted？
   - 它是否重复了本该留在 repo 外的临时任务证据？
 

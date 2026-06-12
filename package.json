@@ -19,6 +19,7 @@
     "package:build": "bash scripts/package.sh build",
     "package:dir": "bash scripts/package.sh dir",
     "package:dist": "bash scripts/package.sh dist",
+    "release": "bash scripts/release.sh",
     "check:precommit": "bash scripts/pre-commit-check.sh",
     "app:cli": "node scripts/workshop-desktop-cli.mjs",
     "app:record:create": "node scripts/workshop-desktop-cli.mjs record create",

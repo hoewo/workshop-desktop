@@ -190,6 +190,14 @@ release/Workshop.Todo-<version>-arm64-mac.zip
 - Windows x64 NSIS installer
 - Windows x64 portable exe
 
+发布新版本：
+
+```bash
+npx --yes pnpm release
+```
+
+完整发布流程、发布资产、签名公证和自动更新验证见 [docs/release.md](docs/release.md)。
+
 macOS 自动更新使用 `electron-updater` 访问公开 GitHub Release。客户端直接读取 Release 里的 `latest-mac.yml`、zip 和 blockmap，不再内置 GitHub token。
 
 脚本默认设置：
@@ -215,4 +223,5 @@ macOS 云端发布需要以下 GitHub Actions secrets：
 - [docs/architecture.md](docs/architecture.md)：架构边界和运行模块
 - [docs/domain.md](docs/domain.md)：项目、任务、个人记录等领域概念
 - [docs/testing.md](docs/testing.md)：开发、构建、打包和验证方式
+- [docs/release.md](docs/release.md)：发布流程、发布资产、签名公证和自动更新验证
 - [docs/decisions.md](docs/decisions.md)：已接受决策和仍需确认的问题

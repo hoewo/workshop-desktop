@@ -101,6 +101,14 @@ npx --yes pnpm app:task:list -- --project-id 98
 
 macOS 本地无签名 secrets 时可只生成 zip 做本机验证。正式云端 release 会生成签名、公证后的 zip，并上传 `latest-mac.yml` 供自动更新使用。
 
+## 发布
+
+正式发布使用 release 脚本，完整流程见 [release.md](release.md)：
+
+```bash
+npx --yes pnpm release
+```
+
 ## macOS 更新验证
 
 macOS 更新链路依赖公开 GitHub Release 和签名包。验证时需要：

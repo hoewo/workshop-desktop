@@ -8,7 +8,7 @@
 
 Status: accepted
 
-Decision: repo 使用 `README.md`、`AGENTS.md`、`docs/architecture.md`、`docs/domain.md`、`docs/testing.md` 和 `docs/decisions.md` 作为默认文档集。
+Decision: repo 使用 `README.md`、`AGENTS.md`、`docs/architecture.md`、`docs/domain.md`、`docs/testing.md`、`docs/release.md` 和 `docs/decisions.md` 作为最小文档集；其中 `docs/domain.md` 和 `docs/release.md` 按任务相关性读取。
 
 Rationale: 当前项目足够小，一组高信噪比文档可以给 AI agent 足够上下文，不需要每个任务都进入重治理流程。
 
@@ -16,6 +16,7 @@ Consequences:
 
 - `docs/project/` 不再是默认 repo 结构的一部分。
 - 普通代码任务应从最小上下文和相邻代码开始。
+- 发布、打包、签名、公证、自动更新和发布资产任务应读取 `docs/release.md`，不把发布流程散落到临时记录或多个说明文件。
 - 长期事实只有经过审查后，才晋升到最小文档集。
 
 ### D-002 文档审查发生在提交前

@@ -1,6 +1,6 @@
 # 测试与验证
 
-本项目当前有构建和打包检查，但没有专门的自动化测试套件。
+本项目当前有构建、主进程架构 smoke tests 和打包检查。
 
 ## 安装
 
@@ -33,6 +33,21 @@ npx --yes pnpm dev
 ```bash
 npx --yes pnpm run build
 ```
+
+## 自动化测试
+
+主进程关键架构边界有最小 smoke tests：
+
+```bash
+npx --yes pnpm run test:main
+```
+
+当前覆盖：
+
+- 本地个人记录 store 的并发写入串行化、任务记录去重和删除。
+- Workshop API 服务层的 allowlist 请求构造、token 刷新和创建任务输入校验。
+
+提交前检查会自动运行这些 smoke tests。
 
 ## 本地 AI Bridge 验证
 
@@ -70,7 +85,19 @@ npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI �
 ./scripts/package.sh dist
 ```
 
-macOS 当前默认目标是 zip。DMG 不是默认打包目标。
+macOS 本地无签名 secrets 时可只生成 zip 做本机验证。正式云端 release 会生成签名、公证后的 DMG + zip，并上传 `latest-mac.yml` 供自动更新使用。
+
+## macOS 更新验证
+
+macOS 更新链路依赖公开 GitHub Release 和签名包。验证时需要：
+
+- GitHub Actions 已配置 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_API_KEY_BASE64`、`APPLE_API_KEY_ID` 和 `APPLE_API_ISSUER`。
+- 先安装一个旧版本，例如 `v0.1.10`。
+- 发布一个更高版本 tag，且 tag 版本和 `package.json` version 一致。
+- 打开旧版应用，进入设置，确认“应用更新”能检查到新版本并自动下载。
+- 下载完成后点击“重启更新”，确认应用重启后版本变为新版本。
+
+开发模式下更新状态会显示未启用；不能用 `pnpm dev` 验证真实自动更新。
 
 ## 手工验证
 

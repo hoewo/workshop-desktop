@@ -1,43 +1,9 @@
-import {
-  AlertTriangle,
-  BookOpenText,
-  CalendarClock,
-  Check,
-  ChevronRight,
-  Eye,
-  Folder,
-  GripVertical,
-  Link,
-  LoaderCircle,
-  LogIn,
-  LogOut,
-  Maximize2,
-  Minimize2,
-  NotebookPen,
-  PauseCircle,
-  Pencil,
-  Pin,
-  PinOff,
-  Play,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Settings,
-  ShieldCheck,
-  StickyNote,
-  Send,
-  SquareTerminal,
-  Trash2,
-  WifiOff,
-  X
-} from "lucide-react";
-import { DragEvent, FormEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { LoaderCircle } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AppConfig,
+  AppUpdateStatus,
   CodexRunMeta,
-  CodexRunStatus,
   CurrentUserPayload,
   Organization,
   OrganizationsPayload,
@@ -45,6 +11,7 @@ import type {
   PersonalRecordChangeNotice,
   PersonalRecordMeta,
   PersonalRecordScope,
+  PersonalRecordStatus,
   PersonalRecordTarget,
   Project,
   ProjectsPayload,
@@ -55,1023 +22,52 @@ import type {
   VerificationCodeType,
   WindowFitRequest
 } from "../shared/types";
-
-const activeStates: TaskState[] = ["pending", "in_progress", "pending_review", "blocked"];
-
-const codexRunStatusLabels: Record<CodexRunStatus, string> = {
-  running: "运行中",
-  completed: "已完成",
-  failed: "失败",
-  interrupted: "已中断"
-};
-const recordCompleteAnimationMs = 900;
-const taskCompleteAnimationMs = 850;
-
-function isVisibleTask(task: Task) {
-  return activeStates.includes(task.state) && !task.deleted_at;
-}
-
-const stateLabels: Record<TaskState, string> = {
-  pending: "待办",
-  in_progress: "进行中",
-  pending_review: "待评审",
-  completed: "已完成",
-  accepted: "已验收",
-  cancelled: "已取消",
-  blocked: "阻塞"
-};
-
-const stateTone: Record<TaskState, string> = {
-  pending: "state-pending",
-  in_progress: "state-progress",
-  pending_review: "state-review",
-  completed: "state-done",
-  accepted: "state-done",
-  cancelled: "state-muted",
-  blocked: "state-blocked"
-};
-
-type Surface = "tray" | "sticky" | "record";
-type RecordMode = "edit" | "preview";
-type RecordSaveStatus = "idle" | "saving" | "saved" | "error";
-type RecordListContext =
-  | { scopeType: "none" }
-  | {
-      scopeType: "project";
-      projectId?: number;
-      projectName?: string;
-    };
-
-interface EnrichedTask extends Task {
-  projectName: string;
-  meId?: number;
-  isMine: boolean;
-}
-
-interface ProjectTodoGroup {
-  project: Project;
-  projectName: string;
-  tasks: EnrichedTask[];
-  count: number;
-  latestAt: number;
-}
-
-function getSurface(): Surface {
-  const surface = new URLSearchParams(window.location.search).get("surface");
-  return surface === "sticky" || surface === "record" ? surface : "tray";
-}
-
-function getInitialProjectFilter() {
-  const projectId = new URLSearchParams(window.location.search).get("project_id");
-  return projectId && /^\d+$/.test(projectId) ? projectId : "all";
-}
-
-function getInitialTaskFilter() {
-  const taskId = new URLSearchParams(window.location.search).get("task_id");
-  return taskId && /^\d+$/.test(taskId) ? taskId : "all";
-}
-
-function getSafeQueryText(params: URLSearchParams, key: string, maxLength = 120) {
-  const value = params.get(key)?.trim();
-  return value && value.length <= maxLength ? value : undefined;
-}
-
-function getSafeRecordId(params: URLSearchParams, key: string) {
-  const value = getSafeQueryText(params, key, 80);
-  return value && /^[a-zA-Z0-9_-]+$/.test(value) ? value : undefined;
-}
-
-function getInitialRecordTarget(): PersonalRecordTarget {
-  const params = new URLSearchParams(window.location.search);
-  const projectId = params.get("project_id");
-  const taskId = params.get("task_id");
-  const scopeType = params.get("scope_type");
-  return {
-    noteId: getSafeRecordId(params, "note_id"),
-    draft: params.get("draft") === "1",
-    scopeType: scopeType === "project" || scopeType === "task" ? scopeType : "none",
-    projectId: projectId && /^\d+$/.test(projectId) ? Number(projectId) : undefined,
-    projectName: getSafeQueryText(params, "project_name"),
-    taskId: taskId && /^\d+$/.test(taskId) ? Number(taskId) : undefined,
-    taskTitle: getSafeQueryText(params, "task_title")
-  };
-}
-
-function isLoggedIn(config: AppConfig) {
-  if (config.authMode === "nebula" || config.authMode === "bearer") {
-    return Boolean(config.accessToken.trim());
-  }
-
-  return Boolean(config.userId.trim());
-}
-
-function getErrorMessage(payload: unknown, fallback = "请求失败") {
-  if (payload && typeof payload === "object") {
-    const maybe = payload as { error?: { message?: string }; message?: string; code?: string };
-    return maybe.error?.message || maybe.message || maybe.code || fallback;
-  }
-  return fallback;
-}
-
-function extractList<T>(payload: unknown, key: string): T[] {
-  if (Array.isArray(payload)) {
-    return payload as T[];
-  }
-
-  if (payload && typeof payload === "object") {
-    const value = (payload as Record<string, unknown>)[key];
-    if (Array.isArray(value)) {
-      return value as T[];
-    }
-  }
-
-  return [];
-}
-
-async function api<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, options?: {
-  query?: Record<string, string | number | boolean | Array<string | number | boolean> | undefined>;
-  body?: unknown;
-}) {
-  const response = await window.workshopDesktop.request<T>({
-    method,
-    path,
-    query: options?.query,
-    body: options?.body
-  });
-
-  if (!response.ok) {
-    throw new Error(response.error || getErrorMessage(response.body, `HTTP ${response.status || 0}`));
-  }
-
-  return response.body?.data as T;
-}
-
-function getMeId(project: Project, username?: string) {
-  const members = project.members ?? [];
-  return (
-    members.find((member) => member.is_me)?.user_id ??
-    (username ? members.find((member) => member.username === username)?.user_id : undefined)
-  );
-}
-
-function withOrganization(project: Project, organization?: Organization): Project {
-  return organization
-    ? {
-        ...project,
-        organization_id: organization.id,
-        organizationName: organization.name
-      }
-    : project;
-}
-
-function mergeProjects(projectGroups: Project[][]) {
-  const byId = new Map<number, Project>();
-  for (const project of projectGroups.flat()) {
-    byId.set(project.id, project);
-  }
-  return [...byId.values()];
-}
-
-function getProjectDisplayName(project: Project) {
-  return project.name;
-}
-
-function formatRelative(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  const diff = Date.now() - date.getTime();
-  const minutes = Math.max(0, Math.round(diff / 60000));
-
-  if (minutes < 1) {
-    return "刚刚";
-  }
-  if (minutes < 60) {
-    return `${minutes} 分钟前`;
-  }
-
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) {
-    return `${hours} 小时前`;
-  }
-
-  return date.toLocaleDateString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit"
-  });
-}
-
-function compareTasks(a: EnrichedTask, b: EnrichedTask) {
-  const priorityA = a.priority ?? 999;
-  const priorityB = b.priority ?? 999;
-  if (priorityA !== priorityB) {
-    return priorityA - priorityB;
-  }
-  return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-}
-
-function splitTags(tags?: string | null) {
-  if (!tags) {
-    return [];
-  }
-  return tags
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-}
-
-function truncateRecordTitle(title: string) {
-  return title.length > 48 ? `${title.slice(0, 48)}...` : title;
-}
-
-function deriveRecordTitle(bodyMarkdown: string, fallback = "未命名记录") {
-  const firstContentLine = bodyMarkdown
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean);
-  const h1Title = firstContentLine?.match(/^#\s+(.+)$/)?.[1]?.replace(/\s+#+$/, "").trim();
-  if (h1Title) {
-    return truncateRecordTitle(h1Title);
-  }
-
-  const title = (firstContentLine || fallback).replace(/^#{1,6}\s+/, "").replace(/^[-*]\s+/, "").trim();
-  return truncateRecordTitle(title || fallback);
-}
-
-function clampNumber(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function cssNumber(value: string) {
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function readLineHeight(element: HTMLElement) {
-  const style = window.getComputedStyle(element);
-  const lineHeight = cssNumber(style.lineHeight);
-  if (lineHeight > 0) {
-    return lineHeight;
-  }
-
-  const fontSize = cssNumber(style.fontSize);
-  return fontSize > 0 ? fontSize * 1.4 : 20;
-}
-
-function readVerticalBorderHeight(element: HTMLElement) {
-  const style = window.getComputedStyle(element);
-  return cssNumber(style.borderTopWidth) + cssNumber(style.borderBottomWidth);
-}
-
-function readTextareaHeightForFit(element: HTMLTextAreaElement, maxHeight: number) {
-  const previousHeight = element.style.height;
-  const previousMinHeight = element.style.minHeight;
-  const previousFlex = element.style.flex;
-
-  element.style.height = "auto";
-  element.style.minHeight = "0";
-  element.style.flex = "0 0 auto";
-
-  try {
-    const borderHeight = readVerticalBorderHeight(element);
-    const minHeight = Math.ceil(readLineHeight(element) + borderHeight);
-    return clampNumber(Math.ceil(element.scrollHeight + borderHeight), minHeight, maxHeight);
-  } finally {
-    element.style.height = previousHeight;
-    element.style.minHeight = previousMinHeight;
-    element.style.flex = previousFlex;
-  }
-}
-
-function readElementHeightForFit(element: HTMLElement): number {
-  const currentHeight = element.getBoundingClientRect().height;
-  if (element instanceof HTMLTextAreaElement && element.classList.contains("record-editor")) {
-    return readTextareaHeightForFit(element, 520);
-  }
-  if (element instanceof HTMLTextAreaElement && element.classList.contains("task-note-editor")) {
-    return readTextareaHeightForFit(element, 420);
-  }
-  if (
-    element.classList.contains("task-detail") ||
-    element.classList.contains("task-note-panel") ||
-    element.classList.contains("record-preview-panel")
-  ) {
-    return readElementChildrenHeight(element);
-  }
-  return currentHeight;
-}
-
-function readElementChildrenHeight(element: HTMLElement): number {
-  const style = window.getComputedStyle(element);
-  const paddingBlock = cssNumber(style.paddingTop) + cssNumber(style.paddingBottom);
-  const borderBlock = cssNumber(style.borderTopWidth) + cssNumber(style.borderBottomWidth);
-  const rowGap = cssNumber(style.rowGap || style.gap);
-  const visibleChildren = Array.from(element.children).filter((child): child is HTMLElement => {
-    return child instanceof HTMLElement && window.getComputedStyle(child).display !== "none";
-  });
-  const childrenHeight = visibleChildren.reduce<number>((height, child) => height + readElementHeightForFit(child), 0);
-  return borderBlock + paddingBlock + childrenHeight + Math.max(0, visibleChildren.length - 1) * rowGap;
-}
-
-function readShellContentHeight() {
-  const shell = document.querySelector("main");
-  if (shell instanceof HTMLElement) {
-    const shellStyle = window.getComputedStyle(shell);
-    const paddingBlock = cssNumber(shellStyle.paddingTop) + cssNumber(shellStyle.paddingBottom);
-    const rowGap = cssNumber(shellStyle.rowGap || shellStyle.gap);
-    const visibleChildren = Array.from(shell.children).filter((child): child is HTMLElement => {
-      return child instanceof HTMLElement && window.getComputedStyle(child).display !== "none";
-    });
-    const childrenHeight = visibleChildren.reduce((height, child) => {
-      const isList = child.classList.contains("sticky-task-list") || child.classList.contains("record-list");
-      return height + (isList ? readElementChildrenHeight(child) : readElementHeightForFit(child));
-    }, 0);
-    return Math.ceil(paddingBlock + childrenHeight + Math.max(0, visibleChildren.length - 1) * rowGap);
-  }
-  return Math.ceil(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
-}
-
-function inlineMarkdown(text: string): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*[^*]+\*)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text))) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-
-    const token = match[0];
-    const key = `${match.index}-${token}`;
-    if (token.startsWith("**")) {
-      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith("`")) {
-      nodes.push(<code key={key}>{token.slice(1, -1)}</code>);
-    } else if (token.startsWith("[")) {
-      const linkMatch = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(token);
-      nodes.push(
-        linkMatch ? (
-          <a key={key} href={linkMatch[2]} onClick={(event) => event.preventDefault()}>
-            {linkMatch[1]}
-          </a>
-        ) : (
-          token
-        )
-      );
-    } else {
-      nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
-    }
-
-    lastIndex = match.index + token.length;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-  return nodes;
-}
-
-function MarkdownPreview({ value }: { value: string }) {
-  const lines = value.split(/\r?\n/);
-  const blocks: ReactNode[] = [];
-  let inCode = false;
-  let codeLines: string[] = [];
-
-  lines.forEach((line, index) => {
-    if (line.trim().startsWith("```")) {
-      if (inCode) {
-        blocks.push(
-          <pre key={`code-${index}`}>
-            <code>{codeLines.join("\n")}</code>
-          </pre>
-        );
-        codeLines = [];
-        inCode = false;
-      } else {
-        inCode = true;
-      }
-      return;
-    }
-
-    if (inCode) {
-      codeLines.push(line);
-      return;
-    }
-
-    if (!line.trim()) {
-      blocks.push(<div className="markdown-gap" key={`gap-${index}`} />);
-      return;
-    }
-
-    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
-    if (heading) {
-      const level = heading[1].length;
-      const content = inlineMarkdown(heading[2]);
-      blocks.push(
-        level === 1 ? (
-          <h1 key={`h-${index}`}>{content}</h1>
-        ) : level === 2 ? (
-          <h2 key={`h-${index}`}>{content}</h2>
-        ) : (
-          <h3 key={`h-${index}`}>{content}</h3>
-        )
-      );
-      return;
-    }
-
-    const unordered = /^[-*]\s+(.+)$/.exec(line);
-    if (unordered) {
-      blocks.push(
-        <ul key={`ul-${index}`}>
-          <li>{inlineMarkdown(unordered[1])}</li>
-        </ul>
-      );
-      return;
-    }
-
-    const ordered = /^\d+\.\s+(.+)$/.exec(line);
-    if (ordered) {
-      blocks.push(
-        <ol key={`ol-${index}`}>
-          <li>{inlineMarkdown(ordered[1])}</li>
-        </ol>
-      );
-      return;
-    }
-
-    const quote = /^>\s+(.+)$/.exec(line);
-    if (quote) {
-      blocks.push(<blockquote key={`q-${index}`}>{inlineMarkdown(quote[1])}</blockquote>);
-      return;
-    }
-
-    blocks.push(<p key={`p-${index}`}>{inlineMarkdown(line)}</p>);
-  });
-
-  if (inCode) {
-    blocks.push(
-      <pre key="code-open">
-        <code>{codeLines.join("\n")}</code>
-      </pre>
-    );
-  }
-
-  return <div className="markdown-preview">{blocks}</div>;
-}
-
-type RecordHeaderContext = {
-  scopeType: PersonalRecordScope;
-  title?: string;
-  projectName?: string;
-  taskTitle?: string;
-};
-
-type HeaderTitleContent =
-  | {
-      variant: "plain";
-      text: string;
-    }
-  | {
-      variant: "scoped";
-      context: string;
-      suffix: string;
-    };
-
-function WindowHeaderTitle({ title }: { title: HeaderTitleContent }) {
-  if (title.variant === "plain") {
-    return <h1 className="window-title-main window-title-plain">{title.text}</h1>;
-  }
-
-  return (
-    <>
-      <h1 className="window-title-main">{title.context}</h1>
-      <span className="window-title-suffix">· {title.suffix}</span>
-    </>
-  );
-}
-
-function ProjectDirectorySubtitle({
-  localDirectory,
-  onClick
-}: {
-  localDirectory?: string;
-  onClick: () => void;
-}) {
-  const label = localDirectory?.trim() || "请绑定本地目录";
-  return (
-    <button
-      className={`project-directory-subtitle ${localDirectory ? "bound" : "unbound"}`}
-      type="button"
-      onClick={onClick}
-      title={localDirectory ? `打开 ${localDirectory}` : "绑定本地目录"}
-    >
-      {label}
-    </button>
-  );
-}
-
-function getProjectLocalDirectory(config: AppConfig | null, projectId?: number) {
-  if (!config || projectId === undefined || !Number.isFinite(projectId)) {
-    return "";
-  }
-  return config.projectLocalDirectories[String(projectId)] || "";
-}
-
-function getRecordHeaderTitle(record: RecordHeaderContext | null, isDetail: boolean, recordCount: number): HeaderTitleContent {
-  if (!record) {
-    return { variant: "plain", text: `个人记录 ${recordCount}` };
-  }
-  if (record.scopeType === "task") {
-    return { variant: "scoped", context: record.projectName || record.taskTitle || "任务", suffix: "备注" };
-  }
-  if (record.scopeType === "project") {
-    return { variant: "scoped", context: record.projectName || "项目", suffix: isDetail ? "记录" : `记录 ${recordCount}` };
-  }
-  return { variant: "plain", text: isDetail ? "个人记录" : `个人记录 ${recordCount}` };
-}
-
-function getStickyHeader({
-  filteredTaskCount,
-  isSingleTaskSticky,
-  projectFilter,
-  selectedProjectName,
-  selectedTask
-}: {
-  filteredTaskCount: number;
-  isSingleTaskSticky: boolean;
-  projectFilter: string;
-  selectedProjectName?: string;
-  selectedTask: EnrichedTask | null;
-}): HeaderTitleContent {
-  const isProjectSticky = !isSingleTaskSticky && projectFilter !== "all";
-  if (isSingleTaskSticky) {
-    return { variant: "scoped", context: selectedTask?.projectName || selectedProjectName || "项目", suffix: "任务" };
-  }
-  if (isProjectSticky) {
-    return { variant: "scoped", context: selectedProjectName || "项目", suffix: `任务 ${filteredTaskCount}` };
-  }
-  return { variant: "plain", text: "全部待办" };
-}
-
-function getRecordListContext(source?: Pick<PersonalRecordMeta, "scopeType" | "projectId" | "projectName"> | PersonalRecordTarget | null): RecordListContext {
-  if (source?.scopeType === "project" || source?.scopeType === "task") {
-    return {
-      scopeType: "project",
-      projectId: source.projectId,
-      projectName: source.projectName
-    };
-  }
-
-  return { scopeType: "none" };
-}
-
-function recordMatchesListContext(record: PersonalRecordMeta, context: RecordListContext) {
-  if (context.scopeType === "none") {
-    return record.scopeType === "none";
-  }
-
-  if (record.scopeType !== "project") {
-    return false;
-  }
-
-  if (context.projectId !== undefined) {
-    return record.projectId === context.projectId;
-  }
-
-  if (context.projectName) {
-    return record.projectName === context.projectName;
-  }
-
-  return true;
-}
-
-function recordMatchesSearch(record: PersonalRecordMeta, tokens: string[]) {
-  if (tokens.length === 0) {
-    return true;
-  }
-
-  const searchableText = [record.title, record.projectName, record.taskTitle]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  return tokens.every((token) => searchableText.includes(token));
-}
-
-function findTaskRecord(records: PersonalRecordMeta[], taskId?: number) {
-  if (taskId === undefined) {
-    return undefined;
-  }
-  return records.find((record) => record.scopeType === "task" && record.taskId === taskId);
-}
-
-function getRecordListEmptyLabel(context: RecordListContext, hasSearchQuery = false) {
-  if (hasSearchQuery) {
-    return "没有匹配记录";
-  }
-  return context.scopeType === "project" ? "还没有项目记录" : "还没有个人记录";
-}
-
-function WorkshopMark({ compact = false }: { compact?: boolean }) {
-  return (
-    <span className={`workshop-mark ${compact ? "compact" : ""}`} aria-hidden="true">
-      <span className="workshop-mark-sheet">
-        <span className="workshop-mark-line primary" />
-        <span className="workshop-mark-line secondary" />
-        <span className="workshop-mark-line short" />
-      </span>
-      <span className="workshop-mark-check" />
-    </span>
-  );
-}
-
-function normalizeConfig(config: AppConfig): AppConfig {
-  return {
-    ...config,
-    baseUrl: config.baseUrl.trim().replace(/\/+$/, ""),
-    serviceName: config.serviceName.trim() || "workshop",
-    accessToken: config.accessToken.trim(),
-    refreshToken: config.refreshToken.trim(),
-    tokenType: config.tokenType.trim() || "Bearer",
-    accessTokenExpiresAt: Number(config.accessTokenExpiresAt) || 0,
-    refreshTokenExpiresAt: Number(config.refreshTokenExpiresAt) || 0,
-    userId: config.userId.trim(),
-    username: config.username.trim(),
-    appId: config.appId.trim() || "workshop-desktop",
-    sessionId: config.sessionId.trim(),
-    dailyRefreshTime: config.dailyRefreshTime || "09:00"
-  };
-}
-
-function canSubmitDirectLogin(config: AppConfig) {
-  if (config.authMode === "bearer") {
-    return Boolean(config.accessToken.trim());
-  }
-
-  if (config.authMode === "debugHeaders") {
-    return Boolean(config.userId.trim());
-  }
-
-  return true;
-}
-
-function TaskRow({
-  task,
-  busyTaskId,
-  compact = false,
-  isCompleting = false,
-  recordId,
-  onExtract,
-  onOpen,
-  onRecord,
-  onUpdate
-}: {
-  task: EnrichedTask;
-  busyTaskId: number | null;
-  compact?: boolean;
-  isCompleting?: boolean;
-  recordId?: string;
-  onExtract?: (task: EnrichedTask, position: { x: number; y: number }) => void;
-  onOpen?: (task: EnrichedTask) => void;
-  onRecord?: (task: EnrichedTask) => void;
-  onUpdate: (task: EnrichedTask, state: TaskState) => void;
-}) {
-  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
-
-  function handleDragStart(event: DragEvent<HTMLElement>) {
-    if (!onExtract) {
-      return;
-    }
-
-    dragStartRef.current = { x: event.screenX, y: event.screenY };
-    event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.setData("text/plain", task.content);
-  }
-
-  function handleDragEnd(event: DragEvent<HTMLElement>) {
-    const start = dragStartRef.current;
-    dragStartRef.current = null;
-    if (!onExtract || !start) {
-      return;
-    }
-
-    const distance = Math.hypot(event.screenX - start.x, event.screenY - start.y);
-    if (distance < 36) {
-      return;
-    }
-
-    onExtract(task, { x: event.screenX, y: event.screenY });
-  }
-
-  function handleTaskAction(event: MouseEvent<HTMLButtonElement>, action: () => void) {
-    event.stopPropagation();
-    action();
-  }
-
-  return (
-    <article
-      className={`task-row ${compact ? "compact" : ""} ${isCompleting ? "completing" : ""} ${onExtract ? "extractable" : ""} ${onOpen ? "openable" : ""} ${onRecord ? "has-record-action" : ""}`}
-      draggable={Boolean(onExtract)}
-      onClick={onOpen ? () => onOpen(task) : undefined}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="task-main">
-        <div className="task-title-row">
-          <span className={`state-dot ${stateTone[task.state]}`} />
-          <h2>{task.content}</h2>
-        </div>
-        <div className="task-meta">
-          <span>{task.projectName}</span>
-          <span>{stateLabels[task.state]}</span>
-          {task.priority !== null && task.priority !== undefined ? <span>P{task.priority}</span> : null}
-          <span>{formatRelative(task.updated_at)}</span>
-        </div>
-        {!compact && splitTags(task.tags).length > 0 ? (
-          <div className="tag-row">
-            {splitTags(task.tags).slice(0, 3).map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
-          </div>
-        ) : null}
-      </div>
-      <div className="task-side-actions">
-        {isCompleting ? (
-          <span className="task-complete-mark" aria-label="已完成">
-            <Check size={17} strokeWidth={3} />
-          </span>
-        ) : onRecord ? (
-          <button
-            className={`task-record-button ${recordId ? "has-record" : ""}`}
-            type="button"
-            title={recordId ? "打开备注" : "添加备注"}
-            onClick={(event) => handleTaskAction(event, () => onRecord(task))}
-          >
-            <NotebookPen size={15} />
-          </button>
-        ) : null}
-        {!isCompleting ? (
-          <div className="task-actions">
-            {task.state !== "in_progress" ? (
-              <button
-                type="button"
-                title="开始"
-                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "in_progress"))}
-                disabled={busyTaskId === task.id}
-              >
-                <Play size={15} />
-              </button>
-            ) : null}
-            {task.state !== "completed" ? (
-              <button
-                type="button"
-                title="完成"
-                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "completed"))}
-                disabled={busyTaskId === task.id}
-              >
-                <Check size={16} />
-              </button>
-            ) : null}
-            {task.state !== "blocked" ? (
-              <button
-                type="button"
-                title="阻塞"
-                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "blocked"))}
-                disabled={busyTaskId === task.id}
-              >
-                <PauseCircle size={16} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                title="退回待办"
-                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "pending"))}
-                disabled={busyTaskId === task.id}
-              >
-                <RotateCcw size={15} />
-              </button>
-            )}
-          </div>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-function TaskDetail({
-  task,
-  busyTaskId,
-  noteBody,
-  onNoteBlur,
-  onNoteChange,
-  onSendToCodex,
-  onUpdate
-}: {
-  task: EnrichedTask;
-  busyTaskId: number | null;
-  noteBody: string;
-  onNoteBlur: () => void;
-  onNoteChange: (body: string) => void;
-  onSendToCodex: (task: EnrichedTask) => void;
-  onUpdate: (task: EnrichedTask, state: TaskState) => void;
-}) {
-  return (
-    <section className="task-detail" aria-label="任务详情">
-      <article className="task-detail-card">
-        <div className="task-title-row">
-          <span className={`state-dot ${stateTone[task.state]}`} />
-          <p className="task-detail-content">{task.content}</p>
-        </div>
-      </article>
-
-      <label className="task-note-panel">
-        <span>备注</span>
-        <textarea
-          className="task-note-editor"
-          value={noteBody}
-          onBlur={onNoteBlur}
-          onChange={(event) => onNoteChange(event.target.value)}
-          placeholder="添加备注"
-          spellCheck={false}
-        />
-      </label>
-
-      <div className="task-detail-actions">
-        <button type="button" title="发送到 Codex" onClick={() => onSendToCodex(task)} disabled={busyTaskId === task.id}>
-          <SquareTerminal size={15} />
-        </button>
-        {task.state !== "in_progress" ? (
-          <button type="button" title="开始" onClick={() => onUpdate(task, "in_progress")} disabled={busyTaskId === task.id}>
-            <Play size={15} />
-          </button>
-        ) : null}
-        {task.state !== "completed" ? (
-          <button type="button" title="完成" onClick={() => onUpdate(task, "completed")} disabled={busyTaskId === task.id}>
-            <Check size={16} />
-          </button>
-        ) : null}
-        {task.state !== "blocked" ? (
-          <button type="button" title="阻塞" onClick={() => onUpdate(task, "blocked")} disabled={busyTaskId === task.id}>
-            <PauseCircle size={16} />
-          </button>
-        ) : (
-          <button type="button" title="退回待办" onClick={() => onUpdate(task, "pending")} disabled={busyTaskId === task.id}>
-            <RotateCcw size={15} />
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ProjectMenuRow({
-  group,
-  active,
-  recordCount,
-  onHover,
-  onOpen,
-  onRecord
-}: {
-  group: ProjectTodoGroup;
-  active: boolean;
-  recordCount: number;
-  onHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
-  onOpen: (group: ProjectTodoGroup) => void;
-  onRecord: (group: ProjectTodoGroup) => void;
-}) {
-  return (
-    <article
-      className={`project-menu-item ${group.count === 0 ? "is-empty" : ""} ${active ? "active" : ""}`}
-      role="button"
-      tabIndex={0}
-      onMouseEnter={(event) => onHover(group, event.currentTarget.getBoundingClientRect())}
-      onFocus={(event) => onHover(group, event.currentTarget.getBoundingClientRect())}
-      onClick={() => onOpen(group)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen(group);
-        }
-      }}
-    >
-      <div className="project-row-content">
-        <button
-          className={`project-record-button ${recordCount > 0 ? "has-record" : ""}`}
-          type="button"
-          title={recordCount > 0 ? `${recordCount} 条记录` : "记项目"}
-          onClick={(event) => {
-            event.stopPropagation();
-            onRecord(group);
-          }}
-        >
-          <NotebookPen size={15} />
-        </button>
-        <span className="project-row-name">{group.projectName}</span>
-        <span className="project-row-count">{group.count}</span>
-        <ChevronRight className="project-row-arrow" size={18} />
-      </div>
-    </article>
-  );
-}
-
-function AuthFields({
-  draftConfig,
-  setDraftConfig
-}: {
-  draftConfig: AppConfig;
-  setDraftConfig: (config: AppConfig) => void;
-}) {
-  return (
-    <>
-      <label>
-        <span>基础地址</span>
-        <input
-          value={draftConfig.baseUrl}
-          onChange={(event) => setDraftConfig({ ...draftConfig, baseUrl: event.target.value })}
-          placeholder="https://api.feitianchengzi.com"
-        />
-      </label>
-      <label>
-        <span>服务名</span>
-        <input
-          value={draftConfig.serviceName}
-          onChange={(event) => setDraftConfig({ ...draftConfig, serviceName: event.target.value })}
-          placeholder="workshop"
-        />
-      </label>
-
-      <div className="auth-switch">
-        <button
-          type="button"
-          className={draftConfig.authMode === "nebula" ? "active" : ""}
-          onClick={() => setDraftConfig({ ...draftConfig, authMode: "nebula" })}
-        >
-          NebulaAuth
-        </button>
-        <button
-          type="button"
-          className={draftConfig.authMode === "bearer" ? "active" : ""}
-          onClick={() => setDraftConfig({ ...draftConfig, authMode: "bearer" })}
-        >
-          Bearer Token
-        </button>
-        <button
-          type="button"
-          className={draftConfig.authMode === "debugHeaders" ? "active" : ""}
-          onClick={() => setDraftConfig({ ...draftConfig, authMode: "debugHeaders" })}
-        >
-          本地 Header
-        </button>
-      </div>
-
-      {draftConfig.authMode === "bearer" ? (
-        <label>
-          <span>访问令牌</span>
-          <input
-            value={draftConfig.accessToken}
-            onChange={(event) => setDraftConfig({ ...draftConfig, accessToken: event.target.value })}
-            type="password"
-            placeholder="Bearer token"
-          />
-        </label>
-      ) : draftConfig.authMode === "debugHeaders" ? (
-        <div className="debug-fields">
-          <label>
-            <span>用户 UUID</span>
-            <input
-              value={draftConfig.userId}
-              onChange={(event) => setDraftConfig({ ...draftConfig, userId: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>用户名</span>
-            <input
-              value={draftConfig.username}
-              onChange={(event) => setDraftConfig({ ...draftConfig, username: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>App ID</span>
-            <input
-              value={draftConfig.appId}
-              onChange={(event) => setDraftConfig({ ...draftConfig, appId: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>Session ID</span>
-            <input
-              value={draftConfig.sessionId}
-              onChange={(event) => setDraftConfig({ ...draftConfig, sessionId: event.target.value })}
-            />
-          </label>
-        </div>
-      ) : null}
-    </>
-  );
-}
+import { LoginSurface } from "./components/surfaces/LoginSurface";
+import { RecordSurface } from "./components/surfaces/RecordSurface";
+import { StickyLoginRequiredSurface, StickySurface } from "./components/surfaces/StickySurface";
+import { TraySurface } from "./components/surfaces/TraySurface";
+import { useKeyedCompletionFeedback, useSingleCompletionFeedback } from "./hooks/useCompletionFeedback";
+import { useFocusPulse } from "./hooks/useFocusPulse";
+import {
+  apiData,
+  canSubmitDirectLogin,
+  extractList,
+  getErrorMessage,
+  getInitialProjectFilter,
+  getInitialRecordTarget,
+  getInitialTaskFilter,
+  getProjectLocalDirectory,
+  getSurface,
+  isLoggedIn,
+  normalizeConfig
+} from "./lib/appModel";
+import {
+  compareRecordListItems,
+  deriveRecordTitle,
+  findTaskRecord,
+  getRecordListContext,
+  recordCompleteAnimationMs,
+  recordMatchesListContext,
+  recordMatchesSearch,
+  type RecordListContext,
+  type RecordMode,
+  type RecordSaveStatus
+} from "./lib/records";
+import {
+  compareTasks,
+  getMeId,
+  getProjectDisplayName,
+  getStickyHeader,
+  isVisibleTask,
+  mergeProjects,
+  stateLabels,
+  taskListStates,
+  taskCompleteAnimationMs,
+  withOrganization,
+  type EnrichedTask,
+  type ProjectTodoGroup
+} from "./lib/tasks";
+import { readShellContentHeight, readTextareaHeightForFit } from "./lib/windowFit";
 
 export default function App() {
   const surface = useMemo(getSurface, []);
@@ -1090,7 +86,6 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
-  const [completingTaskIds, setCompletingTaskIds] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState("");
   const [taskMessage, setTaskMessage] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1098,6 +93,7 @@ export default function App() {
   const [recordTarget] = useState(getInitialRecordTarget);
   const [records, setRecords] = useState<PersonalRecordMeta[]>([]);
   const [codexRuns, setCodexRuns] = useState<CodexRunMeta[]>([]);
+  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
 
   useEffect(() => {
     if (getSurface() !== "tray") {
@@ -1119,6 +115,27 @@ export default function App() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (getSurface() !== "tray") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    window.workshopDesktop
+      .getUpdateStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setUpdateStatus(status);
+        }
+      })
+      .catch(() => undefined);
+    const unsubscribe = window.workshopDesktop.onUpdateStatus((status) => setUpdateStatus(status));
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
   const [recordsLoaded, setRecordsLoaded] = useState(false);
   const [activeRecord, setActiveRecord] = useState<PersonalRecord | null>(null);
   const [recordListContext, setRecordListContext] = useState<RecordListContext>(() => getRecordListContext(recordTarget));
@@ -1131,18 +148,25 @@ export default function App() {
   const [recordProjectQuery, setRecordProjectQuery] = useState("");
   const [recordSearchQuery, setRecordSearchQuery] = useState("");
   const [recordSearchOpen, setRecordSearchOpen] = useState(false);
-  const [recordCompletingId, setRecordCompletingId] = useState<string | null>(null);
   const [stickyListCollapsed, setStickyListCollapsed] = useState(false);
   const [recordListCollapsed, setRecordListCollapsed] = useState(false);
   const [taskNoteBody, setTaskNoteBody] = useState("");
   const [taskNoteDirty, setTaskNoteDirty] = useState(false);
-  const [focusPulseVisible, setFocusPulseVisible] = useState(false);
+  const { focusPulseVisible, triggerFocusPulse } = useFocusPulse();
+  const {
+    completingIds: completingTaskIds,
+    clearCompletionFeedback: clearTaskCompletionFeedback,
+    markCompletionFeedback: markTaskCompletionFeedback
+  } = useKeyedCompletionFeedback<number>(taskCompleteAnimationMs);
+  const {
+    completingId: recordCompletingId,
+    clearCompletionFeedback: clearRecordCompletionFeedback,
+    markCompletionFeedback: markRecordCompletionFeedback
+  } = useSingleCompletionFeedback(recordCompleteAnimationMs);
   const recordSaveTimerRef = useRef<number | null>(null);
   const recordEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const recordSearchInputRef = useRef<HTMLInputElement | null>(null);
   const taskNoteSaveTimerRef = useRef<number | null>(null);
-  const focusPulseTimerRef = useRef<number | null>(null);
-  const focusPulseFrameRef = useRef<number | null>(null);
   const arrangementHeightTimerRef = useRef<number | null>(null);
   const arrangementMaxHeightRef = useRef<number | null>(null);
   const lastWindowFitRef = useRef("");
@@ -1151,8 +175,6 @@ export default function App() {
   const recordDirtyRef = useRef(false);
   const taskNoteBodyRef = useRef("");
   const taskNoteDirtyRef = useRef(false);
-  const taskCompleteTimersRef = useRef<Map<number, number>>(new Map());
-  const recordCompleteTimerRef = useRef<number | null>(null);
   const recordSaveInFlightRef = useRef<Promise<PersonalRecord | null> | null>(null);
   const recordSaveQueuedRef = useRef(false);
   const isSingleTaskSticky = surface === "sticky" && taskFilter !== "all";
@@ -1177,42 +199,8 @@ export default function App() {
     taskNoteDirtyRef.current = taskNoteDirty;
   }, [taskNoteDirty]);
 
-  const triggerFocusPulse = useCallback(() => {
-    if (focusPulseFrameRef.current !== null) {
-      window.cancelAnimationFrame(focusPulseFrameRef.current);
-      focusPulseFrameRef.current = null;
-    }
-    if (focusPulseTimerRef.current !== null) {
-      window.clearTimeout(focusPulseTimerRef.current);
-      focusPulseTimerRef.current = null;
-    }
-
-    setFocusPulseVisible(false);
-    focusPulseFrameRef.current = window.requestAnimationFrame(() => {
-      focusPulseFrameRef.current = null;
-      setFocusPulseVisible(true);
-      focusPulseTimerRef.current = window.setTimeout(() => {
-        focusPulseTimerRef.current = null;
-        setFocusPulseVisible(false);
-      }, 1300);
-    });
-  }, []);
-
   useEffect(() => {
     return () => {
-      for (const timer of taskCompleteTimersRef.current.values()) {
-        window.clearTimeout(timer);
-      }
-      taskCompleteTimersRef.current.clear();
-      if (recordCompleteTimerRef.current !== null) {
-        window.clearTimeout(recordCompleteTimerRef.current);
-      }
-      if (focusPulseFrameRef.current !== null) {
-        window.cancelAnimationFrame(focusPulseFrameRef.current);
-      }
-      if (focusPulseTimerRef.current !== null) {
-        window.clearTimeout(focusPulseTimerRef.current);
-      }
       if (arrangementHeightTimerRef.current !== null) {
         window.clearTimeout(arrangementHeightTimerRef.current);
       }
@@ -1261,23 +249,21 @@ export default function App() {
     setTaskMessage("");
 
     try {
-      const currentUser = await api<CurrentUserPayload>("GET", "/users").catch(() => null);
-      const standaloneProjectPayload = await api<ProjectsPayload | Project[]>("GET", "/projects", {
-        query: { page_size: 200 }
-      });
+      const currentUser = await apiData<CurrentUserPayload>(window.workshopDesktop.getCurrentUser()).catch(() => null);
+      const standaloneProjectPayload = await apiData<ProjectsPayload | Project[]>(
+        window.workshopDesktop.listProjects({ pageSize: 200 })
+      );
       const standaloneProjects = extractList<Project>(standaloneProjectPayload, "projects");
-      const organizationsPayload = await api<OrganizationsPayload | Organization[]>("GET", "/organizations", {
-        query: { page_size: 200 }
-      });
+      const organizationsPayload = await apiData<OrganizationsPayload | Organization[]>(window.workshopDesktop.listOrganizations());
       const organizations = extractList<Organization>(organizationsPayload, "organizations");
       const organizationProjectGroups = await Promise.all(
         organizations.map(async (organization) => {
-          const payload = await api<ProjectsPayload | Project[]>("GET", "/projects", {
-            query: {
-              organization_id: organization.id,
-              page_size: 200
-            }
-          });
+          const payload = await apiData<ProjectsPayload | Project[]>(
+            window.workshopDesktop.listProjects({
+              organizationId: organization.id,
+              pageSize: 200
+            })
+          );
           return extractList<Project>(payload, "projects").map((project) => withOrganization(project, organization));
         })
       );
@@ -1286,13 +272,13 @@ export default function App() {
 
       const taskGroups = await Promise.all(
         nextProjects.map(async (project) => {
-          const payload = await api<TasksPayload | Task[]>("GET", "/tasks", {
-            query: {
-              project_id: project.id,
-              state: activeStates,
-              page_size: 200
-            }
-          });
+          const payload = await apiData<TasksPayload | Task[]>(
+            window.workshopDesktop.listTasks({
+              projectId: project.id,
+              states: taskListStates,
+              pageSize: 200
+            })
+          );
 
           const meId = getMeId(project, currentUser?.username || config.username);
           const projectLabel = getProjectDisplayName(project);
@@ -1312,71 +298,6 @@ export default function App() {
       setIsLoading(false);
     }
   }, [config]);
-
-  const clearTaskCompletionFeedback = useCallback((taskId: number) => {
-    const existingTimer = taskCompleteTimersRef.current.get(taskId);
-    if (existingTimer !== undefined) {
-      window.clearTimeout(existingTimer);
-      taskCompleteTimersRef.current.delete(taskId);
-    }
-
-    setCompletingTaskIds((current) => {
-      if (!current.has(taskId)) {
-        return current;
-      }
-      const next = new Set(current);
-      next.delete(taskId);
-      return next;
-    });
-  }, []);
-
-  const markTaskCompletionFeedback = useCallback((taskId: number, onDone?: () => void) => {
-    const existingTimer = taskCompleteTimersRef.current.get(taskId);
-    if (existingTimer !== undefined) {
-      window.clearTimeout(existingTimer);
-    }
-
-    setCompletingTaskIds((current) => {
-      const next = new Set(current);
-      next.add(taskId);
-      return next;
-    });
-
-    const timer = window.setTimeout(() => {
-      taskCompleteTimersRef.current.delete(taskId);
-      setCompletingTaskIds((current) => {
-        if (!current.has(taskId)) {
-          return current;
-        }
-        const next = new Set(current);
-        next.delete(taskId);
-        return next;
-      });
-      onDone?.();
-    }, taskCompleteAnimationMs);
-    taskCompleteTimersRef.current.set(taskId, timer);
-  }, []);
-
-  const clearRecordCompletionFeedback = useCallback(() => {
-    if (recordCompleteTimerRef.current !== null) {
-      window.clearTimeout(recordCompleteTimerRef.current);
-      recordCompleteTimerRef.current = null;
-    }
-    setRecordCompletingId(null);
-  }, []);
-
-  const markRecordCompletionFeedback = useCallback((recordId: string, onDone?: () => void) => {
-    if (recordCompleteTimerRef.current !== null) {
-      window.clearTimeout(recordCompleteTimerRef.current);
-    }
-
-    setRecordCompletingId(recordId);
-    recordCompleteTimerRef.current = window.setTimeout(() => {
-      recordCompleteTimerRef.current = null;
-      setRecordCompletingId((current) => (current === recordId ? null : current));
-      onDone?.();
-    }, recordCompleteAnimationMs);
-  }, []);
 
   const applyTaskStateChange = useCallback(
     (notice: TaskStateChangeNotice, options?: { refreshAfterComplete?: boolean }) => {
@@ -1843,7 +764,7 @@ export default function App() {
     [recordSearchQuery]
   );
   const visibleRecords = useMemo(
-    () => contextualRecords.filter((record) => recordMatchesSearch(record, recordSearchTokens)),
+    () => contextualRecords.filter((record) => recordMatchesSearch(record, recordSearchTokens)).sort(compareRecordListItems),
     [contextualRecords, recordSearchTokens]
   );
   const hasRecordSearchQuery = recordSearchTokens.length > 0;
@@ -1924,7 +845,7 @@ export default function App() {
       id: selectedTaskRecord?.id,
       bodyMarkdown,
       scopeType: "task",
-      status: "active",
+      status: selectedTaskRecord?.status ?? "active",
       projectId: selectedTask.project_id,
       projectName: selectedTask.projectName,
       taskId: selectedTask.id,
@@ -1993,6 +914,11 @@ export default function App() {
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "发送失败");
     }
+  }
+
+  function handleTaskArchive() {
+    setError("");
+    setTaskMessage("任务归档暂未实现，当前不会隐藏任务");
   }
 
   useEffect(() => {
@@ -2173,12 +1099,12 @@ export default function App() {
     await window.workshopDesktop.closeWindow();
   }
 
-  async function saveRecordAsCompleted(record: PersonalRecord) {
+  async function saveRecordWithStatus(record: PersonalRecord, status: PersonalRecordStatus) {
     return window.workshopDesktop.savePersonalRecord({
       id: record.id || undefined,
       bodyMarkdown: record.bodyMarkdown,
       scopeType: record.scopeType,
-      status: "completed",
+      status,
       projectId: record.projectId,
       projectName: record.projectName,
       taskId: record.taskId,
@@ -2188,7 +1114,6 @@ export default function App() {
   }
 
   async function completeRecord(record: PersonalRecordMeta) {
-    markRecordCompletionFeedback(record.id, () => void loadRecords());
     setRecordMessage("");
 
     try {
@@ -2199,7 +1124,17 @@ export default function App() {
         return;
       }
 
-      await saveRecordAsCompleted(fullRecord);
+      const nextStatus: PersonalRecordStatus = record.status === "completed" ? "active" : "completed";
+      if (nextStatus === "completed") {
+        markRecordCompletionFeedback(record.id, () => void loadRecords());
+      } else {
+        clearRecordCompletionFeedback();
+      }
+
+      await saveRecordWithStatus(fullRecord, nextStatus);
+      if (nextStatus === "active") {
+        await loadRecords();
+      }
     } catch (nextError) {
       clearRecordCompletionFeedback();
       setRecordMessage(nextError instanceof Error ? nextError.message : "完成失败");
@@ -2212,7 +1147,6 @@ export default function App() {
       return;
     }
 
-    markRecordCompletionFeedback(initialRecord.id || "active-record");
     setRecordMessage("");
 
     try {
@@ -2231,31 +1165,96 @@ export default function App() {
 
       const recordToComplete = activeRecordRef.current ?? initialRecord;
       const bodyToComplete = recordBodyRef.current;
+      const nextStatus: PersonalRecordStatus = recordToComplete.status === "completed" ? "active" : "completed";
       if (!recordToComplete.id && !bodyToComplete.trim()) {
         clearRecordCompletionFeedback();
         await window.workshopDesktop.closeWindow();
         return;
       }
 
-      const completed = await saveRecordAsCompleted({
+      if (nextStatus === "completed") {
+        markRecordCompletionFeedback(recordToComplete.id || "active-record");
+      } else {
+        clearRecordCompletionFeedback();
+      }
+
+      const saved = await saveRecordWithStatus({
         ...recordToComplete,
         bodyMarkdown: bodyToComplete,
-        status: "completed"
-      });
-      activeRecordRef.current = completed;
-      recordBodyRef.current = completed.bodyMarkdown;
+        status: nextStatus
+      }, nextStatus);
+      activeRecordRef.current = saved;
+      recordBodyRef.current = saved.bodyMarkdown;
       recordDirtyRef.current = false;
-      setActiveRecord(completed);
-      setRecordBody(completed.bodyMarkdown);
+      setActiveRecord(saved);
+      setRecordBody(saved.bodyMarkdown);
       setRecordDirty(false);
       setRecordSaveStatus("saved");
       setRecordMessage("");
-      markRecordCompletionFeedback(completed.id);
-      await new Promise((resolve) => window.setTimeout(resolve, recordCompleteAnimationMs));
-      await window.workshopDesktop.closeWindow();
+      if (nextStatus === "completed") {
+        markRecordCompletionFeedback(saved.id, () => void loadRecords());
+      } else {
+        await loadRecords();
+      }
     } catch (nextError) {
       clearRecordCompletionFeedback();
       setRecordMessage(nextError instanceof Error ? nextError.message : "完成失败");
+    }
+  }
+
+  async function archiveRecord(record: PersonalRecordMeta) {
+    setRecordMessage("");
+
+    try {
+      const fullRecord = await window.workshopDesktop.getPersonalRecord(record.id);
+      if (!fullRecord) {
+        await loadRecords();
+        return;
+      }
+
+      await saveRecordWithStatus(fullRecord, "archived");
+      await loadRecords();
+    } catch (nextError) {
+      setRecordMessage(nextError instanceof Error ? nextError.message : "归档失败");
+    }
+  }
+
+  async function archiveActiveRecord() {
+    const initialRecord = activeRecordRef.current;
+    if (!initialRecord) {
+      return;
+    }
+
+    setRecordMessage("");
+    try {
+      if (recordSaveTimerRef.current) {
+        window.clearTimeout(recordSaveTimerRef.current);
+        recordSaveTimerRef.current = null;
+      }
+
+      if (recordSaveInFlightRef.current) {
+        const saved = await recordSaveInFlightRef.current;
+        if (!saved && recordDirtyRef.current) {
+          return;
+        }
+      }
+
+      const recordToArchive = activeRecordRef.current ?? initialRecord;
+      const bodyToArchive = recordBodyRef.current;
+      if (!recordToArchive.id && !bodyToArchive.trim()) {
+        await window.workshopDesktop.closeWindow();
+        return;
+      }
+
+      await saveRecordWithStatus({
+        ...recordToArchive,
+        bodyMarkdown: bodyToArchive,
+        status: "archived"
+      }, "archived");
+      await loadRecords();
+      await window.workshopDesktop.closeWindow();
+    } catch (nextError) {
+      setRecordMessage(nextError instanceof Error ? nextError.message : "归档失败");
     }
   }
 
@@ -2268,12 +1267,10 @@ export default function App() {
 
     setRecordMessage("");
     try {
-      const createdTask = await api<Task>("POST", "/tasks", {
-        body: {
-          project_id: saved.projectId,
-          content: deriveRecordTitle(recordBodyRef.current, saved.title)
-        }
-      });
+      const createdTask = await apiData<Task>(window.workshopDesktop.createTask({
+        projectId: saved.projectId,
+        content: deriveRecordTitle(recordBodyRef.current, saved.title)
+      }));
       if (saved.id) {
         await window.workshopDesktop.savePersonalRecord({
           id: saved.id,
@@ -2467,9 +1464,7 @@ export default function App() {
     setTaskMessage("");
 
     try {
-      const updatedTask = await api<Task>("PUT", `/tasks/${task.id}`, {
-        body: { state }
-      });
+      const updatedTask = await apiData<Task>(window.workshopDesktop.updateTask({ taskId: task.id, state }));
       const now = new Date().toISOString();
       const notice: TaskStateChangeNotice = {
         id: task.id,
@@ -2481,11 +1476,6 @@ export default function App() {
 
       applyTaskStateChange(notice, { refreshAfterComplete: notice.state === "completed" });
       await window.workshopDesktop.notifyTaskChanged(notice);
-
-      if (notice.state === "completed" && isSingleTaskSticky) {
-        await closeStickyWindow();
-        return;
-      }
 
       if (notice.state !== "completed") {
         await loadData();
@@ -2532,6 +1522,23 @@ export default function App() {
     setSettingsOpen(false);
   }
 
+  async function handleCheckForUpdates() {
+    try {
+      const status = await window.workshopDesktop.checkForUpdates();
+      setUpdateStatus(status);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "检查更新失败");
+    }
+  }
+
+  async function handleInstallUpdate() {
+    try {
+      await window.workshopDesktop.installUpdate();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "安装更新失败");
+    }
+  }
+
   async function handleStickyAlwaysOnTop(enabled: boolean) {
     const saved = await window.workshopDesktop.setStickyAlwaysOnTop(enabled);
     setConfig(saved);
@@ -2557,402 +1564,94 @@ export default function App() {
   }
 
   if (surface === "record") {
-    const recordHeaderContext =
-      activeRecord ||
-      (recordListContext.scopeType === "project"
-        ? {
-            scopeType: "project" as const,
-            projectName: recordListContext.projectName
-          }
-        : { scopeType: "none" as const });
-    const recordHeaderTitle = getRecordHeaderTitle(recordHeaderContext, Boolean(activeRecord), visibleRecords.length);
     const activeRecordCompletionId = activeRecord?.id || "active-record";
     const isActiveRecordCompleting = Boolean(activeRecord && recordCompletingId === activeRecordCompletionId);
-    const saveLabel =
-      isActiveRecordCompleting || activeRecord?.status === "completed"
-        ? "已完成"
-        : recordSaveStatus === "saving"
-        ? "保存中"
-        : recordSaveStatus === "error"
-          ? "保存失败"
-          : activeRecord?.id
-            ? "已保存"
-            : "本地草稿";
-    const isTaskNote = activeRecord?.scopeType === "task";
-    const canAssignRecordToProject = activeRecord?.scopeType === "none";
-    const canPromoteToTask = activeRecord?.scopeType === "project" && Boolean(activeRecord.projectId);
     const isRecordSearchExpanded = recordSearchOpen || hasRecordSearchQuery;
 
     return (
-      <main
-        className={`record-shell ${activeRecord ? "record-detail-shell" : "record-list-shell"} ${
-          !activeRecord && recordListCollapsed ? "collapsed-shell" : ""
-        } ${focusPulseVisible ? "window-focus-pulse" : ""}`}
-      >
-        <header className="record-titlebar">
-          <div className="sticky-drag">
-            <button className="sticky-arrange-button" type="button" onClick={() => void handleArrangeStickyWindows()} title="整理便签排列">
-              <GripVertical size={15} />
-            </button>
-            <div className="record-title-copy">
-              <div className="window-title-line">
-                <WindowHeaderTitle title={recordHeaderTitle} />
-                {canAssignRecordToProject ? (
-                  <button
-                    className="scope-switch-button"
-                    type="button"
-                    onClick={() => setRecordScopePickerOpen((open) => !open)}
-                    title="分配到项目"
-                  >
-                    <Folder size={14} strokeWidth={2.8} />
-                  </button>
-                ) : null}
-              </div>
-              {!activeRecord && recordListContext.scopeType === "project" && recordListContext.projectId !== undefined ? (
-                <ProjectDirectorySubtitle
-                  localDirectory={getProjectLocalDirectory(config, recordListContext.projectId)}
-                  onClick={() => void handleProjectDirectoryClick(recordListContext.projectId as number, "record")}
-                />
-              ) : null}
-              {canAssignRecordToProject && recordScopePickerOpen ? (
-                <div className="scope-popover">
-                  <input
-                    value={recordProjectQuery}
-                    onChange={(event) => setRecordProjectQuery(event.target.value)}
-                    placeholder="项目"
-                    autoFocus
-                  />
-                  {recordProjectCandidates.map(({ project, projectName }) => (
-                    <button
-                      className="scope-option"
-                      type="button"
-                      key={project.id}
-                      onClick={() => void assignRecordToProject(project, projectName)}
-                    >
-                      <span className="record-scope project">项目</span>
-                      <strong>{projectName}</strong>
-                    </button>
-                  ))}
-                  {recordProjectCandidates.length === 0 ? <div className="scope-empty">没有项目</div> : null}
-                </div>
-              ) : null}
-            </div>
-          </div>
-          <div className="sticky-actions">
-            {!activeRecord ? (
-              <div className={`record-search-control ${isRecordSearchExpanded ? "expanded" : ""}`} role="search">
-                <button
-                  className="record-search-toggle"
-                  type="button"
-                  onClick={() => {
-                    setRecordListCollapsed(false);
-                    setRecordSearchOpen(true);
-                  }}
-                  title="搜索记录"
-                  aria-label="搜索记录"
-                >
-                  <Search size={14} />
-                </button>
-                {isRecordSearchExpanded ? (
-                  <>
-                    <input
-                      ref={recordSearchInputRef}
-                      value={recordSearchQuery}
-                      onChange={(event) => setRecordSearchQuery(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape") {
-                          setRecordSearchQuery("");
-                          setRecordSearchOpen(false);
-                          event.currentTarget.blur();
-                        }
-                      }}
-                      placeholder="搜索"
-                      aria-label="搜索记录"
-                      spellCheck={false}
-                    />
-                    <button
-                      className="record-search-clear"
-                      type="button"
-                      onClick={() => {
-                        if (recordSearchQuery) {
-                          setRecordSearchQuery("");
-                          recordSearchInputRef.current?.focus();
-                          return;
-                        }
-                        setRecordSearchOpen(false);
-                      }}
-                      title={recordSearchQuery ? "清空搜索" : "关闭搜索"}
-                      aria-label={recordSearchQuery ? "清空搜索" : "关闭搜索"}
-                    >
-                      <X size={12} />
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-            {!activeRecord ? (
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => setRecordListCollapsed((collapsed) => !collapsed)}
-                title={recordListCollapsed ? "展开" : "折叠"}
-              >
-                {recordListCollapsed ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
-              </button>
-            ) : null}
-            {!isTaskNote ? (
-              <button className="icon-button" type="button" onClick={() => void handleNewRecord()} title="新建">
-                <Plus size={15} />
-              </button>
-            ) : null}
-            <button
-              className={`icon-button ${config.stickyAlwaysOnTop ? "active-icon" : ""}`}
-              type="button"
-              onClick={() => void handleStickyAlwaysOnTop(!config.stickyAlwaysOnTop)}
-              title={config.stickyAlwaysOnTop ? "取消置顶" : "置顶"}
-            >
-              {config.stickyAlwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />}
-            </button>
-            <button className="icon-button" type="button" onClick={() => void closeRecordWindow()} title="关闭">
-              <X size={16} />
-            </button>
-          </div>
-        </header>
-
-        {!activeRecord && recordMessage ? (
-          <div className="record-message">
-            <Link size={14} />
-            <span>{recordMessage}</span>
-          </div>
-        ) : null}
-
-        {activeRecord ? (
-          <>
-            {recordMessage ? (
-              <div className="record-message">
-                <Link size={14} />
-                <span>{recordMessage}</span>
-              </div>
-            ) : null}
-
-            {recordMode === "edit" ? (
-              <textarea
-                ref={recordEditorRef}
-                className="record-editor"
-                value={recordBody}
-                onChange={(event) => {
-                  const nextBody = event.target.value;
-                  recordBodyRef.current = nextBody;
-                  recordDirtyRef.current = true;
-                  setRecordBody(nextBody);
-                  setRecordDirty(true);
-                  setRecordSaveStatus("idle");
-                }}
-                onBlur={() => void saveRecordNow()}
-                placeholder="记一下..."
-                spellCheck={false}
-              />
-            ) : (
-              <section className="record-preview-panel">
-                {recordBody.trim() ? (
-                  <MarkdownPreview value={recordBody} />
-                ) : (
-                  <div className="empty-state sticky-empty">
-                    <BookOpenText size={24} />
-                    <span>还没有内容</span>
-                  </div>
-                )}
-              </section>
-            )}
-
-            <div className="record-toolbar">
-              <div className="record-mode-switch" aria-label="编辑或预览">
-                <button
-                  type="button"
-                  className={recordMode === "edit" ? "active" : ""}
-                  onClick={() => setRecordMode("edit")}
-                  title="编辑"
-                >
-                  <Pencil size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={recordMode === "preview" ? "active" : ""}
-                  onClick={() => setRecordMode("preview")}
-                  title="预览"
-                >
-                  <Eye size={15} />
-                </button>
-              </div>
-              <span className={`record-save-state ${recordSaveStatus}`}>{saveLabel}</span>
-              <div className="record-toolbar-actions">
-                <button
-                  className="record-action-button"
-                  type="button"
-                  onClick={() => void sendActiveRecordToCodex()}
-                  disabled={!activeRecord?.projectId}
-                  title={activeRecord?.projectId ? "发送到 Codex" : "需要先关联项目"}
-                >
-                  <SquareTerminal size={15} />
-                </button>
-                <button
-                  className={`record-action-button complete ${isActiveRecordCompleting ? "active" : ""}`}
-                  type="button"
-                  onClick={() => void completeActiveRecord()}
-                  disabled={isActiveRecordCompleting}
-                  title={isActiveRecordCompleting ? "已完成" : "完成"}
-                >
-                  <Check size={16} strokeWidth={3} />
-                </button>
-                {canPromoteToTask ? (
-                  <button className="record-action-button" type="button" onClick={() => void createTaskFromRecord()} title="转为任务">
-                    <Send size={15} />
-                  </button>
-                ) : null}
-                <button className="record-action-button danger" type="button" onClick={() => void deleteActiveRecord()} title="删除">
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </div>
-          </>
-        ) : !recordListCollapsed ? (
-          <section className="record-list" aria-label="记录列表">
-            {visibleRecords.length === 0 ? (
-              <div className="empty-state sticky-empty">
-                <NotebookPen size={24} />
-                <span>{getRecordListEmptyLabel(recordListContext, hasRecordSearchQuery)}</span>
-              </div>
-            ) : null}
-            {visibleRecords.map((record) => (
-              <div className={`record-list-row ${recordCompletingId === record.id ? "completing" : ""}`} key={record.id}>
-                <button
-                  className="record-complete-button"
-                  type="button"
-                  onClick={() => void completeRecord(record)}
-                  disabled={recordCompletingId === record.id}
-                  title="完成"
-                >
-                  <Check size={18} strokeWidth={3} />
-                </button>
-                <button
-                  className="record-list-main"
-                  type="button"
-                  disabled={recordCompletingId === record.id}
-                  onClick={() =>
-                    void window.workshopDesktop.openPersonalRecord({
-                      noteId: record.id
-                    })
-                  }
-                >
-                  <strong>{record.title}</strong>
-                </button>
-              </div>
-            ))}
-          </section>
-        ) : null}
-      </main>
+      <RecordSurface
+        activeRecord={activeRecord}
+        archiveActiveRecord={() => void archiveActiveRecord()}
+        archiveRecord={(record) => void archiveRecord(record)}
+        assignRecordToProject={(project, projectName) => void assignRecordToProject(project, projectName)}
+        closeRecordWindow={() => void closeRecordWindow()}
+        completeActiveRecord={() => void completeActiveRecord()}
+        completeRecord={(record) => void completeRecord(record)}
+        config={config}
+        createTaskFromRecord={() => void createTaskFromRecord()}
+        deleteActiveRecord={() => void deleteActiveRecord()}
+        focusPulseVisible={focusPulseVisible}
+        handleArrangeStickyWindows={() => void handleArrangeStickyWindows()}
+        handleNewRecord={() => void handleNewRecord()}
+        handleProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "record")}
+        handleStickyAlwaysOnTop={(enabled) => void handleStickyAlwaysOnTop(enabled)}
+        hasRecordSearchQuery={hasRecordSearchQuery}
+        isActiveRecordCompleting={isActiveRecordCompleting}
+        isRecordSearchExpanded={isRecordSearchExpanded}
+        onRecordBodyChange={(nextBody) => {
+          recordBodyRef.current = nextBody;
+          recordDirtyRef.current = true;
+          setRecordBody(nextBody);
+          setRecordDirty(true);
+          setRecordSaveStatus("idle");
+        }}
+        recordBody={recordBody}
+        recordCompletingId={recordCompletingId}
+        recordEditorRef={recordEditorRef}
+        recordListCollapsed={recordListCollapsed}
+        recordListContext={recordListContext}
+        recordMessage={recordMessage}
+        recordMode={recordMode}
+        recordProjectCandidates={recordProjectCandidates}
+        recordProjectQuery={recordProjectQuery}
+        recordSaveStatus={recordSaveStatus}
+        recordScopePickerOpen={recordScopePickerOpen}
+        recordSearchInputRef={recordSearchInputRef}
+        recordSearchQuery={recordSearchQuery}
+        saveRecordNow={() => void saveRecordNow()}
+        sendActiveRecordToCodex={() => void sendActiveRecordToCodex()}
+        setRecordListCollapsed={setRecordListCollapsed}
+        setRecordMode={setRecordMode}
+        setRecordProjectQuery={setRecordProjectQuery}
+        setRecordScopePickerOpen={setRecordScopePickerOpen}
+        setRecordSearchOpen={setRecordSearchOpen}
+        setRecordSearchQuery={setRecordSearchQuery}
+        visibleRecords={visibleRecords}
+      />
     );
   }
 
   if (!isLoggedIn(config)) {
     if (surface === "sticky") {
       return (
-        <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
-          <header className="sticky-titlebar">
-            <div className="sticky-drag">
-              <button className="sticky-arrange-button" type="button" onClick={() => void handleArrangeStickyWindows()} title="整理便签排列">
-                <GripVertical size={15} />
-              </button>
-              <h1>待办便签</h1>
-            </div>
-            <button className="icon-button" type="button" onClick={() => void closeStickyWindow()} title="关闭">
-              <X size={16} />
-            </button>
-          </header>
-          <div className="empty-state sticky-empty">
-            <LogIn size={24} />
-            <span>需要先登录</span>
-          </div>
-        </main>
+        <StickyLoginRequiredSurface
+          closeStickyWindow={() => void closeStickyWindow()}
+          focusPulseVisible={focusPulseVisible}
+          handleArrangeStickyWindows={() => void handleArrangeStickyWindows()}
+          isSingleTaskSticky={isSingleTaskSticky}
+        />
       );
     }
 
     return (
-      <main className="app-shell login-shell">
-        <section className="login-panel">
-          <div className="login-mark">
-            <WorkshopMark />
-          </div>
-          <div>
-            <div className="eyebrow">Workshop</div>
-            <h1>登录</h1>
-          </div>
-          <form className="login-form" onSubmit={(event) => void handleLogin(event)}>
-            <AuthFields draftConfig={draftConfig} setDraftConfig={setDraftConfig} />
-            {draftConfig.authMode === "nebula" ? (
-              <div className="nebula-login-fields">
-                <div className="segmented code-type-switch" aria-label="验证码类型">
-                  <button
-                    type="button"
-                    className={loginCodeType === "email" ? "active" : ""}
-                    onClick={() => setLoginCodeType("email")}
-                  >
-                    邮箱
-                  </button>
-                  <button
-                    type="button"
-                    className={loginCodeType === "sms" ? "active" : ""}
-                    onClick={() => setLoginCodeType("sms")}
-                  >
-                    手机号
-                  </button>
-                </div>
-                <label>
-                  <span>{loginCodeType === "email" ? "邮箱" : "手机号"}</span>
-                  <input
-                    value={loginTarget}
-                    onChange={(event) => setLoginTarget(event.target.value)}
-                    type={loginCodeType === "email" ? "email" : "tel"}
-                    autoComplete={loginCodeType === "email" ? "email" : "tel"}
-                    placeholder={loginCodeType === "email" ? "your-email@example.com" : "13800138000"}
-                  />
-                </label>
-                <div className="verification-row">
-                  <label>
-                    <span>验证码</span>
-                    <input
-                      value={loginCode}
-                      onChange={(event) => setLoginCode(event.target.value)}
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="6 位验证码"
-                    />
-                  </label>
-                  <button
-                    className="secondary-button code-button"
-                    type="button"
-                    onClick={() => void handleSendVerification()}
-                    disabled={isSendingCode || isSavingConfig || sendCooldown > 0 || !loginTarget.trim()}
-                  >
-                    {isSendingCode ? <LoaderCircle className="spin" size={16} /> : null}
-                    <span>{sendCooldown > 0 ? `${sendCooldown}s` : "发送验证码"}</span>
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            {error ? (
-              <div className="notice" role="alert">
-                <WifiOff size={16} />
-                <span>{error}</span>
-              </div>
-            ) : null}
-            <button className="save-button" type="submit" disabled={isSavingConfig || isLoggingIn || !loginReady}>
-              {isSavingConfig || isLoggingIn ? <LoaderCircle className="spin" size={16} /> : <LogIn size={16} />}
-              <span>{draftConfig.authMode === "nebula" ? "登录" : "进入待办"}</span>
-            </button>
-          </form>
-        </section>
-      </main>
+      <LoginSurface
+        draftConfig={draftConfig}
+        error={error}
+        isLoggingIn={isLoggingIn}
+        isSavingConfig={isSavingConfig}
+        isSendingCode={isSendingCode}
+        loginCode={loginCode}
+        loginCodeType={loginCodeType}
+        loginReady={loginReady}
+        loginTarget={loginTarget}
+        sendCooldown={sendCooldown}
+        onLogin={(event) => void handleLogin(event)}
+        onSendVerification={() => void handleSendVerification()}
+        setDraftConfig={setDraftConfig}
+        setLoginCode={setLoginCode}
+        setLoginCodeType={setLoginCodeType}
+        setLoginTarget={setLoginTarget}
+      />
     );
   }
 
@@ -2968,310 +1667,76 @@ export default function App() {
     const stickyProjectId = !isSingleTaskSticky && projectFilter !== "all" ? Number(projectFilter) : undefined;
 
     return (
-      <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${isStickyContentCollapsed ? "collapsed-shell" : ""} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
-        <header className="sticky-titlebar">
-          <div className="sticky-drag">
-            <button className="sticky-arrange-button" type="button" onClick={() => void handleArrangeStickyWindows()} title="整理便签排列">
-              <GripVertical size={15} />
-            </button>
-            <div className="sticky-title-copy">
-              <div className="window-title-line">
-                <WindowHeaderTitle title={stickyHeader} />
-              </div>
-              {stickyProjectId !== undefined && Number.isFinite(stickyProjectId) ? (
-                <ProjectDirectorySubtitle
-                  localDirectory={getProjectLocalDirectory(config, stickyProjectId)}
-                  onClick={() => void handleProjectDirectoryClick(stickyProjectId, "sticky")}
-                />
-              ) : null}
-            </div>
-          </div>
-          <div className="sticky-actions">
-            {!isSingleTaskSticky && selectedProjectName && projectFilter !== "all" ? (
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() =>
-                  void window.workshopDesktop.openPersonalRecord({
-                    scopeType: "project",
-                    projectId: Number(projectFilter),
-                    projectName: selectedProjectName
-                  })
-                }
-                title="记项目"
-              >
-                <NotebookPen size={15} />
-              </button>
-            ) : null}
-            {!isSingleTaskSticky ? (
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => setStickyListCollapsed((collapsed) => !collapsed)}
-                title={stickyListCollapsed ? "展开" : "折叠"}
-              >
-                {stickyListCollapsed ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
-              </button>
-            ) : null}
-            <button
-              className={`icon-button ${config.stickyAlwaysOnTop ? "active-icon" : ""}`}
-              type="button"
-              onClick={() => void handleStickyAlwaysOnTop(!config.stickyAlwaysOnTop)}
-              title={config.stickyAlwaysOnTop ? "取消置顶" : "置顶"}
-            >
-              {config.stickyAlwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />}
-            </button>
-            <button className="icon-button" type="button" onClick={() => void closeStickyWindow()} title="关闭">
-              <X size={16} />
-            </button>
-          </div>
-        </header>
-
-        {taskMessage && !isStickyContentCollapsed ? (
-          <div className="notice sticky-notice success" role="status">
-            <SquareTerminal size={16} />
-            <span>{taskMessage}</span>
-          </div>
-        ) : null}
-
-        {error && !isStickyContentCollapsed ? (
-          <div className="notice sticky-notice" role="alert">
-            <WifiOff size={16} />
-            <span>{error}</span>
-          </div>
-        ) : null}
-
-        {!isStickyContentCollapsed ? (
-          <section className="sticky-task-list">
-            {isSingleTaskSticky ? (
-              selectedTask ? (
-                <TaskDetail
-                  task={selectedTask}
-                  busyTaskId={busyTaskId}
-                  noteBody={taskNoteBody}
-                  onNoteBlur={() => void saveTaskNoteNow()}
-                  onNoteChange={(body) => {
-                    taskNoteBodyRef.current = body;
-                    taskNoteDirtyRef.current = true;
-                    setTaskNoteBody(body);
-                    setTaskNoteDirty(true);
-                  }}
-                  onSendToCodex={(task) => void sendTaskToCodex(task)}
-                  onUpdate={(nextTask, state) => void updateTaskState(nextTask, state)}
-                />
-              ) : (
-                <div className="empty-state sticky-empty">
-                  {isLoading ? <LoaderCircle className="spin" size={22} /> : <ShieldCheck size={24} />}
-                  <span>{isLoading ? "同步中" : "当前没有待处理项"}</span>
-                </div>
-              )
-            ) : (
-              <>
-                {isLoading && filteredTasks.length === 0 ? (
-                  <div className="empty-state sticky-empty">
-                    <LoaderCircle className="spin" size={22} />
-                    <span>同步中</span>
-                  </div>
-                ) : null}
-
-                {!isLoading && filteredTasks.length === 0 ? (
-                  <div className="empty-state sticky-empty">
-                    <ShieldCheck size={24} />
-                    <span>当前没有待处理项</span>
-                  </div>
-                ) : null}
-
-                {filteredTasks.slice(0, 12).map((task) => (
-                  <TaskRow
-                    compact
-                    key={`${task.project_id}-${task.id}`}
-                    task={task}
-                    busyTaskId={busyTaskId}
-                    isCompleting={completingTaskIds.has(task.id)}
-                    recordId={taskRecordsByTaskId.get(task.id)?.id}
-                    onExtract={canExtractTasks ? extractTaskToSticky : undefined}
-                    onOpen={openTaskDetail}
-                    onRecord={openTaskDetail}
-                    onUpdate={(nextTask, state) => void updateTaskState(nextTask, state)}
-                  />
-                ))}
-              </>
-            )}
-          </section>
-        ) : null}
-      </main>
+      <StickySurface
+        busyTaskId={busyTaskId}
+        canExtractTasks={canExtractTasks}
+        closeStickyWindow={() => void closeStickyWindow()}
+        completingTaskIds={completingTaskIds}
+        config={config}
+        error={error}
+        extractTaskToSticky={extractTaskToSticky}
+        filteredTasks={filteredTasks}
+        focusPulseVisible={focusPulseVisible}
+        handleArrangeStickyWindows={() => void handleArrangeStickyWindows()}
+        handleProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
+        handleStickyAlwaysOnTop={(enabled) => void handleStickyAlwaysOnTop(enabled)}
+        isLoading={isLoading}
+        isSingleTaskSticky={isSingleTaskSticky}
+        isStickyContentCollapsed={isStickyContentCollapsed}
+        onOpenProjectRecord={() =>
+          void window.workshopDesktop.openPersonalRecord({
+            scopeType: "project",
+            projectId: Number(projectFilter),
+            projectName: selectedProjectName
+          })
+        }
+        onTaskArchive={() => handleTaskArchive()}
+        openTaskDetail={openTaskDetail}
+        saveTaskNoteNow={() => void saveTaskNoteNow()}
+        selectedProjectName={selectedProjectName}
+        selectedTask={selectedTask}
+        setStickyListCollapsed={setStickyListCollapsed}
+        stickyHeader={stickyHeader}
+        stickyListCollapsed={stickyListCollapsed}
+        stickyProjectId={stickyProjectId}
+        taskMessage={taskMessage}
+        taskNoteBody={taskNoteBody}
+        taskRecordsByTaskId={taskRecordsByTaskId}
+        updateTaskNoteBody={(body) => {
+          taskNoteBodyRef.current = body;
+          taskNoteDirtyRef.current = true;
+          setTaskNoteBody(body);
+          setTaskNoteDirty(true);
+        }}
+        updateTaskState={(nextTask, state) => void updateTaskState(nextTask, state)}
+        sendTaskToCodex={(task) => void sendTaskToCodex(task)}
+      />
     );
   }
 
   return (
-    <main className="app-shell tray-menu-shell" onMouseLeave={hideProjectTaskPreview}>
-      <header className="menu-topbar">
-        <div className="menu-title">
-          <WorkshopMark compact />
-          <h1>待办项目</h1>
-        </div>
-        <div className="top-actions">
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => void window.workshopDesktop.openPersonalRecord()}
-            title="个人记录"
-            data-tooltip="个人记录"
-          >
-            <NotebookPen size={17} />
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => void window.workshopDesktop.openSticky()}
-            title="任务便签"
-            data-tooltip="任务便签"
-          >
-            <StickyNote size={17} />
-          </button>
-          <button className="icon-button" type="button" onClick={() => void loadData()} title="刷新" data-tooltip="刷新">
-            <RefreshCw size={17} className={isLoading ? "spin" : undefined} />
-          </button>
-          <button className="icon-button" type="button" onClick={() => setSettingsOpen(true)} title="设置" data-tooltip="设置">
-            <Settings size={17} />
-          </button>
-        </div>
-      </header>
-
-      {error ? (
-        <div className="notice" role="alert">
-          <WifiOff size={16} />
-          <span>{error}</span>
-        </div>
-      ) : null}
-
-      <section className="project-menu-list" aria-label="项目列表">
-        {isLoading && projects.length === 0 ? (
-          <div className="empty-state compact-empty">
-            <LoaderCircle className="spin" size={22} />
-            <span>同步中</span>
-          </div>
-        ) : null}
-
-        {!isLoading && projectTodoGroups.length === 0 ? (
-          <div className="empty-state compact-empty">
-            <ShieldCheck size={24} />
-            <span>没有可用项目</span>
-          </div>
-        ) : null}
-
-        {projectTodoGroups.map((group) => (
-          <ProjectMenuRow
-            key={group.project.id}
-            group={group}
-            active={hoveredProjectId === group.project.id}
-            recordCount={projectRecordCounts.get(group.project.id) ?? 0}
-            onHover={showProjectTaskPreview}
-            onOpen={openProjectWorkspace}
-            onRecord={openProjectRecord}
-          />
-        ))}
-      </section>
-
-      {codexRuns.length > 0 ? (
-        <section className="codex-run-list" aria-label="Codex 运行">
-          <div className="codex-run-list-title">
-            <SquareTerminal size={13} />
-            <span>Codex 运行</span>
-          </div>
-          {codexRuns.slice(0, 5).map((run) => (
-            <div key={run.runId} className={`codex-run-row status-${run.status}`} title={run.lastMessage || run.title}>
-              <span className="codex-run-dot" aria-hidden="true" />
-              <span className="codex-run-title">{run.title}</span>
-              <span className="codex-run-meta">
-                {run.projectName ? `${run.projectName} · ` : ""}
-                {codexRunStatusLabels[run.status] ?? run.status}
-              </span>
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      {settingsOpen ? (
-        <div className="settings-backdrop" role="presentation">
-          <aside className="settings-panel" aria-label="设置">
-            <header>
-              <div>
-                <div className="eyebrow">Settings</div>
-                <h2>设置</h2>
-              </div>
-              <button className="icon-button" type="button" onClick={() => setSettingsOpen(false)} title="关闭">
-                <X size={17} />
-              </button>
-            </header>
-
-            <form onSubmit={(event) => void handleSaveConfig(event)}>
-              <AuthFields draftConfig={draftConfig} setDraftConfig={setDraftConfig} />
-
-              <div className="settings-block">
-                <label className="toggle-line">
-                  <input
-                    type="checkbox"
-                    checked={draftConfig.dailyRefreshEnabled}
-                    onChange={(event) => setDraftConfig({ ...draftConfig, dailyRefreshEnabled: event.target.checked })}
-                  />
-                  <span>每日定时更新</span>
-                </label>
-                <label>
-                  <span>更新时间</span>
-                  <input
-                    type="time"
-                    value={draftConfig.dailyRefreshTime}
-                    disabled={!draftConfig.dailyRefreshEnabled}
-                    onChange={(event) => setDraftConfig({ ...draftConfig, dailyRefreshTime: event.target.value })}
-                  />
-                </label>
-              </div>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={draftConfig.stickyAlwaysOnTop}
-                  onChange={(event) => setDraftConfig({ ...draftConfig, stickyAlwaysOnTop: event.target.checked })}
-                />
-                <span>便签默认置顶</span>
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={draftConfig.showDockIcon}
-                  onChange={(event) => setDraftConfig({ ...draftConfig, showDockIcon: event.target.checked })}
-                />
-                <span>显示 Dock 图标</span>
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={draftConfig.globalShortcutEnabled}
-                  onChange={(event) => setDraftConfig({ ...draftConfig, globalShortcutEnabled: event.target.checked })}
-                />
-                <span>全局快捷键 Command+Option+W</span>
-              </label>
-
-              <div className="settings-warning">
-                <AlertTriangle size={15} />
-                <span>本地 Header 仅用于直连开发服务；生产环境应走网关。</span>
-              </div>
-
-              <button className="save-button" type="submit" disabled={isSavingConfig}>
-                {isSavingConfig ? <LoaderCircle className="spin" size={16} /> : <CalendarClock size={16} />}
-                <span>保存并同步</span>
-              </button>
-              <button className="logout-button" type="button" onClick={() => void handleLogout()}>
-                <LogOut size={16} />
-                <span>退出登录</span>
-              </button>
-            </form>
-          </aside>
-        </div>
-      ) : null}
-    </main>
+    <TraySurface
+      codexRuns={codexRuns}
+      draftConfig={draftConfig}
+      error={error}
+      hoveredProjectId={hoveredProjectId}
+      isLoading={isLoading}
+      isSavingConfig={isSavingConfig}
+      projectRecordCounts={projectRecordCounts}
+      projectTodoGroups={projectTodoGroups}
+      settingsOpen={settingsOpen}
+      updateStatus={updateStatus}
+      hideProjectTaskPreview={hideProjectTaskPreview}
+      loadData={() => void loadData()}
+      onCheckForUpdates={() => void handleCheckForUpdates()}
+      onInstallUpdate={() => void handleInstallUpdate()}
+      onLogout={() => void handleLogout()}
+      onProjectHover={showProjectTaskPreview}
+      onProjectOpen={openProjectWorkspace}
+      onProjectRecord={openProjectRecord}
+      onSaveConfig={(event) => void handleSaveConfig(event)}
+      setDraftConfig={setDraftConfig}
+      setSettingsOpen={setSettingsOpen}
+    />
   );
 }

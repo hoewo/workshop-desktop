@@ -1,8 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
-  ApiRequest,
-  ApiResponse,
   AppConfig,
+  AppUpdateStatus,
   CodexRunMeta,
   DesktopBridge,
   PersonalRecordChangeNotice,
@@ -46,7 +45,12 @@ const bridge: DesktopBridge = {
   sendVerification: (request) => ipcRenderer.invoke("auth:sendVerification", request),
   loginWithCode: (request) => ipcRenderer.invoke("auth:loginWithCode", request),
   logoutAuth: () => ipcRenderer.invoke("auth:logout"),
-  request: <T>(request: ApiRequest) => ipcRenderer.invoke("api:request", request) as Promise<ApiResponse<T>>,
+  getCurrentUser: () => ipcRenderer.invoke("workshop:getCurrentUser"),
+  listProjects: (request) => ipcRenderer.invoke("workshop:listProjects", request),
+  listOrganizations: () => ipcRenderer.invoke("workshop:listOrganizations"),
+  listTasks: (request) => ipcRenderer.invoke("workshop:listTasks", request),
+  createTask: (request) => ipcRenderer.invoke("workshop:createTask", request),
+  updateTask: (request) => ipcRenderer.invoke("workshop:updateTask", request),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
   openSticky: (target?: StickyTarget | number) => ipcRenderer.invoke("sticky:open", sanitizeStickyTarget(target)),
   openPersonalRecord: (target?: PersonalRecordTarget) => ipcRenderer.invoke("record:open", sanitizeRecordTarget(target)),
@@ -67,10 +71,18 @@ const bridge: DesktopBridge = {
   openProjectLocalDirectory: (projectId: number) => ipcRenderer.invoke("projectDirectory:open", projectId),
   sendToCodex: (request: SendToCodexRequest) => ipcRenderer.invoke("codex:send", sanitizeSendToCodexRequest(request)),
   listCodexRuns: () => ipcRenderer.invoke("codexRuns:list"),
+  getUpdateStatus: () => ipcRenderer.invoke("appUpdate:getStatus"),
+  checkForUpdates: () => ipcRenderer.invoke("appUpdate:check"),
+  installUpdate: () => ipcRenderer.invoke("appUpdate:install"),
   onCodexRunsChanged: (callback) => {
     const listener = (_event: IpcRendererEvent, payload: unknown) => callback(Array.isArray(payload) ? (payload as CodexRunMeta[]) : []);
     ipcRenderer.on("codexRuns:changed", listener);
     return () => ipcRenderer.removeListener("codexRuns:changed", listener);
+  },
+  onUpdateStatus: (callback) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as AppUpdateStatus);
+    ipcRenderer.on("appUpdate:status", listener);
+    return () => ipcRenderer.removeListener("appUpdate:status", listener);
   },
   onFocusPulse: (callback: () => void) => {
     const listener = () => callback();

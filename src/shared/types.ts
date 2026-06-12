@@ -35,14 +35,6 @@ export interface ApiEnvelope<T> {
   };
 }
 
-export interface ApiRequest {
-  method: "GET" | "POST" | "PUT" | "DELETE";
-  authLevel?: "user" | "public" | "apikey";
-  path: string;
-  query?: Record<string, string | number | boolean | Array<string | number | boolean> | undefined>;
-  body?: unknown;
-}
-
 export interface ApiResponse<T = unknown> {
   ok: boolean;
   status: number;
@@ -86,6 +78,27 @@ export interface AuthTokens {
 export interface LoginPayload {
   user?: LoginUser;
   tokens: AuthTokens;
+}
+
+export interface ListProjectsRequest {
+  organizationId?: number;
+  pageSize?: number;
+}
+
+export interface ListTasksRequest {
+  projectId: number;
+  states?: TaskState[];
+  pageSize?: number;
+}
+
+export interface CreateTaskRequest {
+  projectId: number;
+  content: string;
+}
+
+export interface UpdateTaskRequest {
+  taskId: number;
+  state: TaskState;
 }
 
 export interface ProjectMember {
@@ -210,7 +223,7 @@ export interface StickyTarget {
 }
 
 export type PersonalRecordScope = "none" | "project" | "task";
-export type PersonalRecordStatus = "active" | "completed" | "promoted";
+export type PersonalRecordStatus = "active" | "completed" | "promoted" | "archived";
 // 缺省视为 human，兼容没有 origin 字段的历史记录。
 export type PersonalRecordOrigin = "human" | "agent";
 
@@ -321,13 +334,41 @@ export interface WindowArrangementNotice {
   maxHeight?: number;
 }
 
+export type AppUpdatePhase =
+  | "idle"
+  | "disabled"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "not_available"
+  | "error";
+
+export interface AppUpdateStatus {
+  phase: AppUpdatePhase;
+  currentVersion: string;
+  availableVersion?: string;
+  percent?: number;
+  transferred?: number;
+  total?: number;
+  bytesPerSecond?: number;
+  message?: string;
+  checkedAt?: string;
+  downloadedAt?: string;
+}
+
 export interface DesktopBridge {
   getConfig: () => Promise<AppConfig>;
   saveConfig: (config: Partial<AppConfig>) => Promise<AppConfig>;
   sendVerification: (request: VerificationRequest) => Promise<ApiResponse<{ message?: string }>>;
   loginWithCode: (request: LoginRequest) => Promise<ApiResponse<LoginPayload>>;
   logoutAuth: () => Promise<AppConfig>;
-  request: <T = unknown>(request: ApiRequest) => Promise<ApiResponse<T>>;
+  getCurrentUser: () => Promise<ApiResponse<CurrentUserPayload>>;
+  listProjects: (request?: ListProjectsRequest) => Promise<ApiResponse<ProjectsPayload | Project[]>>;
+  listOrganizations: () => Promise<ApiResponse<OrganizationsPayload | Organization[]>>;
+  listTasks: (request: ListTasksRequest) => Promise<ApiResponse<TasksPayload | Task[]>>;
+  createTask: (request: CreateTaskRequest) => Promise<ApiResponse<Task>>;
+  updateTask: (request: UpdateTaskRequest) => Promise<ApiResponse<Task>>;
   openExternal: (url: string) => Promise<void>;
   openSticky: (target?: StickyTarget | number) => Promise<void>;
   openPersonalRecord: (target?: PersonalRecordTarget) => Promise<void>;
@@ -348,7 +389,11 @@ export interface DesktopBridge {
   openProjectLocalDirectory: (projectId: number) => Promise<void>;
   sendToCodex: (request: SendToCodexRequest) => Promise<SendToCodexResponse>;
   listCodexRuns: () => Promise<CodexRunMeta[]>;
+  getUpdateStatus: () => Promise<AppUpdateStatus>;
+  checkForUpdates: () => Promise<AppUpdateStatus>;
+  installUpdate: () => Promise<void>;
   onCodexRunsChanged: (callback: (runs: CodexRunMeta[]) => void) => () => void;
+  onUpdateStatus: (callback: (status: AppUpdateStatus) => void) => () => void;
   onFocusPulse: (callback: () => void) => () => void;
   onWindowArrangement: (callback: (notice: WindowArrangementNotice) => void) => () => void;
   onRefresh: (callback: (event: WorkshopRefreshEvent) => void) => () => void;

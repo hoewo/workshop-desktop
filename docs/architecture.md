@@ -4,10 +4,19 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 
 ## 运行模块
 
-- `src/main/main.ts`：Electron 主进程。负责 Dock、托盘、菜单入口、全局快捷键、窗口生命周期、本地配置存储、NebulaAuth token 刷新、API 代理、本地个人记录文件、任务预览窗口和跨窗口刷新通知。
+- `src/main/main.ts`：Electron 主进程。负责 Dock、托盘、菜单入口、全局快捷键、窗口生命周期、本地配置存储、任务预览窗口、跨窗口刷新通知和 IPC 编排。
 - `src/main/codexAppServer.ts`：codex app-server JSON-RPC 客户端（JSONL over stdio）。负责 thread/turn 生命周期、通知分发、崩溃恢复和审批兜底拒绝。
+- `src/main/workshopApiService.ts`：Workshop/NebulaAuth API 服务层。负责登录验证码、登录、登出、token 刷新，以及主进程明确支持的 Workshop 用户、组织、项目和任务请求。
+- `src/main/recordStore.ts`：本地个人记录 store。负责记录 index/body 文件读写、记录规范化、写入串行化和原子文件替换。
+- `src/main/updateService.ts`：应用更新服务。负责驱动 `electron-updater` 从公开 GitHub Release 检查/下载更新，并向 renderer 广播更新状态。
 - `src/main/preload.ts`：通过 `contextBridge` 暴露类型化的 `workshopDesktop` 桥接接口。
-- `src/renderer/App.tsx`：React UI。负责登录、设置、项目/任务聚合、当前用户任务过滤、任务状态操作、便签窗口、任务预览和个人记录窗口。
+- `src/main/taskPreviewPreload.ts`：任务预览窗口专用桥接，只暴露保持预览、隐藏预览和打开任务便签能力。
+- `src/renderer/App.tsx`：React UI 编排层。负责登录、设置、项目/任务聚合、当前用户任务过滤、任务状态操作、便签窗口、任务预览和个人记录窗口的状态与流程；Workshop 业务数据通过主进程显式服务方法获取，不直接传任意 API path。
+- `src/renderer/components/`：renderer 纯展示组件。当前包含认证字段、Markdown 预览、任务行/详情/项目菜单行、窗口标题和 Workshop 标识；`components/surfaces/` 按 tray、sticky、record、login 拆分窗口级渲染分支。
+- `src/renderer/hooks/`：renderer UI 状态 hooks。当前封装焦点脉冲和完成反馈定时器，避免 `App.tsx` 直接管理这些 timer/ref。
+- `src/renderer/lib/`：renderer 纯工具和视图模型。当前包含 URL 初始状态解析、配置规范化、记录/任务列表模型、窗口尺寸测量工具。
+- `src/renderer/styles/tokens.css`：renderer 基础设计 token，覆盖颜色、间距和圆角。
+- `src/renderer/styles.css`：renderer 全局样式和业务样式组合层。具体业务样式仍保留在同一文件中渐进整理。
 - `src/shared/types.ts`：配置、API envelope、项目、任务、个人记录、IPC bridge 和窗口事件的共享类型。
 - `scripts/workshop-desktop-cli.mjs`：本地 CLI 客户端。通过 app server 驱动正在运行的桌面端，不直接写内部数据文件。
 - `resources/`：打包应用使用的 app、托盘和 template 图标。
@@ -35,10 +44,14 @@ Workshop 业务调用使用：
 
 默认 `serviceName` 是 `workshop`。当前应用使用：
 
+- `GET /users`
+- `GET /organizations`
 - `GET /projects`
 - `GET /tasks`
 - `POST /tasks`
 - `PUT /tasks/{id}`
+
+Renderer 不暴露通用 `api.request`。`preload` 只暴露主进程明确支持的 Workshop 业务方法：获取当前用户、列组织、列项目、列任务、创建任务和更新任务状态；主进程通过 `workshopApiService` 执行对应的 allowlist 请求。
 
 NebulaAuth 调用使用：
 
@@ -75,6 +88,7 @@ NebulaAuth 调用使用：
 - 单个任务详情可以发送到 Codex 执行。发送前会保存任务备注，Codex 的工作目录使用该任务所属项目的本地目录绑定。
 - 项目或任务记录详情可以发送到 Codex 执行。没有项目上下文的个人记录不作为 Codex 执行入口。
 - 主面板在项目列表下方显示最近 Codex 运行（运行中/已完成/失败/已中断），悬停查看最后消息。
+- 设置面板显示应用更新状态。发现新版本后自动下载；下载完成后由用户点击“重启更新”触发安装。
 - 列表页面用于定位对象；详情页面用于处理一个对象。
 - 打开项目工作区时，可以同时打开项目任务面和相关项目记录面。
 

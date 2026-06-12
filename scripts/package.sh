@@ -22,7 +22,12 @@ case "$MODE" in
     "${PNPM[@]}" run pack
     ;;
   dist)
-    "${PNPM[@]}" run dist
+    if [[ "$(uname -s)" == "Darwin" && -z "${CSC_LINK:-}" ]]; then
+      "${PNPM[@]}" run build
+      ELECTRON_BUILDER_DISABLE_NOTARIZE=true "${PNPM[@]}" exec electron-builder --mac zip --publish never
+    else
+      "${PNPM[@]}" run dist
+    fi
     ;;
   *)
     echo "Usage: scripts/package.sh [build|dir|dist]" >&2

@@ -30,6 +30,10 @@ echo "Running pre-commit checks..."
 echo "- Main process type check"
 "$NODE_BIN" ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.main.json
 
+echo "- Main process architecture smoke tests"
+"$NODE_BIN" ./node_modules/typescript/bin/tsc -p tsconfig.main.json
+"$NODE_BIN" --test scripts/main-architecture-smoke.test.mjs
+
 echo "- Renderer type check"
 "$NODE_BIN" ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 

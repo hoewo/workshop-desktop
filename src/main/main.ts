@@ -19,21 +19,22 @@ import * as http from "node:http";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { CodexAppServerClient } from "./codexAppServer";
+import { buildCodexUserInput } from "./codexPrompt";
+import { PersonalRecordStore, normalizeRecordScope } from "./recordStore";
+import { AppUpdateService } from "./updateService";
+import { WorkshopApiService } from "./workshopApiService";
 import type {
-  ApiRequest,
-  ApiResponse,
+  AppUpdateStatus,
   AppConfig,
-  AuthTokens,
   CodexRunBackend,
   CodexRunMeta,
-  LoginPayload,
+  CreateTaskRequest,
+  ListProjectsRequest,
+  ListTasksRequest,
   LoginRequest,
   PersonalRecord,
   PersonalRecordChangeNotice,
-  PersonalRecordMeta,
-  PersonalRecordOrigin,
   PersonalRecordScope,
-  PersonalRecordStatus,
   PersonalRecordTarget,
   SavePersonalRecordRequest,
   SendToCodexRequest,
@@ -42,6 +43,7 @@ import type {
   TaskPreviewRequest,
   TaskStateChangeNotice,
   TaskState,
+  UpdateTaskRequest,
   VerificationRequest,
   WorkshopRefreshEvent,
   WindowFitRequest
@@ -90,15 +92,24 @@ const recordWindowTargets = new Map<BrowserWindow, NormalizedRecordTarget>();
 let taskPreviewWindowRef: BrowserWindow | null = null;
 let taskPreviewHideTimer: NodeJS.Timeout | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
-let tokenRefreshInProgress: Promise<AppConfig> | null = null;
 let isQuitting = false;
 let registeredPanelShortcut = false;
 let registeredNewPersonalRecordShortcut = false;
 let appServer: http.Server | null = null;
 let appServerInfo: { port: number; token: string; agentToken: string } | null = null;
+let appUpdateService: AppUpdateService | null = null;
 
 const configPath = () => path.join(app.getPath("userData"), "config.json");
 const appServerConnectionPath = () => path.join(app.getPath("userData"), "app-server.json");
+const personalRecordStore = new PersonalRecordStore(() => app.getPath("userData"));
+const workshopApiService = new WorkshopApiService({ readConfig, saveConfig });
+
+function getAppUpdateService() {
+  if (!appUpdateService) {
+    appUpdateService = new AppUpdateService(sendAppUpdateStatus);
+  }
+  return appUpdateService;
+}
 
 function bundledResourcePath(fileName: string) {
   return app.isPackaged ? path.join(process.resourcesPath, fileName) : path.join(process.cwd(), "resources", fileName);
@@ -481,17 +492,6 @@ function normalizeSendToCodexParams(params: unknown): NormalizedSendToCodexParam
   };
 }
 
-// 派发不包装：turn 输入只有用户内容。规则（回写通道、文档纪律）和项目 ID
-// 由目标项目的 AGENTS.md 声明；运行与任务/记录的关联由运行状态表持有。
-function buildCodexUserInput(request: NormalizedSendToCodexParams) {
-  const body = request.bodyMarkdown?.trim() ?? "";
-  if (!body) {
-    return request.title;
-  }
-  const firstLine = body.split("\n", 1)[0] ?? "";
-  return firstLine.includes(request.title) ? body : `${request.title}\n\n${body}`;
-}
-
 async function getProjectLocalDirectory(projectId: number) {
   const config = await readConfig();
   const directory = config.projectLocalDirectories[String(projectId)]?.trim();
@@ -510,6 +510,7 @@ async function getProjectLocalDirectory(projectId: number) {
 async function resolveCodexExecutable() {
   const candidates = [
     process.env.WORKSHOP_DESKTOP_CODEX_BIN?.trim(),
+    "/Applications/Codex.app/Contents/Resources/codex",
     "/opt/homebrew/bin/codex",
     "/usr/local/bin/codex",
     "codex"
@@ -632,19 +633,42 @@ async function sendToCodex(params: unknown): Promise<SendToCodexResponse> {
 
 async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<SendToCodexResponse> {
   await upsertCodexRun(run);
+  let pendingLastMessage = "";
+  let lastMessageFlushTimer: NodeJS.Timeout | null = null;
+  const flushLastMessage = () => {
+    lastMessageFlushTimer = null;
+    if (pendingLastMessage) {
+      void updateCodexRun(run.runId, { lastMessage: pendingLastMessage.slice(0, 600) });
+    }
+  };
+  const queueLastMessage = (text: string) => {
+    pendingLastMessage = text;
+    if (!lastMessageFlushTimer) {
+      lastMessageFlushTimer = setTimeout(flushLastMessage, 500);
+    }
+  };
+  const takeLastMessage = (detail?: string) => {
+    if (lastMessageFlushTimer) {
+      clearTimeout(lastMessageFlushTimer);
+      lastMessageFlushTimer = null;
+    }
+    return (detail || pendingLastMessage).slice(0, 600);
+  };
+
   try {
     const { threadId, turnId } = await getCodexClient().startTurn({
       cwd: run.cwd,
       prompt,
       events: {
         onAgentMessage: (text) => {
-          void updateCodexRun(run.runId, { lastMessage: text.slice(0, 600) });
+          queueLastMessage(text);
         },
         onCompleted: (status, detail) => {
+          const lastMessage = takeLastMessage(detail);
           void updateCodexRun(run.runId, {
             status,
             completedAt: new Date().toISOString(),
-            ...(detail ? { lastMessage: detail.slice(0, 600) } : {})
+            ...(lastMessage ? { lastMessage } : {})
           });
         }
       }
@@ -652,10 +676,11 @@ async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<
     await updateCodexRun(run.runId, { threadId, turnId });
     return { localDirectory: run.cwd, runId: run.runId, backend: "app-server", threadId };
   } catch (error) {
+    const lastMessage = takeLastMessage(error instanceof Error ? error.message : "codex 启动失败");
     await updateCodexRun(run.runId, {
       status: "failed",
       completedAt: new Date().toISOString(),
-      lastMessage: error instanceof Error ? error.message : "codex 启动失败"
+      lastMessage
     });
     throw error;
   }
@@ -1001,78 +1026,8 @@ async function showStickyWindow(target?: StickyTarget | number) {
   showInCurrentWorkspace(win);
 }
 
-const recordsDirPath = () => path.join(app.getPath("userData"), "personal-records");
-const recordsIndexPath = () => path.join(recordsDirPath(), "index.json");
-
-function normalizeRecordScope(value: unknown): PersonalRecordScope {
-  return value === "project" || value === "task" ? value : "none";
-}
-
-function normalizeRecordStatus(value: unknown): PersonalRecordStatus {
-  return value === "completed" || value === "promoted" ? value : "active";
-}
-
-function normalizeRecordId(id: string) {
-  if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
-    throw new Error("记录 ID 无效");
-  }
-  return id;
-}
-
-function recordBodyPath(id: string) {
-  return path.join(recordsDirPath(), `${normalizeRecordId(id)}.md`);
-}
-
-async function readRecordIndex(): Promise<PersonalRecordMeta[]> {
-  try {
-    const raw = await fs.readFile(recordsIndexPath(), "utf8");
-    const parsed = JSON.parse(raw) as { records?: PersonalRecordMeta[] } | PersonalRecordMeta[];
-    const records = Array.isArray(parsed) ? parsed : parsed.records;
-    return Array.isArray(records)
-      ? records
-          .filter((record) => record.id && record.title)
-          .map((record) => ({
-            ...record,
-            scopeType: normalizeRecordScope(record.scopeType),
-            status: normalizeRecordStatus(record.status)
-          }))
-          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-async function writeRecordIndex(records: PersonalRecordMeta[]) {
-  await fs.mkdir(recordsDirPath(), { recursive: true });
-  const sorted = [...records].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  await fs.writeFile(recordsIndexPath(), JSON.stringify({ records: sorted }, null, 2), "utf8");
-}
-
-function truncateRecordTitle(title: string) {
-  return title.length > 48 ? `${title.slice(0, 48)}...` : title;
-}
-
-function deriveRecordTitle(bodyMarkdown: string, fallback?: string) {
-  const firstContentLine = bodyMarkdown
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean);
-  const h1Title = firstContentLine?.match(/^#\s+(.+)$/)?.[1]?.replace(/\s+#+$/, "").trim();
-  if (h1Title) {
-    return truncateRecordTitle(h1Title);
-  }
-
-  const title = (firstContentLine || fallback || "未命名记录")
-    .replace(/^#{1,6}\s+/, "")
-    .replace(/^[-*]\s+/, "")
-    .trim();
-  return truncateRecordTitle(title || fallback || "未命名记录");
-}
-
 async function listPersonalRecords() {
-  const records = await readRecordIndex();
-  return records.filter((record) => record.status === "active");
+  return personalRecordStore.listVisible();
 }
 
 function notifyRecordsChanged(notice: PersonalRecordChangeNotice | null = null) {
@@ -1092,73 +1047,18 @@ function notifyRecordsChanged(notice: PersonalRecordChangeNotice | null = null) 
 }
 
 async function getPersonalRecord(id: string): Promise<PersonalRecord | null> {
-  const safeId = normalizeRecordId(id);
-  const records = await readRecordIndex();
-  const meta = records.find((record) => record.id === safeId);
-  if (!meta) {
-    return null;
-  }
-
-  let bodyMarkdown = "";
-  try {
-    bodyMarkdown = await fs.readFile(recordBodyPath(safeId), "utf8");
-  } catch {
-    bodyMarkdown = "";
-  }
-
-  return { ...meta, bodyMarkdown };
+  return personalRecordStore.get(id);
 }
 
 async function savePersonalRecord(request: SavePersonalRecordRequest): Promise<PersonalRecord> {
-  const nextRequest: Record<string, unknown> = isPlainObject(request) ? request : {};
-  const bodyMarkdown = typeof nextRequest.bodyMarkdown === "string" ? nextRequest.bodyMarkdown : "";
-  const projectId = typeof nextRequest.projectId === "number" && Number.isFinite(nextRequest.projectId) ? nextRequest.projectId : undefined;
-  const projectName = safeWindowText(nextRequest.projectName) ?? undefined;
-  const taskId = typeof nextRequest.taskId === "number" && Number.isFinite(nextRequest.taskId) ? nextRequest.taskId : undefined;
-  const taskTitle = safeWindowText(nextRequest.taskTitle) ?? undefined;
-  const promotedTaskId =
-    typeof nextRequest.promotedTaskId === "number" && Number.isFinite(nextRequest.promotedTaskId) ? nextRequest.promotedTaskId : undefined;
-  const records = await readRecordIndex();
-  const scopeType = normalizeRecordScope(nextRequest.scopeType);
-  const existingTaskRecord =
-    !nextRequest.id && scopeType === "task" && typeof taskId === "number"
-      ? records.find((record) => record.status === "active" && record.scopeType === "task" && record.taskId === taskId)
-      : undefined;
-  const requestId = safeWindowText(nextRequest.id, 80);
-  const id = requestId
-    ? normalizeRecordId(requestId)
-    : existingTaskRecord?.id ?? `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
-  const existing = records.find((record) => record.id === id);
-  const now = new Date().toISOString();
-  const fallbackTitle = taskTitle || projectName;
-  // origin 跟随创建者，后续编辑不改变来源。
-  const requestedOrigin: PersonalRecordOrigin = nextRequest.origin === "agent" ? "agent" : "human";
-  const meta: PersonalRecordMeta = {
-    id,
-    title: deriveRecordTitle(bodyMarkdown, fallbackTitle),
-    scopeType,
-    status: normalizeRecordStatus(nextRequest.status ?? existing?.status),
-    origin: existing?.origin ?? requestedOrigin,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-    ...(promotedTaskId ? { promotedTaskId } : existing?.promotedTaskId ? { promotedTaskId: existing.promotedTaskId } : {}),
-    ...(scopeType === "project" || scopeType === "task" ? { projectId, projectName } : {}),
-    ...(scopeType === "task" ? { taskId, taskTitle } : {})
-  };
-  const nextRecords = [meta, ...records.filter((record) => record.id !== id)];
-  await fs.mkdir(recordsDirPath(), { recursive: true });
-  await fs.writeFile(recordBodyPath(id), bodyMarkdown, "utf8");
-  await writeRecordIndex(nextRecords);
-  notifyRecordsChanged({ id: meta.id, status: meta.status, updatedAt: meta.updatedAt });
-  return { ...meta, bodyMarkdown };
+  const record = await personalRecordStore.save(request);
+  notifyRecordsChanged({ id: record.id, status: record.status, updatedAt: record.updatedAt });
+  return record;
 }
 
 async function deletePersonalRecord(id: string) {
-  const safeId = normalizeRecordId(id);
-  const records = await readRecordIndex();
-  await writeRecordIndex(records.filter((record) => record.id !== safeId));
-  await fs.unlink(recordBodyPath(safeId)).catch(() => undefined);
-  notifyRecordsChanged({ id: safeId, deleted: true });
+  const deletedId = await personalRecordStore.delete(id);
+  notifyRecordsChanged({ id: deletedId, deleted: true });
 }
 
 interface NormalizedRecordTarget {
@@ -1352,7 +1252,7 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
 }
 
 function syncRecordWindowTarget(sender: WebContents, record: PersonalRecord) {
-  if (record.status === "completed") {
+  if (record.status === "archived") {
     return;
   }
 
@@ -1408,7 +1308,7 @@ function renderTaskPreviewHtml(request: TaskPreviewRequest) {
             return `<li><button type="button" data-project-id="${task.projectId}" data-task-id="${task.id}"><span class="dot ${stateClass}"></span><span class="title">${escapeHtml(task.content)}</span><span class="state">${escapeHtml(task.stateLabel)}</span></button></li>`;
           })
           .join("")
-      : `<div class="empty">无未完成任务</div>`;
+      : `<div class="empty">无任务</div>`;
   const more = overflowCount > 0 ? `<div class="more">还有 ${overflowCount} 条</div>` : "";
 
   return `<!doctype html>
@@ -1507,12 +1407,12 @@ button:hover .state, button:focus-visible .state {
     ${more}
   </main>
   <script>
-    const bridge = window.workshopDesktop;
+    const bridge = window.workshopTaskPreview;
     document.body.addEventListener("mouseenter", () => {
-      void bridge?.keepTaskPreview?.();
+      void bridge?.keep?.();
     });
     document.body.addEventListener("mouseleave", () => {
-      void bridge?.hideTaskPreview?.();
+      void bridge?.hide?.();
     });
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? event.target.closest("[data-task-id]") : null;
@@ -1522,7 +1422,7 @@ button:hover .state, button:focus-visible .state {
       const projectId = Number(target.getAttribute("data-project-id"));
       const taskId = Number(target.getAttribute("data-task-id"));
       if (Number.isFinite(projectId) && Number.isFinite(taskId)) {
-        void bridge?.openSticky?.({ projectId, taskId });
+        void bridge?.openTask?.(projectId, taskId);
       }
     });
   </script>
@@ -1546,10 +1446,10 @@ function createTaskPreviewWindow() {
     backgroundColor: "#00000000",
     title: "Workshop Todo Preview",
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(__dirname, "taskPreviewPreload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   });
 
@@ -1987,209 +1887,6 @@ function configureDockMenu() {
   app.dock?.setMenu(Menu.buildFromTemplate(buildAppEntryMenu("screen")));
 }
 
-function buildApiUrl(config: AppConfig, request: ApiRequest) {
-  const base = config.baseUrl.replace(/\/+$/, "");
-  const pathPart = request.path.startsWith("/") ? request.path : `/${request.path}`;
-  const url = new URL(`${base}/${config.serviceName}/v1/${request.authLevel ?? "user"}${pathPart}`);
-
-  for (const [key, value] of Object.entries(request.query ?? {})) {
-    if (value === undefined || value === "") {
-      continue;
-    }
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        url.searchParams.append(key, String(item));
-      }
-    } else {
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  return url;
-}
-
-function buildHeaders(config: AppConfig, hasBody: boolean) {
-  const headers: Record<string, string> = {
-    Accept: "application/json"
-  };
-
-  if (hasBody) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  if (config.authMode === "nebula" || config.authMode === "bearer") {
-    if (config.accessToken.trim()) {
-      headers.Authorization = `Bearer ${config.accessToken.trim()}`;
-    }
-  } else {
-    headers["X-User-ID"] = config.userId.trim();
-    headers["X-User-Username"] = config.username.trim();
-    headers["X-User-AppID"] = config.appId.trim();
-    if (config.sessionId.trim()) {
-      headers["X-User-SessionID"] = config.sessionId.trim();
-    }
-  }
-
-  return headers;
-}
-
-function tokenExpiresSoon(config: AppConfig) {
-  if (!config.accessTokenExpiresAt) {
-    return false;
-  }
-
-  return config.accessTokenExpiresAt - Date.now() < 5 * 60_000;
-}
-
-function refreshTokenExpired(config: AppConfig) {
-  return Boolean(config.refreshTokenExpiresAt && config.refreshTokenExpiresAt <= Date.now());
-}
-
-function buildServiceUrl(config: AppConfig, serviceName: string, authLevel: string, pathPart: string) {
-  const base = config.baseUrl.replace(/\/+$/, "");
-  const normalizedPath = pathPart.startsWith("/") ? pathPart : `/${pathPart}`;
-  return new URL(`${base}/${serviceName}/v1/${authLevel}${normalizedPath}`);
-}
-
-async function serviceRequest<T>(
-  config: AppConfig,
-  serviceName: string,
-  authLevel: string,
-  pathPart: string,
-  method: "GET" | "POST",
-  body?: unknown,
-  authorization?: string
-): Promise<ApiResponse<T>> {
-  try {
-    const response = await fetch(buildServiceUrl(config, serviceName, authLevel, pathPart), {
-      method,
-      headers: {
-        Accept: "application/json",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...(authorization ? { Authorization: authorization } : {})
-      },
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
-    const text = await response.text();
-    const parsed = text ? JSON.parse(text) : undefined;
-    return {
-      ok: response.ok && parsed?.success !== false && (!parsed?.code || parsed.code === "OK"),
-      status: response.status,
-      body: parsed
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      error: error instanceof Error ? error.message : "请求失败"
-    };
-  }
-}
-
-function applyNebulaTokens(config: AppConfig, tokens: AuthTokens): AppConfig {
-  const issuedAt = Date.now();
-  const accessTokenExpiresAt =
-    Number(tokens.access_token_expires_at) || (tokens.expires_in ? issuedAt + Number(tokens.expires_in) * 1000 : 0);
-  const refreshTokenExpiresAt =
-    Number(tokens.refresh_token_expires_at) ||
-    (tokens.refresh_expires_in ? issuedAt + Number(tokens.refresh_expires_in) * 1000 : 0);
-
-  return {
-    ...config,
-    authMode: "nebula",
-    accessToken: tokens.access_token || "",
-    refreshToken: tokens.refresh_token || "",
-    tokenType: "Bearer",
-    accessTokenExpiresAt,
-    refreshTokenExpiresAt
-  };
-}
-
-function extractAuthTokens(payload: unknown): AuthTokens | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-
-  const maybe = payload as Partial<AuthTokens> & { tokens?: AuthTokens };
-  const tokens = maybe.tokens ?? maybe;
-  return tokens.access_token && tokens.refresh_token ? (tokens as AuthTokens) : null;
-}
-
-async function sendVerification(request: VerificationRequest): Promise<ApiResponse<{ message?: string }>> {
-  const config = await readConfig();
-  return serviceRequest(config, "auth-server", "public", "/send_verification", "POST", {
-    code_type: request.codeType,
-    target: request.target,
-    purpose: "login"
-  });
-}
-
-async function loginWithCode(request: LoginRequest): Promise<ApiResponse<LoginPayload>> {
-  const config = await readConfig();
-  const body =
-    request.codeType === "email"
-      ? {
-          email: request.target,
-          code: request.code,
-          code_type: "email",
-          purpose: "login"
-        }
-      : {
-          phone: request.target,
-          code: request.code,
-          code_type: "sms",
-          purpose: "login"
-        };
-  const response = await serviceRequest<LoginPayload>(config, "auth-server", "public", "/login", "POST", body);
-
-  const payload = response.body?.data;
-  const tokens = extractAuthTokens(payload?.tokens);
-  if (response.ok && payload && tokens) {
-    const user = payload.user;
-    await saveConfig({
-      ...applyNebulaTokens(config, tokens),
-      username: user?.username || user?.email || user?.phone || ""
-    });
-  }
-
-  return response;
-}
-
-async function refreshNebulaToken(config: AppConfig): Promise<AppConfig> {
-  if (!config.refreshToken.trim() || refreshTokenExpired(config)) {
-    throw new Error("登录已过期，请重新登录");
-  }
-
-  if (!tokenRefreshInProgress) {
-    tokenRefreshInProgress = serviceRequest<AuthTokens>(config, "auth-server", "public", "/refresh_token", "POST", {
-      refresh_token: config.refreshToken.trim()
-    })
-      .then((response) => {
-        const tokens = extractAuthTokens(response.body?.data);
-        if (!response.ok || !tokens) {
-          throw new Error(response.error || response.body?.error?.message || "刷新 token 失败");
-        }
-        return saveConfig(applyNebulaTokens(config, tokens));
-      })
-      .finally(() => {
-        tokenRefreshInProgress = null;
-      });
-  }
-
-  return tokenRefreshInProgress;
-}
-
-async function logoutAuth() {
-  return saveConfig({
-    accessToken: "",
-    refreshToken: "",
-    accessTokenExpiresAt: 0,
-    refreshTokenExpiresAt: 0,
-    username: ""
-  });
-}
-
 function parseRefreshTime(value: string) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
   if (!match) {
@@ -2258,6 +1955,22 @@ function sendWorkshopRefresh(event: WorkshopRefreshEvent, sender?: WebContents) 
   }
 }
 
+function sendAppUpdateStatus(status: AppUpdateStatus) {
+  if (windowRef && !windowRef.isDestroyed()) {
+    windowRef.webContents.send("appUpdate:status", status);
+  }
+  for (const win of stickyWindows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send("appUpdate:status", status);
+    }
+  }
+  for (const win of recordWindows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send("appUpdate:status", status);
+    }
+  }
+}
+
 function notifyRefresh(reason: "manual" | "schedule") {
   sendWorkshopRefresh({ reason });
 }
@@ -2281,63 +1994,6 @@ function scheduleDailyRefresh(config: AppConfig) {
     notifyRefresh("schedule");
     scheduleDailyRefresh(await readConfig());
   }, millisecondsUntilNextDailyRun(config.dailyRefreshTime));
-}
-
-async function performApiRequest<T>(request: ApiRequest): Promise<ApiResponse<T>> {
-  let config = await readConfig();
-
-  if (config.authMode === "nebula" && tokenExpiresSoon(config)) {
-    try {
-      config = await refreshNebulaToken(config);
-    } catch (error) {
-      return {
-        ok: false,
-        status: 0,
-        error: error instanceof Error ? error.message : "刷新 token 失败"
-      };
-    }
-  }
-
-  if ((config.authMode === "nebula" || config.authMode === "bearer") && !config.accessToken.trim()) {
-    return { ok: false, status: 0, error: "请先登录或填写访问令牌" };
-  }
-
-  if (config.authMode === "debugHeaders" && !config.userId.trim()) {
-    return { ok: false, status: 0, error: "请先填写本地调试用户 UUID" };
-  }
-
-  try {
-    const hasBody = request.body !== undefined;
-    let response = await fetch(buildApiUrl(config, request), {
-      method: request.method,
-      headers: buildHeaders(config, hasBody),
-      body: hasBody ? JSON.stringify(request.body) : undefined
-    });
-
-    if (response.status === 401 && config.authMode === "nebula" && config.refreshToken.trim()) {
-      config = await refreshNebulaToken(config);
-      response = await fetch(buildApiUrl(config, request), {
-        method: request.method,
-        headers: buildHeaders(config, hasBody),
-        body: hasBody ? JSON.stringify(request.body) : undefined
-      });
-    }
-
-    const text = await response.text();
-    const body = text ? JSON.parse(text) : undefined;
-
-    return {
-      ok: response.ok && body?.success !== false && (!body?.code || body.code === "OK"),
-      status: response.status,
-      body
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      error: error instanceof Error ? error.message : "请求失败"
-    };
-  }
 }
 
 async function bindProjectLocalDirectory(projectId: number, owner?: BrowserWindow | null) {
@@ -2388,10 +2044,23 @@ async function openProjectLocalDirectory(projectId: number) {
 function registerIpc() {
   ipcMain.handle("config:get", () => readConfig());
   ipcMain.handle("config:save", (_event, config: Partial<AppConfig>) => saveConfig(config));
-  ipcMain.handle("auth:sendVerification", (_event, request: VerificationRequest) => sendVerification(request));
-  ipcMain.handle("auth:loginWithCode", (_event, request: LoginRequest) => loginWithCode(request));
-  ipcMain.handle("auth:logout", () => logoutAuth());
-  ipcMain.handle("api:request", (_event, request: ApiRequest) => performApiRequest(request));
+  ipcMain.handle("auth:sendVerification", (_event, request: VerificationRequest) =>
+    workshopApiService.sendVerification(request)
+  );
+  ipcMain.handle("auth:loginWithCode", (_event, request: LoginRequest) => workshopApiService.loginWithCode(request));
+  ipcMain.handle("auth:logout", () => workshopApiService.logoutAuth());
+  ipcMain.handle("workshop:getCurrentUser", () => workshopApiService.getCurrentUser());
+  ipcMain.handle("workshop:listProjects", (_event, request?: ListProjectsRequest) =>
+    workshopApiService.listProjects(request)
+  );
+  ipcMain.handle("workshop:listOrganizations", () => workshopApiService.listOrganizations());
+  ipcMain.handle("workshop:listTasks", (_event, request: ListTasksRequest) => workshopApiService.listTasks(request));
+  ipcMain.handle("workshop:createTask", (_event, request: CreateTaskRequest) =>
+    workshopApiService.createTask(request)
+  );
+  ipcMain.handle("workshop:updateTask", (_event, request: UpdateTaskRequest) =>
+    workshopApiService.updateTask(request)
+  );
   ipcMain.handle("shell:openExternal", (_event, url: string) => shell.openExternal(url));
   ipcMain.handle("sticky:open", (_event, target?: StickyTarget | number) => showStickyWindow(target));
   ipcMain.handle("record:open", (_event, target?: PersonalRecordTarget) => showPersonalRecordWindow(target));
@@ -2440,6 +2109,9 @@ function registerIpc() {
   ipcMain.handle("projectDirectory:open", (_event, projectId: number) => openProjectLocalDirectory(projectId));
   ipcMain.handle("codex:send", (_event, request: SendToCodexRequest) => sendToCodex(request));
   ipcMain.handle("codexRuns:list", () => readCodexRuns());
+  ipcMain.handle("appUpdate:getStatus", () => getAppUpdateService().getStatus());
+  ipcMain.handle("appUpdate:check", () => getAppUpdateService().checkForUpdates());
+  ipcMain.handle("appUpdate:install", () => getAppUpdateService().installDownloadedUpdate());
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -2494,6 +2166,10 @@ app.whenReady().then(async () => {
   });
 
   scheduleDailyRefresh(config);
+  await getAppUpdateService().initialize();
+  setTimeout(() => {
+    void getAppUpdateService().checkForUpdates();
+  }, 3000);
   if (!hasValidLogin(config)) {
     setTimeout(() => showWindow("screen"), 400);
   }

@@ -46,18 +46,18 @@ Consequences:
 - 本地个人记录默认不是已接受 repo 事实。
 - 除非后续明确接受，否则团队级任务可见性和完整项目治理不属于当前产品边界。
 
-### D-004 macOS 打包默认使用 zip
+### D-004 macOS 本地打包可使用 zip
 
 Status: accepted
 
-Decision: macOS 当前默认打包输出使用 zip。
+Decision: macOS 本地无签名 secrets 的验证包可以只使用 zip。
 
 Rationale: 当前 Electron Builder 配置目标是 zip，本机生成 DMG 存在已知 vendor 下载阻碍。
 
 Consequences:
 
-- `./scripts/package.sh dist` 预期在本机生成 macOS zip 输出。
-- DMG、签名、安装器加固和自动更新可以作为后续打包决策处理。
+- `./scripts/package.sh dist` 在本机无签名 secrets 时仍可作为 zip 验证路径。
+- 正式 macOS release 的签名、公证、DMG 和自动更新由 D-010 约束。
 
 ### D-005 提供本地 app server 作为 AI bridge
 
@@ -134,11 +134,25 @@ Consequences:
 - 协议类型来自 `codex app-server generate-ts`，按 CLI 版本验证；升级 CLI 时需复验线程来源分类（当前 app-server 线程被记录为 vscode 来源）。
 - 接入方式采用自启实例 + 自建运行表；连接 `codex app-server daemon` 共享实例（可能带来 Codex app 实时可见）留作后续探索。
 
+### D-010 macOS 发布使用公开 GitHub 自动更新
+
+Status: accepted
+
+Decision: macOS 发布版使用签名、公证后的 DMG + zip，通过公开 GitHub Release 提供 `latest-mac.yml`、安装包和 blockmap；客户端用 `electron-updater` 检查和下载更新，下载完成后由用户确认重启安装。
+
+Rationale: 仓库和 Release 已公开，公开 GitHub Release 可以最快提供 Mac 用户本机更新体验，并避免在客户端内置可被提取的 GitHub token。服务器/CDN 下载源尚未配置好，后续可再迁移到 generic HTTPS 更新源。
+
+Consequences:
+
+- 客户端不内置 GitHub token，也不要求 `WORKSHOP_DESKTOP_UPDATE_TOKEN`。
+- macOS release 必须配置 Developer ID Application 签名和 notarization。
+- 后续服务器/CDN 可用后，可把更新源切换到 generic HTTPS。
+
 ## 开放问题
 
 - NebulaAuth token 是否继续保存在 Electron `userData/config.json`，还是在更广泛使用前迁移到系统钥匙串？
 - 任务可见性是否继续限定为当前用户创建或执行的任务？
-- 后续版本是否需要增加 DMG、签名、自动更新或更强的分发检查？
+- 后续版本是否需要增加更强的分发检查，或迁移到自有 HTTPS 更新源？
 - app server 的 token 和连接文件是否需要进一步绑定当前用户会话、系统钥匙串或操作确认？
 - AI 自动创建远端 Workshop 任务前是否必须先生成任务候选并由用户确认？
 - Codex 运行除主面板状态行外，是否需要完整日志视图和系统级完成通知？

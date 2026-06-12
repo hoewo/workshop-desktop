@@ -42,8 +42,9 @@
 ## 个人记录状态
 
 - `active`：显示在 active 记录列表中。
-- `completed`：作为本地记录关闭。
+- `completed`：作为本地记录完成，仍显示在记录列表中。
 - `promoted`：已经转成 Workshop 任务。
+- `archived`：从记录列表隐藏。
 
 ## 个人记录来源
 

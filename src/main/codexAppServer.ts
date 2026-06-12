@@ -16,7 +16,7 @@ interface JsonRpcMessage {
 
 export interface CodexTurnEvents {
   onAgentMessage: (text: string) => void;
-  onCompleted: (status: "completed" | "failed", detail?: string) => void;
+  onCompleted: (status: "completed" | "failed" | "interrupted", detail?: string) => void;
 }
 
 export interface CodexAppServerOptions {
@@ -32,6 +32,11 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+interface ActiveTurn {
+  events: CodexTurnEvents;
+  agentMessageDeltas: Map<string, string>;
+}
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export class CodexAppServerClient {
@@ -40,7 +45,7 @@ export class CodexAppServerClient {
   private nextId = 1;
   private buffer = "";
   private pending = new Map<number, PendingRequest>();
-  private activeTurns = new Map<string, CodexTurnEvents>();
+  private activeTurns = new Map<string, ActiveTurn>();
 
   constructor(private readonly options: CodexAppServerOptions) {}
 
@@ -64,7 +69,7 @@ export class CodexAppServerClient {
       throw new Error("codex app-server 未返回 threadId");
     }
 
-    this.activeTurns.set(threadId, input.events);
+    this.activeTurns.set(threadId, { events: input.events, agentMessageDeltas: new Map() });
     try {
       const turn = (await this.request("turn/start", {
         threadId,
@@ -132,8 +137,8 @@ export class CodexAppServerClient {
 
     const turns = [...this.activeTurns.values()];
     this.activeTurns.clear();
-    for (const events of turns) {
-      events.onCompleted("failed", reason);
+    for (const turn of turns) {
+      turn.events.onCompleted("failed", reason);
     }
 
     this.child = null;
@@ -177,7 +182,7 @@ export class CodexAppServerClient {
       this.send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "workshop-desktop: approvals are not supported" } });
       const threadId = this.threadIdOf(message.params);
       if (threadId) {
-        this.activeTurns.get(threadId)?.onAgentMessage(`已自动拒绝审批请求：${message.method}`);
+        this.activeTurns.get(threadId)?.events.onAgentMessage(`已自动拒绝审批请求：${message.method}`);
       }
       return;
     }
@@ -192,15 +197,38 @@ export class CodexAppServerClient {
     if (!threadId) {
       return;
     }
-    const events = this.activeTurns.get(threadId);
-    if (!events) {
+    const activeTurn = this.activeTurns.get(threadId);
+    if (!activeTurn) {
+      return;
+    }
+    const events = activeTurn.events;
+
+    if (method === "item/agentMessage/delta") {
+      const delta = (params as { itemId?: unknown; delta?: unknown }).delta;
+      const itemId = (params as { itemId?: unknown }).itemId;
+      if (typeof itemId === "string" && typeof delta === "string" && delta) {
+        const nextText = `${activeTurn.agentMessageDeltas.get(itemId) ?? ""}${delta}`;
+        activeTurn.agentMessageDeltas.set(itemId, nextText);
+        events.onAgentMessage(nextText);
+      }
       return;
     }
 
     if (method === "item/completed") {
-      const item = (params as { item?: { type?: string; text?: string } }).item;
+      const item = (params as { item?: { type?: string; id?: string; text?: string } }).item;
       if (item?.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
+        if (typeof item.id === "string") {
+          activeTurn.agentMessageDeltas.set(item.id, item.text);
+        }
         events.onAgentMessage(item.text.trim());
+      }
+      return;
+    }
+
+    if (method === "rawResponseItem/completed") {
+      const text = responseItemText((params as { item?: unknown }).item);
+      if (text) {
+        events.onAgentMessage(text);
       }
       return;
     }
@@ -210,6 +238,8 @@ export class CodexAppServerClient {
       this.activeTurns.delete(threadId);
       if (turn?.status === "completed") {
         events.onCompleted("completed");
+      } else if (turn?.status === "interrupted") {
+        events.onCompleted("interrupted", turn.error?.message ?? "turn 已中断");
       } else {
         events.onCompleted("failed", turn?.error?.message ?? `turn 状态：${turn?.status ?? "unknown"}`);
       }
@@ -266,4 +296,23 @@ export class CodexAppServerClient {
   private send(message: JsonRpcMessage) {
     this.child?.stdin?.write(JSON.stringify(message) + "\n");
   }
+}
+
+function responseItemText(item: unknown) {
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const value = item as { type?: unknown; role?: unknown; content?: unknown };
+  if (value.type !== "message" || !Array.isArray(value.content)) {
+    return "";
+  }
+  return value.content
+    .map((contentItem) =>
+      contentItem && typeof contentItem === "object" && (contentItem as { type?: unknown }).type === "output_text"
+        ? (contentItem as { text?: unknown }).text
+        : ""
+    )
+    .filter((text): text is string => typeof text === "string" && Boolean(text.trim()))
+    .join("\n")
+    .trim();
 }

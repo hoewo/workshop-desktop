@@ -17,17 +17,18 @@ Workshop Desktop 来源于一个 AI 开发流程判断：个人思考、任务�
 - macOS Dock 菜单支持显示面板、任务便签、新建个人记录、个人记录和退出
 - 支持 NebulaAuth 邮箱/手机号验证码登录、手工 Bearer Token 和本地调试 Header 三种连接方式
 - 登录后自动保存 `access_token` / `refresh_token`，并在 token 临近过期或接口返回 `401` 时刷新
-- 自动拉取当前用户参与的项目，再聚合项目下未完成任务
+- 自动拉取当前用户参与的项目，再聚合项目下未归档任务；任务完成后仍保留在列表中
 - 默认只展示和当前用户相关的任务：创建者或执行者是自己
 - 支持快速新增个人任务
-- 支持轻量状态操作：开始、完成、阻塞、退回待办
+- 支持轻量状态操作：开始、完成、阻塞、退回待办；任务归档入口先占位提示暂未实现
 - 支持按项目、状态和关键词过滤
 - 支持每日固定时间刷新，例如每天 `09:00`
 - 支持打开桌面便签窗口，并可切换置顶
-- 个人记录分为个人、项目、任务三类；项目记录可多条，任务记录按任务唯一
+- 个人记录分为个人、项目、任务三类；项目记录可多条，任务记录按任务唯一；记录完成后仍显示，归档后从列表隐藏
 - 项目列表和任务列表会提示是否已有个人记录
 - 任务列表采用紧凑展示，长任务标题在列表中截断，详情中查看完整内容
 - 启动后提供仅本机可访问的 app server，允许本地 CLI/AI 通过正式接口新增个人记录
+- macOS 发布版支持从公开 GitHub Release 检查更新、自动下载，并由用户确认重启安装
 
 ## 后端契约
 
@@ -46,7 +47,7 @@ Workshop 业务接口路径：
 用到的业务接口：
 
 - `GET /projects?page_size=200`
-- `GET /tasks?project_id={id}&state=pending&state=in_progress&state=pending_review&state=blocked&page_size=200`
+- `GET /tasks?project_id={id}&state=pending&state=in_progress&state=pending_review&state=completed&state=accepted&state=cancelled&state=blocked&page_size=200`
 - `POST /tasks`
 - `PUT /tasks/{id}`
 
@@ -175,19 +176,19 @@ npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI �
 ./scripts/package.sh dist
 ```
 
-本机默认生成当前平台安装包。macOS 当前默认生成：
+本机默认生成当前平台安装包。macOS 云端发布生成签名、公证后的 DMG + zip；本地无签名 secrets 时仍可只构建 zip 做本机验证。
 
 ```text
-release/Workshop Todo-<version>-arm64-mac.zip
+release/Workshop.Todo-<version>-arm64-mac.zip
 ```
 
 云端发布通过 GitHub Actions 生成：
 
-- macOS arm64 zip
+- macOS arm64 DMG、zip、zip blockmap、`latest-mac.yml`
 - Windows x64 NSIS installer
 - Windows x64 portable exe
 
-没有把 DMG 作为默认目标。当前 Electron Builder 26.8.1 在本机生成 DMG 时会触发 DMG vendor 下载错误，zip 和目录包可正常生成。
+macOS 自动更新使用 `electron-updater` 访问公开 GitHub Release。客户端直接读取 Release 里的 `latest-mac.yml`、安装包和 blockmap，不再内置 GitHub token。
 
 脚本默认设置：
 
@@ -195,6 +196,14 @@ release/Workshop Todo-<version>-arm64-mac.zip
 - `CSC_IDENTITY_AUTO_DISCOVERY=false`
 
 如果你要走自己的签名/下载源，可在命令前覆盖环境变量。
+
+macOS 云端发布需要以下 GitHub Actions secrets：
+
+- `CSC_LINK`：Developer ID Application 证书 `.p12` 的 base64 或 electron-builder 支持的证书链接。
+- `CSC_KEY_PASSWORD`：证书导出密码。
+- `APPLE_API_KEY_BASE64`：App Store Connect API key `.p8` 文件内容的 base64。
+- `APPLE_API_KEY_ID`：App Store Connect API key ID。
+- `APPLE_API_ISSUER`：App Store Connect issuer ID。
 
 ## 项目文档
 

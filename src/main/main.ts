@@ -24,6 +24,7 @@ import { PersonalRecordStore, normalizeRecordScope } from "./recordStore";
 import { AppUpdateService } from "./updateService";
 import { WorkshopApiService } from "./workshopApiService";
 import type {
+  ApiResponse,
   AppUpdateStatus,
   AppConfig,
   CodexRunBackend,
@@ -32,17 +33,25 @@ import type {
   ListProjectsRequest,
   ListTasksRequest,
   LoginRequest,
+  Organization,
+  OrganizationsPayload,
   PersonalRecord,
   PersonalRecordChangeNotice,
+  PersonalRecordMeta,
   PersonalRecordScope,
+  PersonalRecordStatus,
   PersonalRecordTarget,
+  Project,
+  ProjectsPayload,
   SavePersonalRecordRequest,
   SendToCodexRequest,
   SendToCodexResponse,
   StickyTarget,
+  Task,
   TaskPreviewRequest,
   TaskStateChangeNotice,
   TaskState,
+  TasksPayload,
   UpdateTaskRequest,
   VerificationRequest,
   WorkshopRefreshEvent,
@@ -406,6 +415,16 @@ interface CreateRecordParams {
   open?: boolean;
 }
 
+interface ListRecordsParams {
+  scopeType?: PersonalRecordScope;
+  status?: PersonalRecordStatus;
+  projectId?: number;
+  taskId?: number;
+  query?: string;
+  limit?: number;
+  includeBody?: boolean;
+}
+
 interface NormalizedSendToCodexParams {
   kind: "task" | "record";
   backend: CodexRunBackend;
@@ -470,6 +489,93 @@ function normalizeAppServerRecordParams(params: unknown): CreateRecordParams {
     taskTitle: safeWindowText(value.taskTitle) ?? undefined,
     open: value.open === true
   };
+}
+
+function normalizePositiveNumber(value: unknown, label: string) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${label} 无效`);
+  }
+  return Math.trunc(value);
+}
+
+function normalizeOptionalPositiveNumber(value: unknown, label: string) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
+}
+
+function normalizeAppServerRecordListParams(params: unknown): ListRecordsParams {
+  const value = isPlainObject(params) ? params : {};
+  const scopeType = normalizeRecordScope(value.scopeType ?? value.scope);
+  const status =
+    value.status === "active" || value.status === "completed" || value.status === "promoted" || value.status === "archived"
+      ? value.status
+      : undefined;
+  const rawLimit = typeof value.limit === "number" && Number.isFinite(value.limit) ? Math.trunc(value.limit) : undefined;
+
+  return {
+    ...(value.scopeType || value.scope ? { scopeType } : {}),
+    ...(status ? { status } : {}),
+    projectId: normalizeOptionalPositiveNumber(value.projectId, "项目 ID"),
+    taskId: normalizeOptionalPositiveNumber(value.taskId, "任务 ID"),
+    query: safeWindowText(value.query, 200) ?? undefined,
+    limit: rawLimit ? clamp(rawLimit, 1, 500) : undefined,
+    includeBody: value.includeBody === true
+  };
+}
+
+function normalizeAppServerRecordGetParams(params: unknown) {
+  const value = isPlainObject(params) ? params : {};
+  const id = safeWindowText(value.id, 120);
+  if (!id) {
+    throw new Error("record.get 需要 id");
+  }
+  return { id };
+}
+
+function normalizeAppServerListProjectsParams(params: unknown): ListProjectsRequest {
+  const value = isPlainObject(params) ? params : {};
+  return {
+    organizationId: normalizeOptionalPositiveNumber(value.organizationId, "组织 ID"),
+    pageSize: normalizeOptionalPositiveNumber(value.pageSize, "pageSize")
+  };
+}
+
+function normalizeAppServerListTasksParams(params: unknown): ListTasksRequest {
+  const value = isPlainObject(params) ? params : {};
+  const rawStates = Array.isArray(value.states) ? value.states.filter(isTaskState) : undefined;
+  return {
+    projectId: normalizePositiveNumber(value.projectId, "项目 ID"),
+    states: rawStates && rawStates.length > 0 ? rawStates : undefined,
+    pageSize: normalizeOptionalPositiveNumber(value.pageSize, "pageSize")
+  };
+}
+
+function getApiResponseData<T>(response: ApiResponse<T>): T {
+  if (!response.ok) {
+    throw new Error(response.error || response.body?.error?.message || `HTTP ${response.status || 0}`);
+  }
+  return response.body?.data as T;
+}
+
+function extractPayloadList<T>(payload: unknown, key: string): T[] {
+  if (Array.isArray(payload)) {
+    return payload as T[];
+  }
+  if (isPlainObject(payload) && Array.isArray(payload[key])) {
+    return payload[key] as T[];
+  }
+  return [];
+}
+
+function extractPayloadTotal(payload: unknown, fallback: number) {
+  return isPlainObject(payload) && typeof payload.total === "number" && Number.isFinite(payload.total) ? payload.total : fallback;
+}
+
+function mergeProjectsForAppServer(projectGroups: Project[][]) {
+  const byId = new Map<number, Project>();
+  for (const project of projectGroups.flat()) {
+    byId.set(project.id, project);
+  }
+  return [...byId.values()];
 }
 
 function normalizeSendToCodexParams(params: unknown): NormalizedSendToCodexParams {
@@ -780,6 +886,34 @@ async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
     return { record };
   }
 
+  if (rpc.method === "record.list") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 record.list");
+    }
+    return listRecordsForAppServer(rpc.params);
+  }
+
+  if (rpc.method === "record.get") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 record.get");
+    }
+    return getRecordForAppServer(rpc.params);
+  }
+
+  if (rpc.method === "project.list") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 project.list");
+    }
+    return listProjectsForAppServer(rpc.params);
+  }
+
+  if (rpc.method === "task.list") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 task.list");
+    }
+    return listTasksForAppServer(rpc.params);
+  }
+
   throw new Error(`不支持的 app server 方法：${String(rpc.method ?? "")}`);
 }
 
@@ -1039,6 +1173,82 @@ async function showStickyWindow(target?: StickyTarget | number) {
 
 async function listPersonalRecords() {
   return personalRecordStore.listVisible();
+}
+
+async function listRecordsForAppServer(params: unknown) {
+  const options = normalizeAppServerRecordListParams(params);
+  const query = options.query?.toLowerCase();
+  let records: PersonalRecordMeta[] = await listPersonalRecords();
+
+  if (options.scopeType) {
+    records = records.filter((record) => record.scopeType === options.scopeType);
+  }
+  if (options.status) {
+    records = records.filter((record) => record.status === options.status);
+  }
+  if (options.projectId !== undefined) {
+    records = records.filter((record) => record.projectId === options.projectId);
+  }
+  if (options.taskId !== undefined) {
+    records = records.filter((record) => record.taskId === options.taskId);
+  }
+  if (query) {
+    records = records.filter((record) =>
+      [record.title, record.projectName, record.taskTitle, record.status, record.scopeType]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }
+
+  const limitedRecords = options.limit ? records.slice(0, options.limit) : records;
+  if (!options.includeBody) {
+    return { records: limitedRecords, total: records.length };
+  }
+
+  const recordsWithBody = await Promise.all(limitedRecords.map((record) => getPersonalRecord(record.id)));
+  return { records: recordsWithBody.filter((record): record is PersonalRecord => Boolean(record)), total: records.length };
+}
+
+async function getRecordForAppServer(params: unknown) {
+  const { id } = normalizeAppServerRecordGetParams(params);
+  return { record: await getPersonalRecord(id) };
+}
+
+async function listProjectsForAppServer(params: unknown) {
+  const request = normalizeAppServerListProjectsParams(params);
+  const standalonePayload = getApiResponseData<ProjectsPayload | Project[]>(await workshopApiService.listProjects(request));
+  const standaloneProjects = extractPayloadList<Project>(standalonePayload, "projects");
+
+  if (request.organizationId) {
+    return { projects: standaloneProjects, total: extractPayloadTotal(standalonePayload, standaloneProjects.length) };
+  }
+
+  const organizationsPayload = getApiResponseData<OrganizationsPayload | Organization[]>(await workshopApiService.listOrganizations());
+  const organizations = extractPayloadList<Organization>(organizationsPayload, "organizations");
+  const organizationProjectGroups = await Promise.all(
+    organizations.map(async (organization) => {
+      const payload = getApiResponseData<ProjectsPayload | Project[]>(
+        await workshopApiService.listProjects({ ...request, organizationId: organization.id })
+      );
+      return extractPayloadList<Project>(payload, "projects").map((project) => ({
+        ...project,
+        organization_id: organization.id,
+        organizationName: organization.name
+      }));
+    })
+  );
+  const projects = mergeProjectsForAppServer([standaloneProjects, ...organizationProjectGroups]);
+  return { projects, total: projects.length };
+}
+
+async function listTasksForAppServer(params: unknown) {
+  const payload = getApiResponseData<TasksPayload | Task[]>(
+    await workshopApiService.listTasks(normalizeAppServerListTasksParams(params))
+  );
+  const tasks = extractPayloadList<Task>(payload, "tasks");
+  return { tasks, total: extractPayloadTotal(payload, tasks.length) };
 }
 
 function notifyRecordsChanged(notice: PersonalRecordChangeNotice | null = null) {

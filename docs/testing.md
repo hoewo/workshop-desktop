@@ -69,6 +69,20 @@ npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI �
 - Workshop Desktop 打开新建的个人记录窗口。
 - 记录出现在个人记录列表中。
 
+读取记录和任务：
+
+```bash
+npx --yes pnpm app:record:list -- --project-id 98
+npx --yes pnpm app:record:get -- --id <record-id>
+npx --yes pnpm app:project:list
+npx --yes pnpm app:task:list -- --project-id 98
+```
+
+预期结果：
+
+- 读取命令通过 app server 返回记录、项目或任务，不直接读取 `userData` 文件。
+- 任务读取要求桌面端已有有效登录配置。
+
 如果桌面端未运行，CLI 应提示找不到 app server，而不是直接写内部数据文件。
 
 ## 打包

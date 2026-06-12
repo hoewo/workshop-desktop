@@ -21,7 +21,12 @@
     "package:dist": "bash scripts/package.sh dist",
     "check:precommit": "bash scripts/pre-commit-check.sh",
     "app:cli": "node scripts/workshop-desktop-cli.mjs",
-    "app:record:create": "node scripts/workshop-desktop-cli.mjs record create"
+    "app:record:create": "node scripts/workshop-desktop-cli.mjs record create",
+    "app:record:list": "node scripts/workshop-desktop-cli.mjs record list",
+    "app:record:get": "node scripts/workshop-desktop-cli.mjs record get",
+    "app:project:list": "node scripts/workshop-desktop-cli.mjs project list",
+    "app:task:list": "node scripts/workshop-desktop-cli.mjs task list",
+    "app:task:get": "node scripts/workshop-desktop-cli.mjs task get"
   },
   "dependencies": {
     "electron-log": "^5.4.4",

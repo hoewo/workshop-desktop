@@ -27,7 +27,7 @@ Workshop Desktop 来源于一个 AI 开发流程判断：个人思考、任务�
 - 个人记录分为个人、项目、任务三类；项目记录可多条，任务记录按任务唯一；记录完成后仍显示，归档后从列表隐藏
 - 项目列表和任务列表会提示是否已有个人记录
 - 任务列表采用紧凑展示，长任务标题在列表中截断，详情中查看完整内容
-- 启动后提供仅本机可访问的 app server，允许本地 CLI/AI 通过正式接口新增个人记录
+- 启动后提供仅本机可访问的 app server，允许本地 CLI/AI 通过正式接口新增个人记录，并读取记录、项目和项目任务
 - macOS 发布版支持从公开 GitHub Release 检查更新、自动下载，并可从设置面板或顶部应用菜单打开独立更新窗口确认重启安装
 
 ## 后端契约
@@ -160,9 +160,11 @@ bash scripts/pre-commit-check.sh
 ```bash
 npx --yes pnpm dev
 npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI 写入。" --open
+npx --yes pnpm app:record:list -- --project-id 98
+npx --yes pnpm app:task:list -- --project-id 98
 ```
 
-该命令要求 Workshop Desktop 正在运行；CLI 会通过本机 app server 请求桌面端新增记录，不直接写内部数据文件。
+这些命令要求 Workshop Desktop 正在运行；CLI 会通过本机 app server 请求桌面端新增或读取数据，不直接写内部数据文件。
 
 打包本平台目录包：
 

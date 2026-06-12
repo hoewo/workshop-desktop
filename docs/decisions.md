@@ -71,7 +71,7 @@ Consequences:
 
 - app server 只绑定 `127.0.0.1`。
 - 每次启动生成 token，并写入 Electron `userData/app-server.json` 供本机 CLI 发现。
-- 最小 CLI 使用 `record.create` 新增记录；后续可扩展更新记录、打开便签草稿、创建任务候选等能力。
+- CLI 使用 app server 新增记录，并提供记录、项目和项目任务的只读查询；后续可扩展更新记录、打开便签草稿、创建任务候选等能力。
 - 直接写 `userData/personal-records/` 只允许作为开发调试手段，不是正式集成方式。
 
 ### D-006 项目本地目录是设备级绑定

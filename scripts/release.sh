@@ -150,7 +150,8 @@ const release = JSON.parse(process.env.RELEASE_JSON);
 const assets = release.assets || [];
 const names = assets.map((asset) => asset.name);
 const required = [
-  ["macOS zip", (name) => name.endsWith(".zip")],
+  ["macOS universal zip", (name) => name.endsWith("-universal-mac.zip")],
+  ["macOS universal blockmap", (name) => name.endsWith("-universal-mac.zip.blockmap")],
   ["macOS update metadata", (name) => name === "latest-mac.yml"],
   ["Windows executable", (name) => name.endsWith(".exe")],
   ["Windows update metadata", (name) => name === "latest.yml"],

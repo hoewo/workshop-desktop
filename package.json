@@ -25,10 +25,15 @@
     "app:record:create": "node scripts/workshop-desktop-cli.mjs record create",
     "app:record:list": "node scripts/workshop-desktop-cli.mjs record list",
     "app:record:get": "node scripts/workshop-desktop-cli.mjs record get",
+    "app:record:open": "node scripts/workshop-desktop-cli.mjs record open",
+    "app:record:annotate": "node scripts/workshop-desktop-cli.mjs record annotate",
     "app:project:list": "node scripts/workshop-desktop-cli.mjs project list",
     "app:task:list": "node scripts/workshop-desktop-cli.mjs task list",
     "app:task:get": "node scripts/workshop-desktop-cli.mjs task get",
-    "app:confirmation:open": "node scripts/workshop-desktop-cli.mjs confirmation open"
+    "app:context:current": "node scripts/workshop-desktop-cli.mjs context current",
+    "app:confirmation:open": "node scripts/workshop-desktop-cli.mjs confirmation open",
+    "app:confirmation:request": "node scripts/workshop-desktop-cli.mjs confirmation request",
+    "app:confirmation:status": "node scripts/workshop-desktop-cli.mjs confirmation status"
   },
   "dependencies": {
     "electron-log": "^5.4.4",

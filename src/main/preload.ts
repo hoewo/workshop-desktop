@@ -11,6 +11,7 @@ import type {
   StickyTarget,
   TaskPreviewRequest,
   WindowArrangementNotice,
+  WindowFocusStateNotice,
   WorkshopRefreshEvent
 } from "../shared/types";
 
@@ -95,6 +96,11 @@ const bridge: DesktopBridge = {
     const listener = () => callback();
     ipcRenderer.on("window:focusPulse", listener);
     return () => ipcRenderer.removeListener("window:focusPulse", listener);
+  },
+  onWindowFocusState: (callback) => {
+    const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as WindowFocusStateNotice);
+    ipcRenderer.on("window:focusState", listener);
+    return () => ipcRenderer.removeListener("window:focusState", listener);
   },
   onWindowArrangement: (callback) => {
     const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as WindowArrangementNotice);

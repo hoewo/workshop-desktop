@@ -228,6 +228,17 @@ export type PersonalRecordStatus = "active" | "completed" | "promoted" | "archiv
 // 缺省视为 human，兼容没有 origin 字段的历史记录。
 export type PersonalRecordOrigin = "human" | "agent";
 
+export interface PersonalRecordAnnotation {
+  namespace: string;
+  aiTitle?: string;
+  type?: string;
+  summary?: string;
+  status?: string;
+  confidence?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PersonalRecordMeta {
   id: string;
   title: string;
@@ -239,6 +250,7 @@ export interface PersonalRecordMeta {
   taskId?: number;
   taskTitle?: string;
   promotedTaskId?: number;
+  annotations?: PersonalRecordAnnotation[];
   createdAt: string;
   updatedAt: string;
 }
@@ -279,6 +291,15 @@ export interface SavePersonalRecordRequest {
   promotedTaskId?: number;
 }
 
+export interface AnnotatePersonalRecordRequest {
+  id: string;
+  annotation: Partial<Omit<PersonalRecordAnnotation, "createdAt" | "updatedAt">> & {
+    namespace: string;
+    createdAt?: string;
+    updatedAt?: string;
+  };
+}
+
 export type CodexSendKind = "task" | "record";
 export type CodexRunBackend = "exec" | "app-server";
 export type CodexRunStatus = "running" | "completed" | "failed" | "interrupted";
@@ -316,6 +337,82 @@ export interface TemporaryConfirmationResult {
   payload?: unknown;
 }
 
+export type WorkshopContextKind = "none" | "project" | "task" | "record" | "record-draft" | "tray" | "settings" | "manual" | "update";
+
+export interface WorkshopCurrentContext {
+  kind: WorkshopContextKind;
+  surface?: "tray" | "sticky" | "record" | "settings" | "manual" | "update" | "confirmation";
+  projectId?: number;
+  projectName?: string;
+  taskId?: number;
+  taskTitle?: string;
+  recordId?: string;
+  focusedAt?: string;
+  stale?: boolean;
+}
+
+export type ConfirmationAction =
+  | {
+      type: "record.updateBody";
+      recordId: string;
+      bodyMarkdown: string;
+    }
+  | {
+      type: "record.appendBody";
+      recordId: string;
+      markdown: string;
+    }
+  | {
+      type: "record.create";
+      record: {
+        title?: string;
+        bodyMarkdown?: string;
+        body?: string;
+        scopeType?: PersonalRecordScope;
+        projectId?: number;
+        projectName?: string;
+        taskId?: number;
+        taskTitle?: string;
+        open?: boolean;
+      };
+    }
+  | {
+      type: "record.annotate";
+      annotations: AnnotatePersonalRecordRequest[];
+    }
+  | {
+      type: "task.create";
+      projectId: number;
+      content: string;
+    }
+  | {
+      type: "task.updateState";
+      taskId: number;
+      projectId: number;
+      state: TaskState;
+    };
+
+export interface AsyncConfirmationRequest {
+  title?: string;
+  html: string;
+  width?: number;
+  height?: number;
+  action?: ConfirmationAction;
+}
+
+export type AsyncConfirmationStatus = "pending" | "confirmed" | "cancelled" | "closed" | "failed";
+
+export interface AsyncConfirmationMeta {
+  requestId: string;
+  title: string;
+  status: AsyncConfirmationStatus;
+  actionType?: ConfirmationAction["type"];
+  result?: unknown;
+  error?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
 // 运行是执行遥测，不是知识对象；它不参与记录/任务的晋升流程。
 export interface CodexRunMeta {
   runId: string;
@@ -348,6 +445,10 @@ export interface WindowFitRequest {
 export interface WindowArrangementNotice {
   compactList?: boolean;
   maxHeight?: number;
+}
+
+export interface WindowFocusStateNotice {
+  selected: boolean;
 }
 
 export type AppUpdatePhase =
@@ -414,6 +515,7 @@ export interface DesktopBridge {
   onCodexRunsChanged: (callback: (runs: CodexRunMeta[]) => void) => () => void;
   onUpdateStatus: (callback: (status: AppUpdateStatus) => void) => () => void;
   onFocusPulse: (callback: () => void) => () => void;
+  onWindowFocusState: (callback: (notice: WindowFocusStateNotice) => void) => () => void;
   onWindowArrangement: (callback: (notice: WindowArrangementNotice) => void) => () => void;
   onRefresh: (callback: (event: WorkshopRefreshEvent) => void) => () => void;
   onRecordsChanged: (callback: (notice: PersonalRecordChangeNotice | null) => void) => () => void;

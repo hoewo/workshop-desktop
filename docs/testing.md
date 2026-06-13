@@ -76,13 +76,19 @@ npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI �
 ```bash
 npx --yes pnpm app:record:list -- --project-id 98
 npx --yes pnpm app:record:get -- --id <record-id>
+npx --yes pnpm app:record:open --id <record-id>
+npx --yes pnpm app:record:annotate --annotations-file ./annotations.json --json
 npx --yes pnpm app:project:list
 npx --yes pnpm app:task:list -- --project-id 98
+npx --yes pnpm app:context:current --json
 ```
 
 预期结果：
 
 - 读取命令通过 app server 返回记录、项目或任务，不直接读取 `userData` 文件。
+- 打开记录命令通过 app server 请求桌面端打开已有记录窗口。
+- 标注命令通过 app server 更新记录 metadata，不改写记录正文。
+- 当前上下文命令返回最近聚焦的 Workshop 窗口对象；如果长时间未切换焦点，结果可标记为 `stale`。
 - 任务读取要求桌面端已有有效登录配置。
 
 临时确认窗口验证：
@@ -96,6 +102,19 @@ npx --yes pnpm app:confirmation:open --title "确认测试" --html "<h1>确认�
 - Workshop Desktop 打开独立确认窗口并渲染传入 HTML。
 - 点击确认后 CLI 返回 `confirmed: true`；点击取消或关闭窗口返回未确认结果。
 - 传入 HTML 只作为静态内容渲染，确认/取消按钮由 Workshop 外壳提供。
+
+异步确认请求验证：
+
+```bash
+npx --yes pnpm app:confirmation:request --title "异步确认测试" --html "<h1>确认</h1><p>确认后由 Workshop 执行动作。</p>" --action-json '{"type":"record.appendBody","recordId":"<record-id>","markdown":"## 整理\n\n- 已确认追加。"}' --json
+npx --yes pnpm app:confirmation:status --id <request-id> --json
+```
+
+预期结果：
+
+- `confirmation.request` 立即返回 `requestId`，不会等待用户点击确认。
+- 用户确认后，Workshop 执行声明的记录或任务动作，并可通过 `confirmation.status` 查询为 `confirmed` 或 `failed`。
+- 用户取消或关闭窗口时，不执行动作，状态为 `cancelled` 或 `closed`。
 
 如果桌面端未运行，CLI 应提示找不到 app server，而不是直接写内部数据文件。
 

@@ -1591,6 +1591,28 @@ textarea:focus {
   gap: 0;
 }
 
+.sticky-shell.window-selected-focus::before,
+.sticky-shell.window-selected-idle::before,
+.record-shell.window-selected-focus::before,
+.record-shell.window-selected-idle::before {
+  content: "";
+  position: fixed;
+  z-index: 9998;
+  inset: 2px;
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+.sticky-shell.window-selected-focus::before,
+.record-shell.window-selected-focus::before {
+  border: 1px solid rgba(38, 105, 84, 0.64);
+}
+
+.sticky-shell.window-selected-idle::before,
+.record-shell.window-selected-idle::before {
+  border: 1px solid rgba(38, 105, 84, 0.34);
+}
+
 .sticky-shell.window-focus-pulse::after,
 .record-shell.window-focus-pulse::after {
   content: "";

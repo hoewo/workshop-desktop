@@ -9,10 +9,15 @@ function usage() {
   node scripts/workshop-desktop-cli.mjs record create --title "Title" --body-file ./note.md --project-id 98 --project-name workshop-desktop --open
   node scripts/workshop-desktop-cli.mjs record list [--scope project] [--project-id 98] [--query "keyword"]
   node scripts/workshop-desktop-cli.mjs record get --id <record-id>
+  node scripts/workshop-desktop-cli.mjs record open --id <record-id>
+  node scripts/workshop-desktop-cli.mjs record annotate --annotations-file ./annotations.json
   node scripts/workshop-desktop-cli.mjs project list
   node scripts/workshop-desktop-cli.mjs task list [--project-id 98] [--state pending,completed]
   node scripts/workshop-desktop-cli.mjs task get --id <task-id> [--project-id 98]
+  node scripts/workshop-desktop-cli.mjs context current
   node scripts/workshop-desktop-cli.mjs confirmation open --title "确认标题" --html-file ./confirm.html
+  node scripts/workshop-desktop-cli.mjs confirmation request --title "确认标题" --html-file ./confirm.html --action-file ./action.json
+  node scripts/workshop-desktop-cli.mjs confirmation status [--id <request-id>]
 
 Options:
   --title <text>          Record title. If body has no markdown title, the title is prepended.
@@ -32,6 +37,11 @@ Options:
   --page-size <number>
   --html <html>           Temporary confirmation HTML.
   --html-file <path>      Read temporary confirmation HTML from a file.
+  --action-json <json>    Async confirmation action JSON.
+  --action-file <path>    Read async confirmation action JSON from a file.
+  --annotations-json <json>
+  --annotations-file <path>
+  --request-id <text>     Async confirmation request ID.
   --width <number>        Temporary confirmation window width.
   --height <number>       Temporary confirmation window height.
   --include-body          Include markdown bodies when listing records.
@@ -236,6 +246,20 @@ async function readStdinIfAvailable() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+async function loadJsonOption(options, jsonKey, fileKey, label) {
+  const fileValue = options[fileKey] ? await fs.readFile(path.resolve(options[fileKey]), "utf8") : "";
+  const raw = options[jsonKey] ?? fileValue;
+  if (!raw) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`${label} JSON is invalid`);
+  }
+}
+
 async function loadConnection() {
   const envPort = Number(process.env.WORKSHOP_DESKTOP_SERVER_PORT);
   const envToken = process.env.WORKSHOP_DESKTOP_SERVER_TOKEN?.trim();
@@ -341,6 +365,47 @@ async function getRecord(options) {
   console.log(result.record.bodyMarkdown || `# ${result.record.title}`);
 }
 
+async function openRecord(options) {
+  const result = await rpc("record.open", {
+    id: stringOption(options.id, "--id")
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  console.log(`Opened record ${result.record.id}: ${result.record.title}`);
+}
+
+async function annotateRecords(options) {
+  const annotationsFromFile = options["annotations-file"] ? await fs.readFile(path.resolve(options["annotations-file"]), "utf8") : "";
+  const stdinAnnotations = options["annotations-json"] || annotationsFromFile ? "" : await readStdinIfAvailable();
+  const raw = options["annotations-json"] ?? (annotationsFromFile || stdinAnnotations);
+  if (!raw.trim()) {
+    throw new Error("--annotations-json, --annotations-file, or stdin JSON is required");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("annotations JSON is invalid");
+  }
+  const annotations = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.annotations) ? parsed.annotations : parsed?.id ? [parsed] : [];
+  if (annotations.length === 0) {
+    throw new Error("annotations JSON must contain an array, { annotations: [...] }, or one annotation object");
+  }
+
+  const result = await rpc("record.annotate", { annotations });
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  console.log(`Annotated ${result.total ?? result.records?.length ?? annotations.length} records.`);
+}
+
 async function listProjects(options) {
   const result = await rpc("project.list", {
     organizationId: numberOption(options["organization-id"], "--organization-id"),
@@ -387,6 +452,28 @@ async function getTask(options) {
   console.log(task.content || "");
 }
 
+async function getCurrentContext(options) {
+  const result = await rpc("context.current", {});
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const context = result.context || { kind: "none" };
+  const parts = [
+    context.kind || "none",
+    context.surface ? `surface:${context.surface}` : "",
+    context.projectId ? `project:${context.projectId}` : "",
+    context.projectName || "",
+    context.taskId ? `task:${context.taskId}` : "",
+    context.taskTitle || "",
+    context.recordId ? `record:${context.recordId}` : "",
+    context.focusedAt ? formatDate(context.focusedAt) : "",
+    context.stale ? "stale" : ""
+  ].filter(Boolean);
+  console.log(parts.join("\t") || "none");
+}
+
 async function openConfirmation(options) {
   const htmlFromFile = options["html-file"] ? await fs.readFile(path.resolve(options["html-file"]), "utf8") : "";
   const stdinHtml = options.html || htmlFromFile ? "" : await readStdinIfAvailable();
@@ -410,6 +497,85 @@ async function openConfirmation(options) {
   console.log(result.confirmed ? "Confirmed." : `Not confirmed: ${result.reason || "cancelled"}`);
 }
 
+async function requestConfirmation(options) {
+  const htmlFromFile = options["html-file"] ? await fs.readFile(path.resolve(options["html-file"]), "utf8") : "";
+  const stdinHtml = options.html || htmlFromFile ? "" : await readStdinIfAvailable();
+  const html = options.html ?? (htmlFromFile || stdinHtml);
+  if (!html.trim()) {
+    throw new Error("--html, --html-file, or stdin HTML is required");
+  }
+
+  const action = await loadJsonOption(options, "action-json", "action-file", "action");
+  const result = await rpc("confirmation.request", {
+    title: options.title,
+    html,
+    width: numberOption(options.width, "--width"),
+    height: numberOption(options.height, "--height"),
+    ...(action ? { action } : {})
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const request = result.request;
+  console.log(`Requested confirmation ${request.requestId}: ${request.status}${request.actionType ? ` (${request.actionType})` : ""}`);
+}
+
+async function getConfirmationStatus(options) {
+  const result = await rpc("confirmation.status", {
+    requestId: options["request-id"] || options.id,
+    limit: numberOption(options.limit, "--limit")
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (result.request !== undefined) {
+    if (!result.request) {
+      console.log("Confirmation request not found.");
+      return;
+    }
+    const request = result.request;
+    console.log(
+      [
+        request.requestId,
+        `[${request.status}]`,
+        request.actionType || "",
+        request.title,
+        formatDate(request.completedAt || request.createdAt),
+        request.error || ""
+      ]
+        .filter(Boolean)
+        .join("\t")
+    );
+    return;
+  }
+
+  const requests = result.requests || [];
+  if (requests.length === 0) {
+    console.log("No confirmation requests.");
+    return;
+  }
+  for (const request of requests) {
+    console.log(
+      [
+        request.requestId,
+        `[${request.status}]`,
+        request.actionType || "",
+        truncate(request.title, 72),
+        formatDate(request.completedAt || request.createdAt),
+        request.error || ""
+      ]
+        .filter(Boolean)
+        .join("\t")
+    );
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const [resource, action] = options._;
@@ -429,6 +595,16 @@ async function main() {
     return;
   }
 
+  if (resource === "record" && action === "open") {
+    await openRecord(options);
+    return;
+  }
+
+  if (resource === "record" && action === "annotate") {
+    await annotateRecords(options);
+    return;
+  }
+
   if (resource === "project" && action === "list") {
     await listProjects(options);
     return;
@@ -444,8 +620,23 @@ async function main() {
     return;
   }
 
+  if (resource === "context" && action === "current") {
+    await getCurrentContext(options);
+    return;
+  }
+
   if (resource === "confirmation" && action === "open") {
     await openConfirmation(options);
+    return;
+  }
+
+  if (resource === "confirmation" && action === "request") {
+    await requestConfirmation(options);
+    return;
+  }
+
+  if (resource === "confirmation" && action === "status") {
+    await getConfirmationStatus(options);
     return;
   }
 

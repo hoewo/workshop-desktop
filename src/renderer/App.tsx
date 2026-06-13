@@ -164,6 +164,9 @@ export default function App() {
   const [taskNoteBody, setTaskNoteBody] = useState("");
   const [taskNoteDirty, setTaskNoteDirty] = useState(false);
   const { focusPulseVisible, triggerFocusPulse } = useFocusPulse();
+  const isNoteSurface = surface === "sticky" || surface === "record";
+  const [isWindowSelected, setIsWindowSelected] = useState(isNoteSurface);
+  const [isWindowFocused, setIsWindowFocused] = useState(() => (typeof document === "undefined" ? true : document.hasFocus()));
   const {
     completingIds: completingTaskIds,
     clearCompletionFeedback: clearTaskCompletionFeedback,
@@ -219,6 +222,32 @@ export default function App() {
   }, []);
 
   useEffect(() => window.workshopDesktop.onFocusPulse(triggerFocusPulse), [triggerFocusPulse]);
+
+  useEffect(() => {
+    if (!isNoteSurface) {
+      return undefined;
+    }
+
+    const handleFocus = () => setIsWindowFocused(true);
+    const handleBlur = () => setIsWindowFocused(false);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("blur", handleBlur);
+    setIsWindowFocused(document.hasFocus());
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [isNoteSurface]);
+
+  useEffect(() => {
+    if (!isNoteSurface) {
+      return undefined;
+    }
+
+    return window.workshopDesktop.onWindowFocusState((notice) => {
+      setIsWindowSelected(notice.selected);
+    });
+  }, [isNoteSurface]);
 
   useEffect(
     () =>
@@ -1580,6 +1609,9 @@ export default function App() {
     );
   }
 
+  const noteWindowFocusClass =
+    isNoteSurface && isWindowSelected ? (isWindowFocused ? "window-selected-focus" : "window-selected-idle") : "";
+
   if (surface === "settings") {
     return (
       <SettingsSurface
@@ -1661,6 +1693,7 @@ export default function App() {
         setRecordSearchOpen={setRecordSearchOpen}
         setRecordSearchQuery={setRecordSearchQuery}
         visibleRecords={visibleRecords}
+        windowFocusClass={noteWindowFocusClass}
       />
     );
   }
@@ -1684,6 +1717,7 @@ export default function App() {
           focusPulseVisible={focusPulseVisible}
           handleArrangeStickyWindows={() => void handleArrangeStickyWindows()}
           isSingleTaskSticky={isSingleTaskSticky}
+          windowFocusClass={noteWindowFocusClass}
         />
       );
     }
@@ -1762,6 +1796,7 @@ export default function App() {
         }}
         updateTaskState={(nextTask, state) => void updateTaskState(nextTask, state)}
         sendTaskToCodex={(task) => void sendTaskToCodex(task)}
+        windowFocusClass={noteWindowFocusClass}
       />
     );
   }

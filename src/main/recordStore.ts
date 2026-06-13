@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type {
+  AnnotatePersonalRecordRequest,
   PersonalRecord,
+  PersonalRecordAnnotation,
   PersonalRecordMeta,
   PersonalRecordOrigin,
   PersonalRecordScope,
@@ -45,6 +47,66 @@ function safeText(value: unknown, maxLength = 120) {
 
   const text = value.trim();
   return text && text.length <= maxLength ? text : null;
+}
+
+function safeTimestamp(value: unknown, fallback: string) {
+  const text = safeText(value, 40);
+  if (!text) {
+    return fallback;
+  }
+
+  return Number.isNaN(new Date(text).getTime()) ? fallback : text;
+}
+
+function safeConfidence(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.min(Math.max(value, 0), 1);
+}
+
+function normalizeRecordAnnotation(value: unknown, existing?: PersonalRecordAnnotation): PersonalRecordAnnotation | null {
+  const source = isPlainObject(value) ? value : {};
+  const namespace = safeText(source.namespace, 80) ?? existing?.namespace;
+  if (!namespace) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const createdAt = safeTimestamp(source.createdAt, existing?.createdAt ?? now);
+  const updatedAt = safeTimestamp(source.updatedAt, now);
+  const aiTitle = safeText(source.aiTitle, 160) ?? undefined;
+  const type = safeText(source.type, 80) ?? undefined;
+  const summary = safeText(source.summary, 800) ?? undefined;
+  const status = safeText(source.status, 80) ?? undefined;
+  const confidence = safeConfidence(source.confidence);
+
+  return {
+    namespace,
+    ...(aiTitle ? { aiTitle } : {}),
+    ...(type ? { type } : {}),
+    ...(summary ? { summary } : {}),
+    ...(status ? { status } : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
+    createdAt,
+    updatedAt
+  };
+}
+
+function normalizeRecordAnnotations(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const byNamespace = new Map<string, PersonalRecordAnnotation>();
+  for (const item of value) {
+    const annotation = normalizeRecordAnnotation(item);
+    if (annotation) {
+      byNamespace.set(annotation.namespace, annotation);
+    }
+  }
+  const annotations = [...byNamespace.values()];
+  return annotations.length > 0 ? annotations : undefined;
 }
 
 function truncateRecordTitle(title: string) {
@@ -113,6 +175,10 @@ export class PersonalRecordStore {
     return this.enqueueWrite(() => this.saveNow(request));
   }
 
+  annotate(request: AnnotatePersonalRecordRequest): Promise<PersonalRecordMeta> {
+    return this.enqueueWrite(() => this.annotateNow(request));
+  }
+
   delete(id: string): Promise<string> {
     return this.enqueueWrite(async () => {
       const safeId = normalizeRecordId(id);
@@ -155,7 +221,8 @@ export class PersonalRecordStore {
             .map((record) => ({
               ...record,
               scopeType: normalizeRecordScope(record.scopeType),
-              status: normalizeRecordStatus(record.status)
+              status: normalizeRecordStatus(record.status),
+              annotations: normalizeRecordAnnotations(record.annotations)
             }))
             .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         : [];
@@ -210,6 +277,7 @@ export class PersonalRecordStore {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       ...(promotedTaskId ? { promotedTaskId } : existing?.promotedTaskId ? { promotedTaskId: existing.promotedTaskId } : {}),
+      ...(existing?.annotations?.length ? { annotations: existing.annotations } : {}),
       ...(scopeType === "project" || scopeType === "task" ? { projectId, projectName } : {}),
       ...(scopeType === "task" ? { taskId, taskTitle } : {})
     };
@@ -217,5 +285,33 @@ export class PersonalRecordStore {
     await writeFileAtomic(this.recordBodyPath(id), bodyMarkdown);
     await this.writeRecordIndex(nextRecords);
     return { ...meta, bodyMarkdown };
+  }
+
+  private async annotateNow(request: AnnotatePersonalRecordRequest): Promise<PersonalRecordMeta> {
+    const requestId = safeText(request.id, 80);
+    if (!requestId) {
+      throw new Error("record.annotate 需要记录 ID");
+    }
+
+    const safeId = normalizeRecordId(requestId);
+    const records = await this.readRecordIndex();
+    const existing = records.find((record) => record.id === safeId);
+    if (!existing) {
+      throw new Error(`记录不存在：${safeId}`);
+    }
+
+    const currentAnnotations = existing.annotations ?? [];
+    const current = currentAnnotations.find((annotation) => annotation.namespace === request.annotation.namespace);
+    const nextAnnotation = normalizeRecordAnnotation(request.annotation, current);
+    if (!nextAnnotation) {
+      throw new Error("record.annotate 需要 annotation.namespace");
+    }
+
+    const meta: PersonalRecordMeta = {
+      ...existing,
+      annotations: [nextAnnotation, ...currentAnnotations.filter((annotation) => annotation.namespace !== nextAnnotation.namespace)]
+    };
+    await this.writeRecordIndex([meta, ...records.filter((record) => record.id !== safeId)]);
+    return meta;
   }
 }

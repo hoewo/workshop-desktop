@@ -149,13 +149,29 @@ Consequences:
 - macOS release 必须配置 Developer ID Application 签名和 notarization。
 - 后续服务器/CDN 可用后，可把更新源切换到 generic HTTPS。
 
+### D-011 Workshop 提供当前上下文和异步确认执行
+
+Status: accepted
+
+Decision: 本地 CLI/AI 可以通过 `context.current` 读取 Workshop Desktop 最近聚焦的对象上下文，并通过 `confirmation.request` 提交异步确认页面和受限动作。用户在 Workshop 确认后，记录正文更新、记录创建、记录标注、任务创建或任务状态更新由 Workshop 主进程执行；调用方通过 `confirmation.status` 查询结果。
+
+Rationale: Codex 与 Workshop 深度协作时，用户常用“这条记录”“当前任务”指代当前窗口对象；同时，批量整理和高风险写入不应让 Codex 同步等待确认，也不应把确认后的业务执行留给外部进程。
+
+Consequences:
+
+- 当前上下文是运行时指针，不是记录、任务或 repo fact；长时间未切换焦点时可标记为 stale。
+- 临时确认页面只负责展示和收集确认；确认后的业务动作由 Workshop 服务层执行并刷新 UI。
+- 异步确认请求状态写入 `userData/confirmation-requests/index.json`，上限 100 条。
+- 受限 Codex token 仍只允许 `record.create`，不能读取上下文或发起确认请求。
+- 删除、合并和重组多条记录暂不作为默认自动动作，需要后续单独评审。
+
 ## 开放问题
 
 - NebulaAuth token 是否继续保存在 Electron `userData/config.json`，还是在更广泛使用前迁移到系统钥匙串？
 - 任务可见性是否继续限定为当前用户创建或执行的任务？
 - 后续版本是否需要增加更强的分发检查，或迁移到自有 HTTPS 更新源？
 - app server 的 token 和连接文件是否需要进一步绑定当前用户会话、系统钥匙串或操作确认？
-- AI 自动创建远端 Workshop 任务前是否必须先生成任务候选并由用户确认？
+- 异步确认动作集合是否需要扩展到删除、合并、重组记录，还是继续保持窄集合？
 - Codex 运行除主面板状态行外，是否需要完整日志视图和系统级完成通知？
 - 发送到 Codex 前是否需要让用户预览最终组装的 prompt？
 - 是否改接 `codex app-server daemon` 共享实例，以换取 Codex app 的实时可见？当前为列表可见；实测（CLI/app 0.133.0）turn 进行中在 Codex app 打开该线程，页面可能挂住，需重启 Codex app 才恢复，执行本身不受影响。

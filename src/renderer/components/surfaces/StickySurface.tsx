@@ -10,15 +10,21 @@ export function StickyLoginRequiredSurface({
   closeStickyWindow,
   focusPulseVisible,
   handleArrangeStickyWindows,
-  isSingleTaskSticky
+  isSingleTaskSticky,
+  windowFocusClass
 }: {
   closeStickyWindow: () => void;
   focusPulseVisible: boolean;
   handleArrangeStickyWindows: () => void;
   isSingleTaskSticky: boolean;
+  windowFocusClass: string;
 }) {
   return (
-    <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
+    <main
+      className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${windowFocusClass} ${
+        focusPulseVisible ? "window-focus-pulse" : ""
+      }`}
+    >
       <header className="sticky-titlebar">
         <div className="sticky-drag">
           <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">
@@ -68,7 +74,8 @@ export function StickySurface({
   taskNoteBody,
   updateTaskNoteBody,
   updateTaskState,
-  sendTaskToCodex
+  sendTaskToCodex,
+  windowFocusClass
 }: {
   busyTaskId: number | null;
   canExtractTasks: boolean;
@@ -100,9 +107,14 @@ export function StickySurface({
   updateTaskNoteBody: (body: string) => void;
   updateTaskState: (task: EnrichedTask, state: TaskState) => void;
   sendTaskToCodex: (task: EnrichedTask) => void;
+  windowFocusClass: string;
 }) {
   return (
-    <main className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${isStickyContentCollapsed ? "collapsed-shell" : ""} ${focusPulseVisible ? "window-focus-pulse" : ""}`}>
+    <main
+      className={`sticky-shell ${isSingleTaskSticky ? "single-task-shell" : "sticky-list-shell"} ${
+        isStickyContentCollapsed ? "collapsed-shell" : ""
+      } ${windowFocusClass} ${focusPulseVisible ? "window-focus-pulse" : ""}`}
+    >
       <header className="sticky-titlebar">
         <div className="sticky-drag">
           <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">

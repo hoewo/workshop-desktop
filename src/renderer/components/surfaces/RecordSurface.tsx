@@ -75,7 +75,8 @@ export function RecordSurface({
   setRecordScopePickerOpen,
   setRecordSearchOpen,
   setRecordSearchQuery,
-  visibleRecords
+  visibleRecords,
+  windowFocusClass
 }: {
   activeRecord: PersonalRecord | null;
   archiveActiveRecord: () => void;
@@ -118,6 +119,7 @@ export function RecordSurface({
   setRecordSearchOpen: (open: boolean) => void;
   setRecordSearchQuery: (query: string) => void;
   visibleRecords: PersonalRecordMeta[];
+  windowFocusClass: string;
 }) {
   const recordHeaderContext =
     activeRecord ||
@@ -145,7 +147,7 @@ export function RecordSurface({
     <main
       className={`record-shell ${activeRecord ? "record-detail-shell" : "record-list-shell"} ${
         !activeRecord && recordListCollapsed ? "collapsed-shell" : ""
-      } ${focusPulseVisible ? "window-focus-pulse" : ""}`}
+      } ${windowFocusClass} ${focusPulseVisible ? "window-focus-pulse" : ""}`}
     >
       <header className="record-titlebar">
         <div className="sticky-drag">

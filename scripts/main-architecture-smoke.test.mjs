@@ -107,8 +107,19 @@ test("temporary confirmation bridge stays on the app-server boundary", async () 
   ]);
 
   assert.match(mainBundle, /confirmation\.open/);
+  assert.match(mainBundle, /confirmation\.request/);
+  assert.match(mainBundle, /confirmation\.status/);
+  assert.match(mainBundle, /context\.current/);
+  assert.match(mainBundle, /record\.open/);
+  assert.match(mainBundle, /record\.annotate/);
+  assert.match(mainBundle, /record\.updateBody/);
+  assert.match(mainBundle, /confirmation-requests/);
   assert.match(mainBundle, /confirmation:confirm/);
   assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 confirmation\.open/);
+  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 confirmation\.request/);
+  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 context\.current/);
+  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 record\.open/);
+  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 record\.annotate/);
   assert.match(confirmationPreload, /workshopConfirmation/);
   assert.match(confirmationPreload, /confirmation:cancel/);
 });
@@ -275,7 +286,7 @@ test("PersonalRecordStore keeps one visible record per task and preserves origin
     assert.notEqual(fresh.id, first.id);
     assert.equal((await store.listVisible()).length, 1);
 
-    await store.save({
+    const archived = await store.save({
       id: fresh.id,
       bodyMarkdown: "# Archived",
       scopeType: "task",
@@ -287,6 +298,25 @@ test("PersonalRecordStore keeps one visible record per task and preserves origin
       origin: "agent"
     });
     assert.equal((await store.listVisible()).length, 0);
+
+    const annotated = await store.annotate({
+      id: fresh.id,
+      annotation: {
+        namespace: "codex.archive整理",
+        aiTitle: "Archived task note",
+        type: "implemented_bugfix",
+        summary: "This archived note is only needed as historical context.",
+        status: "handled",
+        confidence: 0.91
+      }
+    });
+    assert.equal(annotated.updatedAt, archived.updatedAt);
+    assert.equal(annotated.annotations?.[0]?.namespace, "codex.archive整理");
+    assert.equal(annotated.annotations?.[0]?.confidence, 0.91);
+    assert.equal((await store.listVisible()).length, 0);
+    const annotatedBody = await store.get(fresh.id);
+    assert.equal(annotatedBody?.bodyMarkdown, "# Archived");
+    assert.equal(annotatedBody?.annotations?.[0]?.type, "implemented_bugfix");
 
     await store.delete(first.id);
     assert.equal(await store.get(first.id), null);

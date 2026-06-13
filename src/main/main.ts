@@ -24,11 +24,15 @@ import { PersonalRecordStore, normalizeRecordScope } from "./recordStore";
 import { AppUpdateService } from "./updateService";
 import { WorkshopApiService } from "./workshopApiService";
 import type {
+  AnnotatePersonalRecordRequest,
   ApiResponse,
   AppUpdateStatus,
+  AsyncConfirmationMeta,
+  AsyncConfirmationRequest,
   AppConfig,
   CodexRunBackend,
   CodexRunMeta,
+  ConfirmationAction,
   CreateTaskRequest,
   ListProjectsRequest,
   ListTasksRequest,
@@ -56,6 +60,7 @@ import type {
   TasksPayload,
   UpdateTaskRequest,
   VerificationRequest,
+  WorkshopCurrentContext,
   WorkshopRefreshEvent,
   WindowFitRequest
 } from "../shared/types";
@@ -89,6 +94,8 @@ const NOTE_ARRANGE_MARGIN = 12;
 const NOTE_ARRANGE_GAP = 12;
 const NOTE_ARRANGE_LIST_MIN_HEIGHT = 180;
 const NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT = 56;
+const CURRENT_CONTEXT_STALE_MS = 5 * 60 * 1000;
+const CONFIRMATION_REQUESTS_LIMIT = 100;
 const customUserDataPath = process.env.WORKSHOP_DESKTOP_USER_DATA?.trim();
 
 if (customUserDataPath) {
@@ -113,6 +120,9 @@ let registeredNewPersonalRecordShortcut = false;
 let appServer: http.Server | null = null;
 let appServerInfo: { port: number; token: string; agentToken: string } | null = null;
 let appUpdateService: AppUpdateService | null = null;
+let currentWorkshopContext: WorkshopCurrentContext = { kind: "none" };
+let confirmationRequestsQueue: Promise<unknown> = Promise.resolve();
+let selectedNoteWindowId: number | null = null;
 const temporaryConfirmationWindows = new Map<
   number,
   {
@@ -123,6 +133,8 @@ const temporaryConfirmationWindows = new Map<
 
 const configPath = () => path.join(app.getPath("userData"), "config.json");
 const appServerConnectionPath = () => path.join(app.getPath("userData"), "app-server.json");
+const confirmationRequestsDirPath = () => path.join(app.getPath("userData"), "confirmation-requests");
+const confirmationRequestsIndexPath = () => path.join(confirmationRequestsDirPath(), "index.json");
 const personalRecordStore = new PersonalRecordStore(() => app.getPath("userData"));
 const workshopApiService = new WorkshopApiService({ readConfig, saveConfig });
 
@@ -326,6 +338,10 @@ function createWindow() {
     setTimeout(() => hideTrayAndPreviewIfUnfocused(), 140);
   });
 
+  win.on("focus", () => {
+    markCurrentWorkshopContext({ kind: "tray", surface: "tray" });
+  });
+
   win.on("close", (event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -409,6 +425,169 @@ function safeWindowText(value: unknown, maxLength = 120) {
 
   const text = value.trim();
   return text && text.length <= maxLength ? text : null;
+}
+
+function markCurrentWorkshopContext(context: Omit<WorkshopCurrentContext, "focusedAt" | "stale">) {
+  currentWorkshopContext = {
+    ...context,
+    focusedAt: new Date().toISOString()
+  };
+}
+
+function getCurrentWorkshopContext(): WorkshopCurrentContext {
+  if (!currentWorkshopContext.focusedAt || currentWorkshopContext.kind === "none") {
+    return currentWorkshopContext;
+  }
+
+  const focusedAt = new Date(currentWorkshopContext.focusedAt).getTime();
+  const stale = Number.isNaN(focusedAt) || Date.now() - focusedAt > CURRENT_CONTEXT_STALE_MS;
+  return { ...currentWorkshopContext, stale };
+}
+
+function contextMatchesCurrent(context: Omit<WorkshopCurrentContext, "focusedAt" | "stale">) {
+  if (currentWorkshopContext.kind !== context.kind || currentWorkshopContext.surface !== context.surface) {
+    return false;
+  }
+
+  if (context.recordId && currentWorkshopContext.recordId !== context.recordId) {
+    return false;
+  }
+
+  if (context.taskId !== undefined && currentWorkshopContext.taskId !== context.taskId) {
+    return false;
+  }
+
+  if (context.projectId !== undefined && currentWorkshopContext.projectId !== context.projectId) {
+    return false;
+  }
+
+  return true;
+}
+
+function markFallbackContextAfterSurfaceClose() {
+  if (windowRef && !windowRef.isDestroyed() && windowRef.isVisible()) {
+    markCurrentWorkshopContext({ kind: "tray", surface: "tray" });
+    return;
+  }
+
+  currentWorkshopContext = { kind: "none" };
+}
+
+function clearCurrentWorkshopContextIfMatches(context: Omit<WorkshopCurrentContext, "focusedAt" | "stale">) {
+  if (contextMatchesCurrent(context)) {
+    markFallbackContextAfterSurfaceClose();
+  }
+}
+
+function stickyTargetContext(target: NormalizedStickyTarget): Omit<WorkshopCurrentContext, "focusedAt" | "stale"> {
+  if (target.taskId !== null) {
+    return {
+      kind: "task",
+      surface: "sticky",
+      ...(target.projectId !== null ? { projectId: target.projectId } : {}),
+      taskId: target.taskId
+    };
+  }
+
+  if (target.projectId !== null) {
+    return {
+      kind: "project",
+      surface: "sticky",
+      projectId: target.projectId
+    };
+  }
+
+  return { kind: "none", surface: "sticky" };
+}
+
+function recordTargetContext(target: NormalizedRecordTarget): Omit<WorkshopCurrentContext, "focusedAt" | "stale"> {
+  if (target.noteId) {
+    return {
+      kind: "record",
+      surface: "record",
+      recordId: target.noteId,
+      ...(target.projectId !== null ? { projectId: target.projectId } : {}),
+      ...(target.projectName ? { projectName: target.projectName } : {}),
+      ...(target.taskId !== null ? { taskId: target.taskId } : {}),
+      ...(target.taskTitle ? { taskTitle: target.taskTitle } : {})
+    };
+  }
+
+  if (target.draft) {
+    return {
+      kind: "record-draft",
+      surface: "record",
+      ...(target.projectId !== null ? { projectId: target.projectId } : {}),
+      ...(target.projectName ? { projectName: target.projectName } : {}),
+      ...(target.taskId !== null ? { taskId: target.taskId } : {}),
+      ...(target.taskTitle ? { taskTitle: target.taskTitle } : {})
+    };
+  }
+
+  if (target.scopeType === "project" || target.projectId !== null) {
+    return {
+      kind: "project",
+      surface: "record",
+      ...(target.projectId !== null ? { projectId: target.projectId } : {}),
+      ...(target.projectName ? { projectName: target.projectName } : {})
+    };
+  }
+
+  return { kind: "none", surface: "record" };
+}
+
+function markStickyWindowContext(win: BrowserWindow) {
+  const target = stickyWindowTargets.get(win);
+  if (target) {
+    markCurrentWorkshopContext(stickyTargetContext(target));
+  }
+  selectNoteWindow(win);
+}
+
+function markRecordWindowContext(win: BrowserWindow) {
+  const target = recordWindowTargets.get(win);
+  if (target) {
+    markCurrentWorkshopContext(recordTargetContext(target));
+  }
+  selectNoteWindow(win);
+}
+
+function sendNoteWindowFocusState(win: BrowserWindow, selected: boolean) {
+  if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("window:focusState", { selected });
+  }
+}
+
+function broadcastSelectedNoteWindow() {
+  for (const win of [...stickyWindows, ...recordWindows]) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) {
+      continue;
+    }
+    sendNoteWindowFocusState(win, win.webContents.id === selectedNoteWindowId);
+  }
+}
+
+function selectNoteWindow(win: BrowserWindow) {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) {
+    return;
+  }
+  selectedNoteWindowId = win.webContents.id;
+  broadcastSelectedNoteWindow();
+}
+
+function clearSelectedNoteWindow(win: BrowserWindow) {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) {
+    return;
+  }
+  clearSelectedNoteWindowById(win.webContents.id);
+}
+
+function clearSelectedNoteWindowById(webContentsId: number) {
+  if (selectedNoteWindowId !== webContentsId) {
+    return;
+  }
+  selectedNoteWindowId = null;
+  broadcastSelectedNoteWindow();
 }
 
 interface AppServerRpcRequest {
@@ -543,6 +722,51 @@ function normalizeAppServerRecordGetParams(params: unknown) {
   return { id };
 }
 
+function normalizeAnnotationConfidence(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? clamp(value, 0, 1) : undefined;
+}
+
+function normalizeAppServerRecordAnnotationItem(value: unknown): AnnotatePersonalRecordRequest {
+  const item = isPlainObject(value) ? value : {};
+  const id = safeWindowText(item.id, 120);
+  const rawAnnotation = isPlainObject(item.annotation) ? item.annotation : item;
+  const namespace = safeWindowText(rawAnnotation.namespace, 80);
+  if (!id) {
+    throw new Error("record.annotate 需要 id");
+  }
+  if (!namespace) {
+    throw new Error("record.annotate 需要 annotation.namespace");
+  }
+
+  const aiTitle = safeWindowText(rawAnnotation.aiTitle, 160) ?? undefined;
+  const type = safeWindowText(rawAnnotation.type, 80) ?? undefined;
+  const summary = safeWindowText(rawAnnotation.summary, 800) ?? undefined;
+  const status = safeWindowText(rawAnnotation.status, 80) ?? undefined;
+  const confidence = normalizeAnnotationConfidence(rawAnnotation.confidence);
+
+  return {
+    id,
+    annotation: {
+      namespace,
+      ...(aiTitle ? { aiTitle } : {}),
+      ...(type ? { type } : {}),
+      ...(summary ? { summary } : {}),
+      ...(status ? { status } : {}),
+      ...(confidence !== undefined ? { confidence } : {})
+    }
+  };
+}
+
+function normalizeAppServerRecordAnnotateParams(params: unknown) {
+  const value = isPlainObject(params) ? params : {};
+  const rawAnnotations = Array.isArray(value.annotations) ? value.annotations : [value];
+  const annotations = rawAnnotations.map(normalizeAppServerRecordAnnotationItem);
+  if (annotations.length === 0) {
+    throw new Error("record.annotate 需要 annotations");
+  }
+  return { annotations };
+}
+
 function normalizeTemporaryConfirmationParams(params: unknown): Required<TemporaryConfirmationRequest> {
   const value = isPlainObject(params) ? params : {};
   const html = typeof value.html === "string" ? value.html : "";
@@ -555,6 +779,95 @@ function normalizeTemporaryConfirmationParams(params: unknown): Required<Tempora
     html,
     width: typeof value.width === "number" && Number.isFinite(value.width) ? clamp(Math.trunc(value.width), 420, 1100) : 760,
     height: typeof value.height === "number" && Number.isFinite(value.height) ? clamp(Math.trunc(value.height), 320, 900) : 620
+  };
+}
+
+function normalizeConfirmationAction(value: unknown): ConfirmationAction | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+
+  switch (value.type) {
+    case "record.updateBody": {
+      const recordId = safeWindowText(value.recordId, 120);
+      if (!recordId) {
+        throw new Error("record.updateBody 需要 recordId");
+      }
+      if (typeof value.bodyMarkdown !== "string") {
+        throw new Error("record.updateBody 需要 bodyMarkdown");
+      }
+      return { type: "record.updateBody", recordId, bodyMarkdown: value.bodyMarkdown };
+    }
+    case "record.appendBody": {
+      const recordId = safeWindowText(value.recordId, 120);
+      const markdown = typeof value.markdown === "string" ? value.markdown.trim() : "";
+      if (!recordId) {
+        throw new Error("record.appendBody 需要 recordId");
+      }
+      if (!markdown) {
+        throw new Error("record.appendBody 需要 markdown");
+      }
+      return { type: "record.appendBody", recordId, markdown };
+    }
+    case "record.create": {
+      const params = normalizeAppServerRecordParams(value.record);
+      if (!params.bodyMarkdown.trim()) {
+        throw new Error("record.create 需要 title 或 bodyMarkdown");
+      }
+      return {
+        type: "record.create",
+        record: {
+          ...(params.title ? { title: params.title } : {}),
+          bodyMarkdown: params.bodyMarkdown,
+          scopeType: params.scopeType,
+          projectId: params.projectId,
+          projectName: params.projectName,
+          taskId: params.taskId,
+          taskTitle: params.taskTitle,
+          open: params.open
+        }
+      };
+    }
+    case "record.annotate": {
+      const { annotations } = normalizeAppServerRecordAnnotateParams({ annotations: value.annotations });
+      return { type: "record.annotate", annotations };
+    }
+    case "task.create": {
+      const projectId = normalizePositiveNumber(value.projectId, "项目 ID");
+      const content = safeWindowText(value.content, 4000);
+      if (!content) {
+        throw new Error("task.create 需要 content");
+      }
+      return { type: "task.create", projectId, content };
+    }
+    case "task.updateState": {
+      const taskId = normalizePositiveNumber(value.taskId, "任务 ID");
+      const projectId = normalizePositiveNumber(value.projectId, "项目 ID");
+      if (!isTaskState(value.state)) {
+        throw new Error("task.updateState 需要有效 state");
+      }
+      return { type: "task.updateState", taskId, projectId, state: value.state };
+    }
+    default:
+      throw new Error("不支持的确认动作");
+  }
+}
+
+function normalizeAsyncConfirmationParams(params: unknown): Required<TemporaryConfirmationRequest> & Pick<AsyncConfirmationRequest, "action"> {
+  const value = isPlainObject(params) ? params : {};
+  return {
+    ...normalizeTemporaryConfirmationParams(value),
+    action: normalizeConfirmationAction(value.action)
+  };
+}
+
+function normalizeConfirmationStatusParams(params: unknown) {
+  const value = isPlainObject(params) ? params : {};
+  const requestId = safeWindowText(value.requestId ?? value.id, 120) ?? undefined;
+  const rawLimit = typeof value.limit === "number" && Number.isFinite(value.limit) ? Math.trunc(value.limit) : undefined;
+  return {
+    requestId,
+    limit: rawLimit ? clamp(rawLimit, 1, CONFIRMATION_REQUESTS_LIMIT) : 20
   };
 }
 
@@ -737,6 +1050,190 @@ function updateCodexRun(runId: string, patch: Partial<CodexRunMeta>) {
   return mutateCodexRuns((runs) => runs.map((run) => (run.runId === runId ? { ...run, ...patch } : run)));
 }
 
+async function readConfirmationRequests(): Promise<AsyncConfirmationMeta[]> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(confirmationRequestsIndexPath(), "utf8"));
+    return Array.isArray(parsed) ? (parsed as AsyncConfirmationMeta[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function mutateConfirmationRequests(mutate: (requests: AsyncConfirmationMeta[]) => AsyncConfirmationMeta[]): Promise<AsyncConfirmationMeta[]> {
+  const next = confirmationRequestsQueue.then(async () => {
+    const requests = mutate(await readConfirmationRequests()).slice(0, CONFIRMATION_REQUESTS_LIMIT);
+    await fs.mkdir(confirmationRequestsDirPath(), { recursive: true });
+    const tempPath = `${confirmationRequestsIndexPath()}.tmp`;
+    await fs.writeFile(tempPath, JSON.stringify(requests, null, 2), "utf8");
+    await fs.rename(tempPath, confirmationRequestsIndexPath());
+    return requests;
+  });
+  confirmationRequestsQueue = next.catch(() => undefined);
+  return next;
+}
+
+function upsertConfirmationRequest(request: AsyncConfirmationMeta) {
+  return mutateConfirmationRequests((requests) => [request, ...requests.filter((existing) => existing.requestId !== request.requestId)]);
+}
+
+async function updateConfirmationRequest(requestId: string, patch: Partial<AsyncConfirmationMeta>) {
+  let updated: AsyncConfirmationMeta | null = null;
+  await mutateConfirmationRequests((requests) =>
+    requests.map((request) => {
+      if (request.requestId !== requestId) {
+        return request;
+      }
+      updated = { ...request, ...patch };
+      return updated;
+    })
+  );
+  return updated;
+}
+
+async function listConfirmationRequestsForAppServer(params: unknown) {
+  const { requestId, limit } = normalizeConfirmationStatusParams(params);
+  const requests = await readConfirmationRequests();
+  if (requestId) {
+    return { request: requests.find((request) => request.requestId === requestId) ?? null };
+  }
+  return { requests: requests.slice(0, limit), total: requests.length };
+}
+
+function buildRecordSaveRequest(record: PersonalRecord, bodyMarkdown: string): SavePersonalRecordRequest {
+  return {
+    id: record.id,
+    bodyMarkdown,
+    scopeType: record.scopeType,
+    status: record.status,
+    origin: record.origin,
+    projectId: record.projectId,
+    projectName: record.projectName,
+    taskId: record.taskId,
+    taskTitle: record.taskTitle,
+    promotedTaskId: record.promotedTaskId
+  };
+}
+
+async function executeConfirmationAction(action?: ConfirmationAction): Promise<unknown> {
+  if (!action) {
+    return null;
+  }
+
+  if (action.type === "record.updateBody") {
+    const record = await getPersonalRecord(action.recordId);
+    if (!record) {
+      throw new Error(`记录不存在：${action.recordId}`);
+    }
+    return { record: await savePersonalRecord(buildRecordSaveRequest(record, action.bodyMarkdown)) };
+  }
+
+  if (action.type === "record.appendBody") {
+    const record = await getPersonalRecord(action.recordId);
+    if (!record) {
+      throw new Error(`记录不存在：${action.recordId}`);
+    }
+    const bodyMarkdown = [record.bodyMarkdown.trimEnd(), action.markdown.trim()].filter(Boolean).join("\n\n");
+    return { record: await savePersonalRecord(buildRecordSaveRequest(record, bodyMarkdown)) };
+  }
+
+  if (action.type === "record.create") {
+    const params = normalizeAppServerRecordParams(action.record);
+    const record = await savePersonalRecord({
+      bodyMarkdown: params.bodyMarkdown,
+      scopeType: params.scopeType ?? "none",
+      origin: "agent",
+      projectId: params.projectId,
+      projectName: params.projectName,
+      taskId: params.taskId,
+      taskTitle: params.taskTitle
+    });
+    if (params.open) {
+      await showPersonalRecordWindow({ noteId: record.id });
+    }
+    return { record };
+  }
+
+  if (action.type === "record.annotate") {
+    return annotateRecordsForAppServer({ annotations: action.annotations });
+  }
+
+  if (action.type === "task.create") {
+    const task = getApiResponseData<Task>(await workshopApiService.createTask({ projectId: action.projectId, content: action.content }));
+    notifyTaskChanged({
+      id: task.id,
+      projectId: action.projectId,
+      state: task.state,
+      updatedAt: task.updated_at,
+      completionAt: task.completion_at ?? null
+    });
+    return { task };
+  }
+
+  const task = getApiResponseData<Task>(await workshopApiService.updateTask({ taskId: action.taskId, state: action.state }));
+  notifyTaskChanged({
+    id: action.taskId,
+    projectId: action.projectId,
+    state: action.state,
+    updatedAt: task.updated_at,
+    completionAt: task.completion_at ?? null
+  });
+  return { task };
+}
+
+async function finalizeAsyncConfirmationRequest(
+  requestId: string,
+  result: TemporaryConfirmationResult,
+  action?: ConfirmationAction
+) {
+  if (!result.confirmed) {
+    await updateConfirmationRequest(requestId, {
+      status: result.reason,
+      result,
+      completedAt: new Date().toISOString()
+    });
+    return;
+  }
+
+  try {
+    const actionResult = await executeConfirmationAction(action);
+    await updateConfirmationRequest(requestId, {
+      status: "confirmed",
+      result: actionResult ?? result,
+      completedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    await updateConfirmationRequest(requestId, {
+      status: "failed",
+      result,
+      error: error instanceof Error ? error.message : "确认动作执行失败",
+      completedAt: new Date().toISOString()
+    });
+  }
+}
+
+function closeTemporaryConfirmationWindows() {
+  for (const state of [...temporaryConfirmationWindows.values()]) {
+    state.settle({ confirmed: false, reason: "closed" });
+  }
+}
+
+// 应用退出时可能来不及等待窗口关闭回写；启动时把遗留 pending 确认请求收尾。
+function reconcileConfirmationRequestsOnStartup() {
+  const completedAt = new Date().toISOString();
+  return mutateConfirmationRequests((requests) =>
+    requests.map((request) =>
+      request.status === "pending"
+        ? {
+            ...request,
+            status: "closed",
+            result: { confirmed: false, reason: "closed" },
+            completedAt
+          }
+        : request
+    )
+  );
+}
+
 // 应用上次退出时仍在运行的 run 已无法追踪，标记为中断。
 function reconcileCodexRunsOnStartup() {
   return mutateCodexRuns((runs) => runs.map((run) => (run.status === "running" ? { ...run, status: "interrupted" } : run)));
@@ -883,11 +1380,32 @@ type AppServerScope = "full" | "agent";
 
 async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
   const rpc = isPlainObject(payload) ? (payload as Partial<AppServerRpcRequest>) : {};
+  if (rpc.method === "context.current") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 context.current");
+    }
+    return { context: getCurrentWorkshopContext() };
+  }
+
   if (rpc.method === "confirmation.open") {
     if (scope !== "full") {
       throw new Error("当前 token 只允许 record.create，不能调用 confirmation.open");
     }
     return openTemporaryConfirmationWindow(rpc.params);
+  }
+
+  if (rpc.method === "confirmation.request") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 confirmation.request");
+    }
+    return requestAsyncConfirmationWindow(rpc.params);
+  }
+
+  if (rpc.method === "confirmation.status") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 confirmation.status");
+    }
+    return listConfirmationRequestsForAppServer(rpc.params);
   }
 
   if (rpc.method === "codex.send") {
@@ -932,6 +1450,20 @@ async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
       throw new Error("当前 token 只允许 record.create，不能调用 record.get");
     }
     return getRecordForAppServer(rpc.params);
+  }
+
+  if (rpc.method === "record.open") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 record.open");
+    }
+    return openRecordForAppServer(rpc.params);
+  }
+
+  if (rpc.method === "record.annotate") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 record.annotate");
+    }
+    return annotateRecordsForAppServer(rpc.params);
   }
 
   if (rpc.method === "project.list") {
@@ -1161,52 +1693,86 @@ function resolveTemporaryConfirmation(sender: WebContents, result: TemporaryConf
   return result;
 }
 
+function openTemporaryConfirmationWindowWithHandler(
+  request: Required<TemporaryConfirmationRequest>,
+  onSettled: (result: TemporaryConfirmationResult) => void
+) {
+  const win = new BrowserWindow({
+    width: request.width,
+    height: request.height,
+    minWidth: 420,
+    minHeight: 320,
+    show: false,
+    frame: true,
+    resizable: true,
+    movable: true,
+    fullscreenable: false,
+    skipTaskbar: false,
+    title: request.title,
+    backgroundColor: "#f6f6f2",
+    ...windowIconOption(),
+    webPreferences: {
+      preload: path.join(__dirname, "confirmationPreload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  const webContentsId = win.webContents.id;
+  let settled = false;
+  const settle = (result: TemporaryConfirmationResult) => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    temporaryConfirmationWindows.delete(webContentsId);
+    if (!win.isDestroyed()) {
+      win.close();
+    }
+    onSettled(result);
+  };
+
+  temporaryConfirmationWindows.set(webContentsId, { win, settle });
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.on("closed", () => settle({ confirmed: false, reason: "closed" }));
+  win.once("ready-to-show", () => showInCurrentWorkspace(win));
+  void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderTemporaryConfirmationHtml(request))}`).catch(() => {
+    settle({ confirmed: false, reason: "closed" });
+  });
+  return win;
+}
+
 function openTemporaryConfirmationWindow(params: unknown): Promise<TemporaryConfirmationResult> {
   const request = normalizeTemporaryConfirmationParams(params);
   return new Promise((resolve) => {
-    const win = new BrowserWindow({
-      width: request.width,
-      height: request.height,
-      minWidth: 420,
-      minHeight: 320,
-      show: false,
-      frame: true,
-      resizable: true,
-      movable: true,
-      fullscreenable: false,
-      skipTaskbar: false,
-      title: request.title,
-      backgroundColor: "#f6f6f2",
-      ...windowIconOption(),
-      webPreferences: {
-        preload: path.join(__dirname, "confirmationPreload.js"),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true
-      }
-    });
-    const webContentsId = win.webContents.id;
-    let settled = false;
-    const settle = (result: TemporaryConfirmationResult) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      temporaryConfirmationWindows.delete(webContentsId);
-      if (!win.isDestroyed()) {
-        win.close();
-      }
-      resolve(result);
-    };
-
-    temporaryConfirmationWindows.set(webContentsId, { win, settle });
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    win.on("closed", () => settle({ confirmed: false, reason: "closed" }));
-    win.once("ready-to-show", () => showInCurrentWorkspace(win));
-    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderTemporaryConfirmationHtml(request))}`).catch(() => {
-      settle({ confirmed: false, reason: "closed" });
-    });
+    openTemporaryConfirmationWindowWithHandler(request, resolve);
   });
+}
+
+async function requestAsyncConfirmationWindow(params: unknown) {
+  const request = normalizeAsyncConfirmationParams(params);
+  const now = new Date().toISOString();
+  const meta: AsyncConfirmationMeta = {
+    requestId: `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`,
+    title: request.title,
+    status: "pending",
+    ...(request.action ? { actionType: request.action.type } : {}),
+    createdAt: now
+  };
+  await upsertConfirmationRequest(meta);
+  try {
+    openTemporaryConfirmationWindowWithHandler(request, (result) => {
+      void finalizeAsyncConfirmationRequest(meta.requestId, result, request.action);
+    });
+  } catch (error) {
+    await updateConfirmationRequest(meta.requestId, {
+      status: "failed",
+      error: error instanceof Error ? error.message : "确认窗口创建失败",
+      completedAt: new Date().toISOString()
+    });
+    throw error;
+  }
+  return { request: meta };
 }
 
 interface NormalizedStickyTarget {
@@ -1242,13 +1808,21 @@ async function createStickyWindow(target: NormalizedStickyTarget) {
     }
   });
 
+  const webContentsId = win.webContents.id;
+  const context = stickyTargetContext(target);
   win.on("closed", () => {
     stickyWindows.delete(win);
     stickyWindowTargets.delete(win);
+    clearSelectedNoteWindowById(webContentsId);
+    clearCurrentWorkshopContextIfMatches(context);
   });
 
   stickyWindows.add(win);
   stickyWindowTargets.set(win, target);
+  win.on("focus", () => markStickyWindowContext(win));
+  win.webContents.once("did-finish-load", () => {
+    sendNoteWindowFocusState(win, win.webContents.id === selectedNoteWindowId);
+  });
   loadRenderer(win, { surface: "sticky", projectId: target.projectId, taskId: target.taskId });
   return win;
 }
@@ -1342,6 +1916,7 @@ async function showStickyWindow(target?: StickyTarget | number) {
   const existingWin = findExistingStickyWindow(nextTarget, display.id);
   if (existingWin) {
     focusExistingNoteWindow(existingWin);
+    markStickyWindowContext(existingWin);
     return;
   }
 
@@ -1368,6 +1943,7 @@ async function showStickyWindow(target?: StickyTarget | number) {
   hideTaskPreviewWindow();
   windowRef?.hide();
   showInCurrentWorkspace(win);
+  markStickyWindowContext(win);
 }
 
 async function listPersonalRecords() {
@@ -1413,6 +1989,25 @@ async function listRecordsForAppServer(params: unknown) {
 async function getRecordForAppServer(params: unknown) {
   const { id } = normalizeAppServerRecordGetParams(params);
   return { record: await getPersonalRecord(id) };
+}
+
+async function openRecordForAppServer(params: unknown) {
+  const { id } = normalizeAppServerRecordGetParams(params);
+  const record = await getPersonalRecord(id);
+  if (!record) {
+    throw new Error(`记录不存在：${id}`);
+  }
+  await showPersonalRecordWindow({ noteId: id });
+  return { record };
+}
+
+async function annotateRecordsForAppServer(params: unknown) {
+  const { annotations } = normalizeAppServerRecordAnnotateParams(params);
+  const records: PersonalRecordMeta[] = [];
+  for (const annotation of annotations) {
+    records.push(await annotatePersonalRecord(annotation));
+  }
+  return { records, total: records.length };
 }
 
 async function listProjectsForAppServer(params: unknown) {
@@ -1472,6 +2067,12 @@ async function getPersonalRecord(id: string): Promise<PersonalRecord | null> {
 
 async function savePersonalRecord(request: SavePersonalRecordRequest): Promise<PersonalRecord> {
   const record = await personalRecordStore.save(request);
+  notifyRecordsChanged({ id: record.id, status: record.status, updatedAt: record.updatedAt });
+  return record;
+}
+
+async function annotatePersonalRecord(request: AnnotatePersonalRecordRequest): Promise<PersonalRecordMeta> {
+  const record = await personalRecordStore.annotate(request);
   notifyRecordsChanged({ id: record.id, status: record.status, updatedAt: record.updatedAt });
   return record;
 }
@@ -1594,13 +2195,21 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
     }
   });
 
+  const webContentsId = win.webContents.id;
+  const context = recordTargetContext(target);
   win.on("closed", () => {
     recordWindows.delete(win);
     recordWindowTargets.delete(win);
+    clearSelectedNoteWindowById(webContentsId);
+    clearCurrentWorkshopContextIfMatches(context);
   });
 
   recordWindows.add(win);
   recordWindowTargets.set(win, target);
+  win.on("focus", () => markRecordWindowContext(win));
+  win.webContents.once("did-finish-load", () => {
+    sendNoteWindowFocusState(win, win.webContents.id === selectedNoteWindowId);
+  });
   loadRenderer(win, {
     surface: "record",
     noteId: target.noteId,
@@ -1645,6 +2254,9 @@ function createSettingsWindow() {
       settingsWindowRef = null;
     }
   });
+  win.on("focus", () => {
+    markCurrentWorkshopContext({ kind: "settings", surface: "settings" });
+  });
 
   loadRenderer(win, { surface: "settings" });
   return win;
@@ -1681,6 +2293,9 @@ function createManualWindow() {
       manualWindowRef = null;
     }
   });
+  win.on("focus", () => {
+    markCurrentWorkshopContext({ kind: "manual", surface: "manual" });
+  });
 
   loadRenderer(win, { surface: "manual" });
   return win;
@@ -1716,6 +2331,9 @@ function createUpdateWindow() {
     if (updateWindowRef === win) {
       updateWindowRef = null;
     }
+  });
+  win.on("focus", () => {
+    markCurrentWorkshopContext({ kind: "update", surface: "update" });
   });
 
   loadRenderer(win, { surface: "update" });
@@ -1791,6 +2409,7 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
   const existingWin = findExistingRecordWindow(nextTarget, display.id);
   if (existingWin) {
     focusExistingNoteWindow(existingWin);
+    markRecordWindowContext(existingWin);
     return;
   }
 
@@ -1830,6 +2449,7 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
   hideTaskPreviewWindow();
   windowRef?.hide();
   showInCurrentWorkspace(win);
+  markRecordWindowContext(win);
 }
 
 function syncRecordWindowTarget(sender: WebContents, record: PersonalRecord) {
@@ -1853,6 +2473,9 @@ function syncRecordWindowTarget(sender: WebContents, record: PersonalRecord) {
     x: null,
     y: null
   });
+  if (win.isFocused()) {
+    markRecordWindowContext(win);
+  }
 }
 
 async function showNewPersonalRecordWindow() {
@@ -2413,11 +3036,13 @@ function showWindow(source: WindowOpenSource = "tray") {
   hideTaskPreviewWindow();
   if (source === "tray" && positionWindowNearTray(windowRef)) {
     showInCurrentWorkspace(windowRef);
+    markCurrentWorkshopContext({ kind: "tray", surface: "tray" });
     return;
   }
 
   positionWindowOnScreen(windowRef);
   showInCurrentWorkspace(windowRef);
+  markCurrentWorkshopContext({ kind: "tray", surface: "tray" });
 }
 
 function toggleWindow() {
@@ -2831,6 +3456,7 @@ app.on("second-instance", () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  closeTemporaryConfirmationWindows();
 });
 
 app.on("will-quit", () => {
@@ -2849,6 +3475,7 @@ app.whenReady().then(async () => {
   await startAppServer().catch((error) => {
     console.warn(error instanceof Error ? error.message : "app server failed to start");
   });
+  await reconcileConfirmationRequestsOnStartup().catch(() => undefined);
   await reconcileCodexRunsOnStartup().catch(() => undefined);
   applyDockVisibility(config);
   configureApplicationMenu();

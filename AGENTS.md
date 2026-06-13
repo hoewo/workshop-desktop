@@ -33,6 +33,7 @@
 - AI 可以在任务完成、讨论形成稳定结论、或用户要求记录时新增一条记录。
 - AI 默认不编辑、删除或改写用户已有记录。
 - AI 默认不创建 Workshop 任务；用户可以在 Workshop Desktop 中阅读、编辑记录，并按需要使用现有“转为任务”能力。
+- 用户在 Workshop 临时确认页确认后，Workshop 可以执行已声明的记录正文更新、记录创建、记录标注、任务创建或任务状态更新；删除、合并和重组多条记录不属于默认动作。
 - 记录里可以写迭代草稿、任务草稿、决策草稿或 repo fact 候选，但这些内容仍然只是记录内容。
 - 只有用户把记录转为任务后，它才进入任务体系。
 - 只有 agent 修改 repo 文件并经过本 repo 文档边界检查后，内容才成为 repo fact。
@@ -50,7 +51,7 @@ AI 创建记录时默认使用短记录。记录面向人类后续阅读和编�
 
 ## AI 记录方式
 
-正式记录必须通过正在运行的 Workshop Desktop app server/CLI 创建。当前记录写入能力只承诺新增记录，不承诺编辑记录或创建任务。把任务或记录发送给 Codex 执行时，应通过 Workshop Desktop 的 `codex.send` 服务层能力，不要让客户端直接打开 Terminal。
+正式记录必须通过正在运行的 Workshop Desktop app server/CLI 创建。新增记录可直接使用 `record.create`；编辑记录正文或创建任务必须先用 `confirmation.request` 打开 Workshop 临时确认页，用户确认后由 Workshop 执行动作。把任务或记录发送给 Codex 执行时，应通过 Workshop Desktop 的 `codex.send` 服务层能力，不要让客户端直接打开 Terminal。
 
 本 repo 的 Workshop 项目 ID 是 `98`，项目名是 `workshop-desktop`。创建项目记录时使用：
 

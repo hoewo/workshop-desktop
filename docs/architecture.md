@@ -31,6 +31,7 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 - 个人记录是本地桌面数据，存储在 Electron `userData/personal-records/`。
 - app server 连接信息存储在 Electron `userData/app-server.json`，包含本机端口和本次启动生成的 token。
 - Codex 运行状态表存储在 Electron `userData/codex-runs/index.json`；exec 后端的输出文件也在该目录。Codex 线程本体归 codex 所有，落盘在 `~/.codex/sessions`。
+- 异步确认请求状态存储在 Electron `userData/confirmation-requests/index.json`。它用于记录一次确认窗口的等待、确认、取消或失败状态，不是记录、任务或项目事实。
 - release、build、截图和依赖输出都是生成物，不进入 Git。
 
 ## API 边界
@@ -66,13 +67,18 @@ NebulaAuth 调用使用：
 
 当前能力：
 
+- `context.current`：读取桌面端最近聚焦的 Workshop 上下文，例如主面板、项目、任务、记录或记录草稿。该上下文用于帮助 Codex 理解“这条记录/当前任务”指向什么对象。
 - `record.create`：新增一条个人记录、项目记录或任务记录。通过 bridge 创建的记录带 `origin: agent`。
 - `record.create` 支持 `open: true`，由桌面端创建记录后打开对应记录窗口。
 - `record.list` / `record.get`：读取本地可见记录列表和单条记录正文。
+- `record.open`：按 recordId 请求桌面端打开已有记录窗口。
+- `record.annotate`：给已有记录写入 AI 整理标注。标注存储在记录 metadata 中，不改写正文，也不改变记录状态。
 - `project.list`：读取当前登录用户可访问的 Workshop 项目。
 - `task.list`：按项目读取 Workshop 任务。
 - `codex.send`：把一个 Workshop 任务或记录交给本地 Codex 执行。执行目录来自该 Workshop 项目的本机目录绑定。
 - `confirmation.open`：打开一个由调用方提供 HTML 的临时确认窗口。HTML 作为静态内容渲染，Workshop 外壳提供确认/取消按钮并把结果返回给调用方。
+- `confirmation.request`：打开异步临时确认窗口并立即返回 `requestId`。用户确认后，Workshop 在主进程执行请求中声明的记录或任务动作；调用方可稍后读取状态。
+- `confirmation.status`：读取异步确认请求的最近状态，或按 `requestId` 查询单条请求。
 - 执行默认走桌面端自启的 `codex app-server`（线程出现在 Codex app 对应项目下，状态进运行表）；`backend: "exec"` 时退回静默 `codex exec`（D-009）。客户端不直接打开 Terminal，也不直接拼接本机命令。
 - 派发不包装：turn 输入只有用户内容，不附带任何说明或来源标注。回写通道、token 限制、文档纪律和项目 ID 全部由目标项目的 `AGENTS.md` 声明——只有声明了 Workshop 派发段落的项目才有回写。运行与任务/记录的关联由运行状态表持有，不进 prompt。
 
@@ -80,9 +86,9 @@ NebulaAuth 调用使用：
 
 - 外部进程直接写 `userData/personal-records/` 作为正式能力。
 - 远端网络访问 app server。
-- 受限 token 调用 `record.create` 以外的方法（包括读取方法和 `codex.send`）。
+- 受限 token 调用 `record.create` 以外的方法（包括读取方法、`context.current`、`record.open`、`record.annotate`、`confirmation.request` 和 `codex.send`）。
 - 受限 token 打开临时确认窗口；`confirmation.open` 只允许完整 token 调用。
-- AI 自动创建远端 Workshop 任务。
+- AI 在没有用户确认的情况下自动创建远端 Workshop 任务。
 - AI 绕过用户确认把个人记录当成已接受 repo 事实。
 
 ## 交互模型

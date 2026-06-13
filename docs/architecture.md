@@ -26,10 +26,11 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 ## 数据归属
 
 - Workshop 项目和任务存在远端 Workshop API 中。
+- 开发模式和发布包默认共用同一个 Electron `userData` 目录，目录名固定为 `workshop-desktop`；`WORKSHOP_DESKTOP_USER_DATA` 仅用于显式隔离测试数据。
 - NebulaAuth token、桌面端设置和使用手册已读 revision 当前存储在 Electron `userData/config.json`。
 - 项目本地目录绑定也存储在 Electron `userData/config.json`，按 Workshop 项目 ID 记录本机路径。
 - 个人记录是本地桌面数据，存储在 Electron `userData/personal-records/`。
-- app server 连接信息存储在 Electron `userData/app-server.json`，包含本机端口和本次启动生成的 token。
+- app server 连接信息存储在 Electron `userData/app-server.json`，包含本机端口和本次启动生成的 token；CLI 优先读取稳定 `workshop-desktop` 目录，并兼容旧开发目录 `Electron` 的连接文件。
 - Codex 运行状态表存储在 Electron `userData/codex-runs/index.json`；exec 后端的输出文件也在该目录。Codex 线程本体归 codex 所有，落盘在 `~/.codex/sessions`。
 - 异步确认请求状态存储在 Electron `userData/confirmation-requests/index.json`。它用于记录一次确认窗口的等待、确认、取消或失败状态，不是记录、任务或项目事实。
 - release、build、截图和依赖输出都是生成物，不进入 Git。

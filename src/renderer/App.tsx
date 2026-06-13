@@ -1650,8 +1650,13 @@ export default function App() {
     );
   }
 
-  const noteWindowFocusClass =
-    isNoteSurface && isWindowSelected ? (isWindowFocused ? "window-selected-focus" : "window-selected-idle") : "";
+  const noteWindowFocusClass = !isNoteSurface
+    ? ""
+    : isWindowSelected
+      ? isWindowFocused
+        ? "window-selected-focus"
+        : "window-selected-idle"
+      : "window-unselected-idle";
 
   if (surface === "settings") {
     return (

@@ -50,19 +50,28 @@ Options:
 `;
 }
 
-function userDataDir() {
-  const home = os.homedir();
-  if (process.env.WORKSHOP_DESKTOP_USER_DATA) {
-    return process.env.WORKSHOP_DESKTOP_USER_DATA;
-  }
+const USER_DATA_DIR_NAME = "workshop-desktop";
+const LEGACY_DEV_USER_DATA_DIR_NAME = "Electron";
 
+function defaultUserDataDir(dirName) {
+  const home = os.homedir();
   if (process.platform === "darwin") {
-    return path.join(home, "Library", "Application Support", "workshop-desktop");
+    return path.join(home, "Library", "Application Support", dirName);
   }
   if (process.platform === "win32") {
-    return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), "workshop-desktop");
+    return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), dirName);
   }
-  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "workshop-desktop");
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), dirName);
+}
+
+function userDataDirs() {
+  if (process.env.WORKSHOP_DESKTOP_USER_DATA) {
+    return [process.env.WORKSHOP_DESKTOP_USER_DATA];
+  }
+
+  const stableDir = defaultUserDataDir(USER_DATA_DIR_NAME);
+  const legacyDevDir = defaultUserDataDir(LEGACY_DEV_USER_DATA_DIR_NAME);
+  return stableDir === legacyDevDir ? [stableDir] : [stableDir, legacyDevDir];
 }
 
 function parseArgs(argv) {
@@ -267,19 +276,23 @@ async function loadConnection() {
     return { port: envPort, token: envToken };
   }
 
-  const connectionPath = path.join(userDataDir(), "app-server.json");
-  let connection;
-  try {
-    connection = JSON.parse(await fs.readFile(connectionPath, "utf8"));
-  } catch {
-    throw new Error(`Workshop Desktop app server is not running or cannot be found at ${connectionPath}`);
+  const connectionPaths = userDataDirs().map((dir) => path.join(dir, "app-server.json"));
+  for (const connectionPath of connectionPaths) {
+    let connection;
+    try {
+      connection = JSON.parse(await fs.readFile(connectionPath, "utf8"));
+    } catch {
+      continue;
+    }
+
+    if (!connection?.port || !connection?.token) {
+      throw new Error(`Invalid Workshop Desktop app server connection file: ${connectionPath}`);
+    }
+
+    return connection;
   }
 
-  if (!connection?.port || !connection?.token) {
-    throw new Error(`Invalid Workshop Desktop app server connection file: ${connectionPath}`);
-  }
-
-  return connection;
+  throw new Error(`Workshop Desktop app server is not running or cannot be found at ${connectionPaths.join(" or ")}`);
 }
 
 async function rpc(method, params) {

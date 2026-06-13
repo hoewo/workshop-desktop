@@ -165,6 +165,21 @@ Consequences:
 - 受限 Codex token 仍只允许 `record.create`，不能读取上下文或发起确认请求。
 - 删除、合并和重组多条记录暂不作为默认自动动作，需要后续单独评审。
 
+### D-012 开发模式和发布包共用本地记录数据
+
+Status: accepted
+
+Decision: Workshop Desktop 默认把 Electron `userData` 固定到稳定目录 `workshop-desktop`，不随 dev 模式的 Electron 默认应用名或发布包 `productName` 改变。`WORKSHOP_DESKTOP_USER_DATA` 只作为显式隔离测试数据的覆盖入口。
+
+Rationale: 本项目自身的设计、发布和执行记录也通过 Workshop Desktop 记录；用户在发布包和 `pnpm dev` 热更新之间切换时，不应看到不同的个人记录、项目记录、设置或 app server 连接状态。
+
+Consequences:
+
+- 个人记录、设置、项目本地目录绑定和 app server 连接文件默认在 dev/release 间共享。
+- 启动时会从旧开发目录 `Electron` 合并个人记录到稳定目录；同 ID 记录不覆盖，旧目录不删除。
+- CLI 优先读取稳定目录的 `app-server.json`，并兼容旧开发目录，便于迁移期间继续连接当前运行实例。
+- 需要空数据或隔离实验时，必须显式设置 `WORKSHOP_DESKTOP_USER_DATA`。
+
 ## 开放问题
 
 - NebulaAuth token 是否继续保存在 Electron `userData/config.json`，还是在更广泛使用前迁移到系统钥匙串？

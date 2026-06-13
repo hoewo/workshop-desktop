@@ -3,7 +3,12 @@ export function WindowFocusOverlay({ focusClass }: { focusClass: string }) {
     return null;
   }
 
-  const stateClass = focusClass === "window-selected-focus" ? "is-focused" : "is-idle";
+  const stateClass =
+    focusClass === "window-selected-focus"
+      ? "is-selected-focused"
+      : focusClass === "window-selected-idle"
+        ? "is-selected-idle"
+        : "is-unselected";
 
   return <div className={`window-focus-overlay ${stateClass}`} aria-hidden="true" />;
 }

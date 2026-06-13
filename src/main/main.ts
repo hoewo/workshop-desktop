@@ -16,11 +16,12 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import * as http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { CodexAppServerClient } from "./codexAppServer";
 import { buildCodexUserInput } from "./codexPrompt";
-import { PersonalRecordStore, normalizeRecordScope } from "./recordStore";
+import { PersonalRecordStore, normalizeRecordScope, normalizeRecordStatus } from "./recordStore";
 import { AppUpdateService } from "./updateService";
 import { WorkshopApiService } from "./workshopApiService";
 import type {
@@ -96,10 +97,22 @@ const NOTE_ARRANGE_LIST_MIN_HEIGHT = 180;
 const NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT = 56;
 const CURRENT_CONTEXT_STALE_MS = 5 * 60 * 1000;
 const CONFIRMATION_REQUESTS_LIMIT = 100;
+const USER_DATA_DIR_NAME = "workshop-desktop";
+const LEGACY_DEV_USER_DATA_DIR_NAME = "Electron";
 const customUserDataPath = process.env.WORKSHOP_DESKTOP_USER_DATA?.trim();
+const activeUserDataPath = customUserDataPath || defaultUserDataPath(USER_DATA_DIR_NAME);
 
-if (customUserDataPath) {
-  app.setPath("userData", customUserDataPath);
+app.setPath("userData", activeUserDataPath);
+
+function defaultUserDataPath(dirName: string) {
+  const home = os.homedir();
+  if (process.platform === "darwin") {
+    return path.join(home, "Library", "Application Support", dirName);
+  }
+  if (process.platform === "win32") {
+    return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), dirName);
+  }
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), dirName);
 }
 
 let tray: Tray | null = null;
@@ -137,6 +150,101 @@ const confirmationRequestsDirPath = () => path.join(app.getPath("userData"), "co
 const confirmationRequestsIndexPath = () => path.join(confirmationRequestsDirPath(), "index.json");
 const personalRecordStore = new PersonalRecordStore(() => app.getPath("userData"));
 const workshopApiService = new WorkshopApiService({ readConfig, saveConfig });
+
+async function fileExists(filePath: string) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function copyFileIfMissing(sourcePath: string, targetPath: string) {
+  if (!(await fileExists(sourcePath)) || (await fileExists(targetPath))) {
+    return false;
+  }
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.copyFile(sourcePath, targetPath);
+  return true;
+}
+
+async function readRecordMetaIndex(recordsDir: string): Promise<PersonalRecordMeta[]> {
+  try {
+    const raw = await fs.readFile(path.join(recordsDir, "index.json"), "utf8");
+    const parsed = JSON.parse(raw) as { records?: PersonalRecordMeta[] } | PersonalRecordMeta[];
+    const records = Array.isArray(parsed) ? parsed : parsed.records;
+    return Array.isArray(records)
+      ? records
+          .filter((record) => record.id && record.title)
+          .map((record) => ({
+            ...record,
+            scopeType: normalizeRecordScope(record.scopeType),
+            status: normalizeRecordStatus(record.status)
+          }))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeRecordMetaIndex(recordsDir: string, records: PersonalRecordMeta[]) {
+  const sorted = [...records].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  await fs.mkdir(recordsDir, { recursive: true });
+  const indexPath = path.join(recordsDir, "index.json");
+  const tempPath = `${indexPath}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  await fs.writeFile(tempPath, JSON.stringify({ records: sorted }, null, 2), "utf8");
+  await fs.rename(tempPath, indexPath);
+}
+
+async function migrateLegacyPersonalRecords(sourceUserDataPath: string, targetUserDataPath: string) {
+  const sourceRecordsDir = path.join(sourceUserDataPath, "personal-records");
+  const targetRecordsDir = path.join(targetUserDataPath, "personal-records");
+  const sourceRecords = await readRecordMetaIndex(sourceRecordsDir);
+  if (sourceRecords.length === 0) {
+    return 0;
+  }
+
+  const targetRecords = await readRecordMetaIndex(targetRecordsDir);
+  const existingRecordIds = new Set(targetRecords.map((record) => record.id));
+  const migratedRecords: PersonalRecordMeta[] = [];
+
+  for (const record of sourceRecords) {
+    if (existingRecordIds.has(record.id)) {
+      continue;
+    }
+
+    await copyFileIfMissing(path.join(sourceRecordsDir, `${record.id}.md`), path.join(targetRecordsDir, `${record.id}.md`));
+    migratedRecords.push(record);
+    existingRecordIds.add(record.id);
+  }
+
+  if (migratedRecords.length > 0) {
+    await writeRecordMetaIndex(targetRecordsDir, [...migratedRecords, ...targetRecords]);
+  }
+  return migratedRecords.length;
+}
+
+async function migrateLegacyUserDataIfNeeded() {
+  if (customUserDataPath) {
+    return;
+  }
+
+  const targetUserDataPath = app.getPath("userData");
+  const legacyUserDataPath = defaultUserDataPath(LEGACY_DEV_USER_DATA_DIR_NAME);
+  if (path.resolve(legacyUserDataPath) === path.resolve(targetUserDataPath) || !(await fileExists(legacyUserDataPath))) {
+    return;
+  }
+
+  const copiedConfig = await copyFileIfMissing(path.join(legacyUserDataPath, "config.json"), configPath());
+  const migratedRecordCount = await migrateLegacyPersonalRecords(legacyUserDataPath, targetUserDataPath);
+  if (copiedConfig || migratedRecordCount > 0) {
+    console.info(
+      `Migrated legacy dev userData from ${legacyUserDataPath} to ${targetUserDataPath}: ` +
+        `${migratedRecordCount} record(s)${copiedConfig ? ", config copied" : ""}.`
+    );
+  }
+}
 
 function getAppUpdateService() {
   if (!appUpdateService) {
@@ -1792,13 +1900,16 @@ async function createStickyWindow(target: NormalizedStickyTarget) {
     minHeight: isSingleTaskWindow ? 132 : 360,
     show: false,
     frame: false,
+    transparent: true,
+    roundedCorners: true,
+    hasShadow: true,
     resizable: true,
     movable: true,
     fullscreenable: false,
     skipTaskbar: false,
     alwaysOnTop: config.stickyAlwaysOnTop,
     title: "Workshop Todo Note",
-    backgroundColor: "#f6f6f2",
+    backgroundColor: "#00000000",
     ...windowIconOption(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -2179,13 +2290,16 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
     minHeight: opensRecordDetail ? 188 : 360,
     show: false,
     frame: false,
+    transparent: true,
+    roundedCorners: true,
+    hasShadow: true,
     resizable: true,
     movable: true,
     fullscreenable: false,
     skipTaskbar: false,
     alwaysOnTop: config.stickyAlwaysOnTop,
     title: "Workshop Personal Record",
-    backgroundColor: "#f6f6f2",
+    backgroundColor: "#00000000",
     ...windowIconOption(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -3471,6 +3585,9 @@ app.on("activate", () => {
 
 app.whenReady().then(async () => {
   registerIpc();
+  await migrateLegacyUserDataIfNeeded().catch((error) => {
+    console.warn(error instanceof Error ? error.message : "legacy userData migration failed");
+  });
   const config = await readConfig();
   await startAppServer().catch((error) => {
     console.warn(error instanceof Error ? error.message : "app server failed to start");

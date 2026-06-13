@@ -19,6 +19,11 @@ npx --yes pnpm dev
 ```
 
 开发脚本会先构建 Electron 主进程，再在 `127.0.0.1` 启动 Vite，等待 renderer 就绪后启动 Electron。
+开发模式和发布包默认使用同一个 `userData` 目录，因此个人记录、设置和 app server 连接文件保持一致。需要隔离测试数据时显式设置：
+
+```bash
+WORKSHOP_DESKTOP_USER_DATA=/tmp/workshop-desktop-dev npx --yes pnpm dev
+```
 
 ## 构建验证
 

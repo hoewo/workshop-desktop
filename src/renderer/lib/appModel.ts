@@ -1,10 +1,12 @@
 import type { ApiResponse, AppConfig, PersonalRecordTarget } from "../../shared/types";
 
-export type Surface = "tray" | "sticky" | "record" | "settings" | "update";
+export type Surface = "tray" | "sticky" | "record" | "settings" | "manual" | "update";
 
 export function getSurface(): Surface {
   const surface = new URLSearchParams(window.location.search).get("surface");
-  return surface === "sticky" || surface === "record" || surface === "settings" || surface === "update" ? surface : "tray";
+  return surface === "sticky" || surface === "record" || surface === "settings" || surface === "manual" || surface === "update"
+    ? surface
+    : "tray";
 }
 
 export function getInitialProjectFilter() {
@@ -104,6 +106,7 @@ export function normalizeConfig(config: AppConfig): AppConfig {
     username: config.username.trim(),
     appId: config.appId.trim() || "workshop-desktop",
     sessionId: config.sessionId.trim(),
+    lastSeenManualRevision: config.lastSeenManualRevision || "",
     dailyRefreshTime: config.dailyRefreshTime || "09:00"
   };
 }

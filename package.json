@@ -27,7 +27,8 @@
     "app:record:get": "node scripts/workshop-desktop-cli.mjs record get",
     "app:project:list": "node scripts/workshop-desktop-cli.mjs project list",
     "app:task:list": "node scripts/workshop-desktop-cli.mjs task list",
-    "app:task:get": "node scripts/workshop-desktop-cli.mjs task get"
+    "app:task:get": "node scripts/workshop-desktop-cli.mjs task get",
+    "app:confirmation:open": "node scripts/workshop-desktop-cli.mjs confirmation open"
   },
   "dependencies": {
     "electron-log": "^5.4.4",

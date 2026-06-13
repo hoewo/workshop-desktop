@@ -30,6 +30,7 @@ import {
   type RecordMode,
   type RecordSaveStatus
 } from "../../lib/records";
+import { ListCellArchiveButton, ListCellCompleteButton } from "../ListCellActions";
 import { MarkdownPreview } from "../MarkdownPreview";
 import { ProjectDirectorySubtitle, WindowHeaderTitle } from "../WindowHeader";
 
@@ -373,15 +374,12 @@ export function RecordSurface({
           ) : null}
           {visibleRecords.map((record) => (
             <div className={`record-list-row ${recordCompletingId === record.id ? "completing" : ""}`} key={record.id}>
-              <button
-                className={`record-complete-button ${record.status === "completed" ? "done" : ""}`}
-                type="button"
+              <ListCellCompleteButton
+                done={record.status === "completed" || recordCompletingId === record.id}
                 onClick={() => completeRecord(record)}
                 disabled={recordCompletingId === record.id || (record.status !== "active" && record.status !== "completed")}
                 title={record.status === "completed" ? "取消完成" : record.status === "active" ? "完成" : recordStatusLabels[record.status]}
-              >
-                <Check size={18} strokeWidth={3} />
-              </button>
+              />
               <button
                 className="record-list-main"
                 type="button"
@@ -397,9 +395,7 @@ export function RecordSurface({
                   <span className="record-status-pill">{recordStatusLabels[record.status]}</span>
                 ) : null}
               </button>
-              <button className="record-archive-button" type="button" onClick={() => archiveRecord(record)} title="归档">
-                <Archive size={14} />
-              </button>
+              <ListCellArchiveButton onClick={() => archiveRecord(record)} />
             </div>
           ))}
         </section>

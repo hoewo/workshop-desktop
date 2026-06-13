@@ -11,8 +11,9 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 - `src/main/updateService.ts`：应用更新服务。负责驱动 `electron-updater` 从公开 GitHub Release 检查/下载更新，并向 renderer 广播更新状态。
 - `src/main/preload.ts`：通过 `contextBridge` 暴露类型化的 `workshopDesktop` 桥接接口。
 - `src/main/taskPreviewPreload.ts`：任务预览窗口专用桥接，只暴露保持预览、隐藏预览和打开任务便签能力。
-- `src/renderer/App.tsx`：React UI 编排层。负责登录、设置、项目/任务聚合、当前用户任务过滤、任务状态操作、便签窗口、任务预览和个人记录窗口的状态与流程；Workshop 业务数据通过主进程显式服务方法获取，不直接传任意 API path。
-- `src/renderer/components/`：renderer 纯展示组件。当前包含认证字段、Markdown 预览、任务行/详情/项目菜单行、窗口标题和 Workshop 标识；`components/surfaces/` 按 tray、sticky、record、login 拆分窗口级渲染分支。
+- `src/renderer/App.tsx`：React UI 编排层。负责登录、设置、使用手册、项目/任务聚合、当前用户任务过滤、任务状态操作、便签窗口、任务预览和个人记录窗口的状态与流程；Workshop 业务数据通过主进程显式服务方法获取，不直接传任意 API path。
+- `src/renderer/components/`：renderer 纯展示组件。当前包含认证字段、Markdown 预览、任务行/详情/项目菜单行、窗口标题和 Workshop 标识；`components/surfaces/` 按 tray、sticky、record、login、settings、manual、update 拆分窗口级渲染分支。
+- `src/renderer/content/manual.ts`：内置使用手册内容。负责维护软件使用和 Codex 与 Workshop 协作实践的目录、正文和手册 revision；内容随应用发版更新，不作为远程文档中心。
 - `src/renderer/hooks/`：renderer UI 状态 hooks。当前封装焦点脉冲和完成反馈定时器，避免 `App.tsx` 直接管理这些 timer/ref。
 - `src/renderer/lib/`：renderer 纯工具和视图模型。当前包含 URL 初始状态解析、配置规范化、记录/任务列表模型、窗口尺寸测量工具。
 - `src/renderer/styles/tokens.css`：renderer 基础设计 token，覆盖颜色、间距和圆角。
@@ -25,7 +26,7 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 ## 数据归属
 
 - Workshop 项目和任务存在远端 Workshop API 中。
-- NebulaAuth token 和桌面端设置当前存储在 Electron `userData/config.json`。
+- NebulaAuth token、桌面端设置和使用手册已读 revision 当前存储在 Electron `userData/config.json`。
 - 项目本地目录绑定也存储在 Electron `userData/config.json`，按 Workshop 项目 ID 记录本机路径。
 - 个人记录是本地桌面数据，存储在 Electron `userData/personal-records/`。
 - app server 连接信息存储在 Electron `userData/app-server.json`，包含本机端口和本次启动生成的 token。
@@ -71,6 +72,7 @@ NebulaAuth 调用使用：
 - `project.list`：读取当前登录用户可访问的 Workshop 项目。
 - `task.list`：按项目读取 Workshop 任务。
 - `codex.send`：把一个 Workshop 任务或记录交给本地 Codex 执行。执行目录来自该 Workshop 项目的本机目录绑定。
+- `confirmation.open`：打开一个由调用方提供 HTML 的临时确认窗口。HTML 作为静态内容渲染，Workshop 外壳提供确认/取消按钮并把结果返回给调用方。
 - 执行默认走桌面端自启的 `codex app-server`（线程出现在 Codex app 对应项目下，状态进运行表）；`backend: "exec"` 时退回静默 `codex exec`（D-009）。客户端不直接打开 Terminal，也不直接拼接本机命令。
 - 派发不包装：turn 输入只有用户内容，不附带任何说明或来源标注。回写通道、token 限制、文档纪律和项目 ID 全部由目标项目的 `AGENTS.md` 声明——只有声明了 Workshop 派发段落的项目才有回写。运行与任务/记录的关联由运行状态表持有，不进 prompt。
 
@@ -79,12 +81,14 @@ NebulaAuth 调用使用：
 - 外部进程直接写 `userData/personal-records/` 作为正式能力。
 - 远端网络访问 app server。
 - 受限 token 调用 `record.create` 以外的方法（包括读取方法和 `codex.send`）。
+- 受限 token 打开临时确认窗口；`confirmation.open` 只允许完整 token 调用。
 - AI 自动创建远端 Workshop 任务。
 - AI 绕过用户确认把个人记录当成已接受 repo 事实。
 
 ## 交互模型
 
 - 托盘/Dock 面板是项目分组和个人任务的紧凑入口。
+- 使用手册是独立窗口，从主面板 Help 图标、应用菜单和设置页打开；手册覆盖软件使用和 Codex 与 Workshop 协作实践。
 - 便签窗口是轻量任务工作面。项目便签窗口展示任务列表；任务便签窗口聚焦单个任务。
 - 个人记录窗口处理个人、项目和任务三类记录。
 - 项目任务列表和项目记录列表在标题下方显示本地目录绑定入口；未绑定时提示绑定，已绑定时显示路径并点击打开文件夹。

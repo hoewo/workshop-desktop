@@ -18,6 +18,7 @@ export interface AppConfig {
   stickyAlwaysOnTop: boolean;
   showDockIcon: boolean;
   globalShortcutEnabled: boolean;
+  lastSeenManualRevision: string;
   projectLocalDirectories: Record<string, string>;
 }
 
@@ -300,6 +301,21 @@ export interface SendToCodexResponse {
   threadId?: string;
 }
 
+export type TemporaryConfirmationReason = "confirmed" | "cancelled" | "closed";
+
+export interface TemporaryConfirmationRequest {
+  title?: string;
+  html: string;
+  width?: number;
+  height?: number;
+}
+
+export interface TemporaryConfirmationResult {
+  confirmed: boolean;
+  reason: TemporaryConfirmationReason;
+  payload?: unknown;
+}
+
 // 运行是执行遥测，不是知识对象；它不参与记录/任务的晋升流程。
 export interface CodexRunMeta {
   runId: string;
@@ -371,6 +387,7 @@ export interface DesktopBridge {
   updateTask: (request: UpdateTaskRequest) => Promise<ApiResponse<Task>>;
   openExternal: (url: string) => Promise<void>;
   openSettings: () => Promise<void>;
+  openManual: () => Promise<void>;
   openSticky: (target?: StickyTarget | number) => Promise<void>;
   openPersonalRecord: (target?: PersonalRecordTarget) => Promise<void>;
   listPersonalRecords: () => Promise<PersonalRecordMeta[]>;

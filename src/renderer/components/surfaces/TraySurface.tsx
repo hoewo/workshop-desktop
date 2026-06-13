@@ -1,4 +1,5 @@
 import {
+  CircleHelp,
   Download,
   LoaderCircle,
   NotebookPen,
@@ -22,8 +23,10 @@ export function TraySurface({
   projectRecordCounts,
   projectTodoGroups,
   updateStatus,
+  hasManualUpdate,
   hideProjectTaskPreview,
   loadData,
+  onOpenManual,
   onOpenSettings,
   onProjectHover,
   onProjectOpen,
@@ -36,8 +39,10 @@ export function TraySurface({
   projectRecordCounts: Map<number, number>;
   projectTodoGroups: ProjectTodoGroup[];
   updateStatus: AppUpdateStatus | null;
+  hasManualUpdate: boolean;
   hideProjectTaskPreview: () => void;
   loadData: () => void;
+  onOpenManual: () => void;
   onOpenSettings: () => void;
   onProjectHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
   onProjectOpen: (group: ProjectTodoGroup) => void;
@@ -71,6 +76,15 @@ export function TraySurface({
           </button>
           <button className="icon-button" type="button" onClick={loadData} title="刷新" data-tooltip="刷新">
             <RefreshCw size={17} className={isLoading ? "spin" : undefined} />
+          </button>
+          <button
+            className={`icon-button ${hasManualUpdate ? "has-update-dot" : ""}`}
+            type="button"
+            onClick={onOpenManual}
+            title="使用手册"
+            data-tooltip="使用手册"
+          >
+            <CircleHelp size={17} />
           </button>
           <button className="icon-button" type="button" onClick={onOpenSettings} title="设置" data-tooltip="设置">
             <Settings size={17} />

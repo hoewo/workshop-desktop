@@ -22,7 +22,9 @@ import type {
   VerificationCodeType,
   WindowFitRequest
 } from "../shared/types";
+import { manualRevision } from "./content/manual";
 import { LoginSurface } from "./components/surfaces/LoginSurface";
+import { ManualSurface } from "./components/surfaces/ManualSurface";
 import { RecordSurface } from "./components/surfaces/RecordSurface";
 import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { StickyLoginRequiredSurface, StickySurface } from "./components/surfaces/StickySurface";
@@ -136,6 +138,15 @@ export default function App() {
       unsubscribe();
     };
   }, [surface]);
+
+  useEffect(() => {
+    if (surface !== "manual" || !config || config.lastSeenManualRevision === manualRevision) {
+      return;
+    }
+
+    void saveConfig({ ...config, lastSeenManualRevision: manualRevision }).catch(() => undefined);
+  }, [config, surface]);
+
   const [recordsLoaded, setRecordsLoaded] = useState(false);
   const [activeRecord, setActiveRecord] = useState<PersonalRecord | null>(null);
   const [recordListContext, setRecordListContext] = useState<RecordListContext>(() => getRecordListContext(recordTarget));
@@ -1579,9 +1590,19 @@ export default function App() {
         onCheckForUpdates={() => void handleCheckForUpdates()}
         onCloseWindow={() => void window.workshopDesktop.closeWindow()}
         onInstallUpdate={() => void handleInstallUpdate()}
+        onOpenManual={() => void window.workshopDesktop.openManual()}
         onLogout={() => void handleLogout()}
         onSaveConfig={(event) => void handleSaveConfig(event)}
         setDraftConfig={setDraftConfig}
+      />
+    );
+  }
+
+  if (surface === "manual") {
+    return (
+      <ManualSurface
+        onCloseWindow={() => void window.workshopDesktop.closeWindow()}
+        onOpenSettings={() => void window.workshopDesktop.openSettings()}
       />
     );
   }
@@ -1733,7 +1754,6 @@ export default function App() {
         stickyProjectId={stickyProjectId}
         taskMessage={taskMessage}
         taskNoteBody={taskNoteBody}
-        taskRecordsByTaskId={taskRecordsByTaskId}
         updateTaskNoteBody={(body) => {
           taskNoteBodyRef.current = body;
           taskNoteDirtyRef.current = true;
@@ -1755,8 +1775,10 @@ export default function App() {
       projectRecordCounts={projectRecordCounts}
       projectTodoGroups={projectTodoGroups}
       updateStatus={updateStatus}
+      hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
       hideProjectTaskPreview={hideProjectTaskPreview}
       loadData={() => void loadData()}
+      onOpenManual={() => void window.workshopDesktop.openManual()}
       onOpenSettings={() => void window.workshopDesktop.openSettings()}
       onProjectHover={showProjectTaskPreview}
       onProjectOpen={openProjectWorkspace}

@@ -53,6 +53,7 @@ const bridge: DesktopBridge = {
   updateTask: (request) => ipcRenderer.invoke("workshop:updateTask", request),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
   openSettings: () => ipcRenderer.invoke("settings:open"),
+  openManual: () => ipcRenderer.invoke("manual:open"),
   openSticky: (target?: StickyTarget | number) => ipcRenderer.invoke("sticky:open", sanitizeStickyTarget(target)),
   openPersonalRecord: (target?: PersonalRecordTarget) => ipcRenderer.invoke("record:open", sanitizeRecordTarget(target)),
   listPersonalRecords: () => ipcRenderer.invoke("record:list"),

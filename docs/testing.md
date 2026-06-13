@@ -83,6 +83,18 @@ npx --yes pnpm app:task:list -- --project-id 98
 - 读取命令通过 app server 返回记录、项目或任务，不直接读取 `userData` 文件。
 - 任务读取要求桌面端已有有效登录配置。
 
+临时确认窗口验证：
+
+```bash
+npx --yes pnpm app:confirmation:open --title "确认测试" --html "<h1>确认测试</h1><p>这是一段由 AI/CLI 提供的临时页面。</p>" --json
+```
+
+预期结果：
+
+- Workshop Desktop 打开独立确认窗口并渲染传入 HTML。
+- 点击确认后 CLI 返回 `confirmed: true`；点击取消或关闭窗口返回未确认结果。
+- 传入 HTML 只作为静态内容渲染，确认/取消按钮由 Workshop 外壳提供。
+
 如果桌面端未运行，CLI 应提示找不到 app server，而不是直接写内部数据文件。
 
 ## 打包

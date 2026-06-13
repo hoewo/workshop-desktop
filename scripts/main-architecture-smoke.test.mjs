@@ -100,6 +100,19 @@ test("buildCodexUserInput sends body without prepending the title", () => {
   assert.equal(buildCodexUserInput({ title: "Short title" }), "Short title");
 });
 
+test("temporary confirmation bridge stays on the app-server boundary", async () => {
+  const [mainBundle, confirmationPreload] = await Promise.all([
+    readFile(path.join(process.cwd(), "dist/main/main.js"), "utf8"),
+    readFile(path.join(process.cwd(), "dist/main/confirmationPreload.js"), "utf8")
+  ]);
+
+  assert.match(mainBundle, /confirmation\.open/);
+  assert.match(mainBundle, /confirmation:confirm/);
+  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 confirmation\.open/);
+  assert.match(confirmationPreload, /workshopConfirmation/);
+  assert.match(confirmationPreload, /confirmation:cancel/);
+});
+
 test("CodexAppServerClient handles streaming deltas and terminal statuses", () => {
   const client = createCodexClientForNotificationTest();
   const messages = [];
@@ -235,6 +248,35 @@ test("PersonalRecordStore keeps one visible record per task and preserves origin
 
     await store.save({
       id: first.id,
+      bodyMarkdown: "# Promoted",
+      scopeType: "task",
+      status: "promoted",
+      projectId: 98,
+      projectName: "workshop-desktop",
+      taskId: 7,
+      taskTitle: "Task",
+      promotedTaskId: 70,
+      origin: "agent"
+    });
+    assert.equal((await store.listVisible()).length, 0);
+    const promoted = await store.get(first.id);
+    assert.equal(promoted?.status, "promoted");
+    assert.equal(promoted?.promotedTaskId, 70);
+
+    const fresh = await store.save({
+      bodyMarkdown: "# Fresh note",
+      scopeType: "task",
+      projectId: 98,
+      projectName: "workshop-desktop",
+      taskId: 7,
+      taskTitle: "Task",
+      origin: "agent"
+    });
+    assert.notEqual(fresh.id, first.id);
+    assert.equal((await store.listVisible()).length, 1);
+
+    await store.save({
+      id: fresh.id,
       bodyMarkdown: "# Archived",
       scopeType: "task",
       status: "archived",

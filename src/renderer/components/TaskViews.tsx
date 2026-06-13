@@ -1,34 +1,32 @@
-import { Archive, Check, ChevronRight, NotebookPen, PauseCircle, Play, RotateCcw, SquareTerminal } from "lucide-react";
+import { Archive, Check, ChevronRight, PauseCircle, Play, RotateCcw, SquareTerminal } from "lucide-react";
 import { useRef } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import type { TaskState } from "../../shared/types";
 import { formatRelative, splitTags, stateLabels, stateTone, type EnrichedTask, type ProjectTodoGroup } from "../lib/tasks";
+import { ListCellArchiveButton, ListCellCompleteButton } from "./ListCellActions";
 
 export function TaskRow({
   task,
   busyTaskId,
   compact = false,
   isCompleting = false,
-  recordId,
   onExtract,
   onArchive,
   onOpen,
-  onRecord,
   onUpdate
 }: {
   task: EnrichedTask;
   busyTaskId: number | null;
   compact?: boolean;
   isCompleting?: boolean;
-  recordId?: string;
   onExtract?: (task: EnrichedTask, position: { x: number; y: number }) => void;
   onArchive: (task: EnrichedTask) => void;
   onOpen?: (task: EnrichedTask) => void;
-  onRecord?: (task: EnrichedTask) => void;
   onUpdate: (task: EnrichedTask, state: TaskState) => void;
 }) {
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const tags = splitTags(task.tags);
+  const isDone = task.state === "completed";
 
   function handleDragStart(event: DragEvent<HTMLElement>) {
     if (!onExtract) {
@@ -62,17 +60,20 @@ export function TaskRow({
 
   return (
     <article
-      className={`task-row ${compact ? "compact" : ""} ${isCompleting ? "completing" : ""} ${onExtract ? "extractable" : ""} ${onOpen ? "openable" : ""} ${onRecord ? "has-record-action" : ""}`}
+      className={`task-row ${compact ? "compact" : ""} ${isCompleting ? "completing" : ""} ${onExtract ? "extractable" : ""} ${onOpen ? "openable" : ""}`}
       draggable={Boolean(onExtract)}
       onClick={onOpen ? () => onOpen(task) : undefined}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
+      <ListCellCompleteButton
+        done={isDone || isCompleting}
+        disabled={busyTaskId === task.id || isCompleting}
+        title={isCompleting ? "已完成" : isDone ? "取消完成" : "完成"}
+        onClick={(event) => handleTaskAction(event, () => onUpdate(task, isDone ? "pending" : "completed"))}
+      />
       <div className="task-main">
-        <div className="task-title-row">
-          <span className={`state-dot ${stateTone[task.state]}`} />
-          <h2>{task.content}</h2>
-        </div>
+        <h2 className="task-list-title">{task.content}</h2>
         <div className="task-meta">
           <span>{task.projectName}</span>
           {task.state !== "completed" ? <span>{stateLabels[task.state]}</span> : null}
@@ -87,82 +88,10 @@ export function TaskRow({
           </div>
         ) : null}
       </div>
-      <div className="task-side-actions">
-        {isCompleting ? (
-          <span className="task-complete-mark" aria-label="已完成">
-            <Check size={17} strokeWidth={3} />
-          </span>
-        ) : compact && task.state === "completed" ? (
-          <button
-            className="task-complete-mark task-complete-toggle"
-            type="button"
-            title="取消完成"
-            onClick={(event) => handleTaskAction(event, () => onUpdate(task, "pending"))}
-            disabled={busyTaskId === task.id}
-          >
-            <Check size={17} strokeWidth={3} />
-          </button>
-        ) : onRecord ? (
-          <button
-            className={`task-record-button ${recordId ? "has-record" : ""}`}
-            type="button"
-            title={recordId ? "打开备注" : "添加备注"}
-            onClick={(event) => handleTaskAction(event, () => onRecord(task))}
-          >
-            <NotebookPen size={15} />
-          </button>
-        ) : null}
-        {!isCompleting ? (
-          <div className="task-actions">
-            {task.state !== "in_progress" ? (
-              <button
-                type="button"
-                title="开始"
-                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "in_progress"))}
-                disabled={busyTaskId === task.id}
-              >
-                <Play size={15} />
-              </button>
-            ) : null}
-            <button
-              className={task.state === "completed" ? "done" : ""}
-              type="button"
-              title={task.state === "completed" ? "取消完成" : "完成"}
-              onClick={(event) => handleTaskAction(event, () => onUpdate(task, task.state === "completed" ? "pending" : "completed"))}
-              disabled={busyTaskId === task.id}
-            >
-              <Check size={16} />
-            </button>
-            {task.state !== "blocked" ? (
-              <button
-                type="button"
-                title="阻塞"
-                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "blocked"))}
-                disabled={busyTaskId === task.id}
-              >
-                <PauseCircle size={16} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                title="退回待办"
-                onClick={(event) => handleTaskAction(event, () => onUpdate(task, "pending"))}
-                disabled={busyTaskId === task.id}
-              >
-                <RotateCcw size={15} />
-              </button>
-            )}
-            <button
-              type="button"
-              title="归档"
-              onClick={(event) => handleTaskAction(event, () => onArchive(task))}
-              disabled={busyTaskId === task.id}
-            >
-              <Archive size={15} />
-            </button>
-          </div>
-        ) : null}
-      </div>
+      <ListCellArchiveButton
+        disabled={busyTaskId === task.id}
+        onClick={(event) => handleTaskAction(event, () => onArchive(task))}
+      />
     </article>
   );
 }

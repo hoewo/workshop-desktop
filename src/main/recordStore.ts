@@ -18,6 +18,10 @@ export function normalizeRecordStatus(value: unknown): PersonalRecordStatus {
   return value === "completed" || value === "promoted" || value === "archived" ? value : "active";
 }
 
+function isListedRecordStatus(status: PersonalRecordStatus) {
+  return status === "active" || status === "completed";
+}
+
 function normalizeRecordId(id: string) {
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
     throw new Error("记录 ID 无效");
@@ -83,7 +87,7 @@ export class PersonalRecordStore {
 
   async listVisible() {
     const records = await this.readRecordIndexAfterWrites();
-    return records.filter((record) => record.status !== "archived");
+    return records.filter((record) => isListedRecordStatus(record.status));
   }
 
   async get(id: string): Promise<PersonalRecord | null> {
@@ -186,7 +190,7 @@ export class PersonalRecordStore {
     const scopeType = normalizeRecordScope(nextRequest.scopeType);
     const existingTaskRecord =
       !nextRequest.id && scopeType === "task" && typeof taskId === "number"
-        ? records.find((record) => record.status !== "archived" && record.scopeType === "task" && record.taskId === taskId)
+        ? records.find((record) => isListedRecordStatus(record.status) && record.scopeType === "task" && record.taskId === taskId)
         : undefined;
     const requestId = safeText(nextRequest.id, 80);
     const id = requestId

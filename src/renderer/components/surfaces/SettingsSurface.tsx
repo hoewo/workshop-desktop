@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarClock, LoaderCircle, LogOut, X } from "lucide-react";
+import { AlertTriangle, BookOpenText, CalendarClock, LoaderCircle, LogOut, X } from "lucide-react";
 import type { FormEvent } from "react";
 import type { AppConfig, AppUpdateStatus } from "../../../shared/types";
 import { AuthFields } from "../AuthFields";
@@ -12,6 +12,7 @@ export function SettingsSurface({
   onCheckForUpdates,
   onCloseWindow,
   onInstallUpdate,
+  onOpenManual,
   onLogout,
   onSaveConfig,
   setDraftConfig
@@ -23,6 +24,7 @@ export function SettingsSurface({
   onCheckForUpdates: () => void;
   onCloseWindow: () => void;
   onInstallUpdate: () => void;
+  onOpenManual: () => void;
   onLogout: () => void;
   onSaveConfig: (event: FormEvent<HTMLFormElement>) => void;
   setDraftConfig: (config: AppConfig) => void;
@@ -103,6 +105,11 @@ export function SettingsSurface({
           </div>
 
           <UpdateStatusPanel status={updateStatus} onCheckForUpdates={onCheckForUpdates} onInstallUpdate={onInstallUpdate} />
+
+          <button className="secondary-button settings-manual-button" type="button" onClick={onOpenManual}>
+            <BookOpenText size={16} />
+            <span>打开使用手册</span>
+          </button>
 
           <button className="save-button" type="submit" disabled={isSavingConfig}>
             {isSavingConfig ? <LoaderCircle className="spin" size={16} /> : <CalendarClock size={16} />}

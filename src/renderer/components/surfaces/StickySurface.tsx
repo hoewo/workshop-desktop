@@ -1,5 +1,5 @@
 import { GripVertical, Info, LoaderCircle, LogIn, Maximize2, Minimize2, NotebookPen, Pin, PinOff, ShieldCheck, WifiOff, X } from "lucide-react";
-import type { AppConfig, PersonalRecordMeta, TaskState } from "../../../shared/types";
+import type { AppConfig, TaskState } from "../../../shared/types";
 import { getProjectLocalDirectory } from "../../lib/appModel";
 import type { HeaderTitleContent } from "../../lib/records";
 import type { EnrichedTask } from "../../lib/tasks";
@@ -66,7 +66,6 @@ export function StickySurface({
   stickyProjectId,
   taskMessage,
   taskNoteBody,
-  taskRecordsByTaskId,
   updateTaskNoteBody,
   updateTaskState,
   sendTaskToCodex
@@ -98,7 +97,6 @@ export function StickySurface({
   stickyProjectId?: number;
   taskMessage: string;
   taskNoteBody: string;
-  taskRecordsByTaskId: Map<number, PersonalRecordMeta>;
   updateTaskNoteBody: (body: string) => void;
   updateTaskState: (task: EnrichedTask, state: TaskState) => void;
   sendTaskToCodex: (task: EnrichedTask) => void;
@@ -209,11 +207,9 @@ export function StickySurface({
                   task={task}
                   busyTaskId={busyTaskId}
                   isCompleting={completingTaskIds.has(task.id)}
-                  recordId={taskRecordsByTaskId.get(task.id)?.id}
                   onExtract={canExtractTasks ? extractTaskToSticky : undefined}
                   onArchive={onTaskArchive}
                   onOpen={openTaskDetail}
-                  onRecord={openTaskDetail}
                   onUpdate={updateTaskState}
                 />
               ))}

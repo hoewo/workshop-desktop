@@ -12,6 +12,7 @@ function usage() {
   node scripts/workshop-desktop-cli.mjs project list
   node scripts/workshop-desktop-cli.mjs task list [--project-id 98] [--state pending,completed]
   node scripts/workshop-desktop-cli.mjs task get --id <task-id> [--project-id 98]
+  node scripts/workshop-desktop-cli.mjs confirmation open --title "确认标题" --html-file ./confirm.html
 
 Options:
   --title <text>          Record title. If body has no markdown title, the title is prepended.
@@ -29,6 +30,10 @@ Options:
   --query <text>
   --limit <number>
   --page-size <number>
+  --html <html>           Temporary confirmation HTML.
+  --html-file <path>      Read temporary confirmation HTML from a file.
+  --width <number>        Temporary confirmation window width.
+  --height <number>       Temporary confirmation window height.
   --include-body          Include markdown bodies when listing records.
   --open                  Ask the desktop app to open the created record.
   --json                  Print the raw JSON response.
@@ -382,6 +387,29 @@ async function getTask(options) {
   console.log(task.content || "");
 }
 
+async function openConfirmation(options) {
+  const htmlFromFile = options["html-file"] ? await fs.readFile(path.resolve(options["html-file"]), "utf8") : "";
+  const stdinHtml = options.html || htmlFromFile ? "" : await readStdinIfAvailable();
+  const html = options.html ?? (htmlFromFile || stdinHtml);
+  if (!html.trim()) {
+    throw new Error("--html, --html-file, or stdin HTML is required");
+  }
+
+  const result = await rpc("confirmation.open", {
+    title: options.title,
+    html,
+    width: numberOption(options.width, "--width"),
+    height: numberOption(options.height, "--height")
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  console.log(result.confirmed ? "Confirmed." : `Not confirmed: ${result.reason || "cancelled"}`);
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const [resource, action] = options._;
@@ -413,6 +441,11 @@ async function main() {
 
   if (resource === "task" && action === "get") {
     await getTask(options);
+    return;
+  }
+
+  if (resource === "confirmation" && action === "open") {
+    await openConfirmation(options);
     return;
   }
 

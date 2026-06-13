@@ -51,6 +51,8 @@ import type {
   TaskPreviewRequest,
   TaskStateChangeNotice,
   TaskState,
+  TemporaryConfirmationRequest,
+  TemporaryConfirmationResult,
   TasksPayload,
   UpdateTaskRequest,
   VerificationRequest,
@@ -76,6 +78,7 @@ const defaultConfig: AppConfig = {
   stickyAlwaysOnTop: true,
   showDockIcon: true,
   globalShortcutEnabled: true,
+  lastSeenManualRevision: "",
   projectLocalDirectories: {}
 };
 
@@ -99,6 +102,7 @@ const stickyWindowTargets = new Map<BrowserWindow, NormalizedStickyTarget>();
 const recordWindows = new Set<BrowserWindow>();
 const recordWindowTargets = new Map<BrowserWindow, NormalizedRecordTarget>();
 let settingsWindowRef: BrowserWindow | null = null;
+let manualWindowRef: BrowserWindow | null = null;
 let updateWindowRef: BrowserWindow | null = null;
 let taskPreviewWindowRef: BrowserWindow | null = null;
 let taskPreviewHideTimer: NodeJS.Timeout | null = null;
@@ -109,6 +113,13 @@ let registeredNewPersonalRecordShortcut = false;
 let appServer: http.Server | null = null;
 let appServerInfo: { port: number; token: string; agentToken: string } | null = null;
 let appUpdateService: AppUpdateService | null = null;
+const temporaryConfirmationWindows = new Map<
+  number,
+  {
+    win: BrowserWindow;
+    settle: (result: TemporaryConfirmationResult) => void;
+  }
+>();
 
 const configPath = () => path.join(app.getPath("userData"), "config.json");
 const appServerConnectionPath = () => path.join(app.getPath("userData"), "app-server.json");
@@ -189,6 +200,7 @@ function sanitizeConfig(config: AppConfig): AppConfig {
     tokenType: config.tokenType || "Bearer",
     showDockIcon: config.showDockIcon !== false,
     globalShortcutEnabled: config.globalShortcutEnabled !== false,
+    lastSeenManualRevision: typeof config.lastSeenManualRevision === "string" ? config.lastSeenManualRevision : "",
     projectLocalDirectories: sanitizeProjectLocalDirectories(config.projectLocalDirectories)
   };
 }
@@ -346,7 +358,7 @@ function hideTrayAndPreviewIfUnfocused() {
 }
 
 interface RendererLoadOptions {
-  surface: "tray" | "sticky" | "record" | "settings" | "update";
+  surface: "tray" | "sticky" | "record" | "settings" | "manual" | "update";
   projectId?: number | null;
   taskId?: number | null;
   noteId?: string | null;
@@ -529,6 +541,21 @@ function normalizeAppServerRecordGetParams(params: unknown) {
     throw new Error("record.get 需要 id");
   }
   return { id };
+}
+
+function normalizeTemporaryConfirmationParams(params: unknown): Required<TemporaryConfirmationRequest> {
+  const value = isPlainObject(params) ? params : {};
+  const html = typeof value.html === "string" ? value.html : "";
+  if (!html.trim()) {
+    throw new Error("confirmation.open 需要 html");
+  }
+
+  return {
+    title: safeWindowText(value.title, 120) ?? "确认变更",
+    html,
+    width: typeof value.width === "number" && Number.isFinite(value.width) ? clamp(Math.trunc(value.width), 420, 1100) : 760,
+    height: typeof value.height === "number" && Number.isFinite(value.height) ? clamp(Math.trunc(value.height), 320, 900) : 620
+  };
 }
 
 function normalizeAppServerListProjectsParams(params: unknown): ListProjectsRequest {
@@ -856,6 +883,13 @@ type AppServerScope = "full" | "agent";
 
 async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
   const rpc = isPlainObject(payload) ? (payload as Partial<AppServerRpcRequest>) : {};
+  if (rpc.method === "confirmation.open") {
+    if (scope !== "full") {
+      throw new Error("当前 token 只允许 record.create，不能调用 confirmation.open");
+    }
+    return openTemporaryConfirmationWindow(rpc.params);
+  }
+
   if (rpc.method === "codex.send") {
     if (scope !== "full") {
       throw new Error("当前 token 只允许 record.create，不能调用 codex.send");
@@ -1008,6 +1042,171 @@ function loadRenderer(win: BrowserWindow, options: RendererLoadOptions) {
       query
     });
   }
+}
+
+function inlineScriptString(value: string) {
+  return JSON.stringify(value).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+}
+
+function renderTemporaryConfirmationHtml(request: Required<TemporaryConfirmationRequest>) {
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title></title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #1f2428;
+        background: #f6f6f2;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        background: #f6f6f2;
+      }
+      header {
+        padding: 14px 18px 10px;
+        border-bottom: 1px solid rgba(31, 36, 40, 0.1);
+        background: rgba(255, 255, 255, 0.76);
+      }
+      h1 {
+        margin: 0;
+        font-size: 15px;
+        line-height: 1.35;
+        font-weight: 650;
+      }
+      main {
+        min-height: 0;
+        padding: 12px;
+      }
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 1px solid rgba(31, 36, 40, 0.12);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+      footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 12px 14px 14px;
+        border-top: 1px solid rgba(31, 36, 40, 0.1);
+        background: rgba(255, 255, 255, 0.82);
+      }
+      button {
+        min-width: 84px;
+        height: 32px;
+        border-radius: 8px;
+        border: 1px solid rgba(31, 36, 40, 0.16);
+        background: #ffffff;
+        color: #1f2428;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 560;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #f0f1ee;
+      }
+      .primary {
+        border-color: #1f6f5b;
+        background: #1f6f5b;
+        color: #ffffff;
+      }
+      .primary:hover {
+        background: #185945;
+      }
+    </style>
+  </head>
+  <body>
+    <header><h1 data-title></h1></header>
+    <main><iframe id="content" sandbox></iframe></main>
+    <footer>
+      <button type="button" data-cancel>取消</button>
+      <button type="button" class="primary" data-confirm>确认</button>
+    </footer>
+    <script>
+      const title = ${inlineScriptString(request.title)};
+      const html = ${inlineScriptString(request.html)};
+      document.title = title;
+      document.querySelector("[data-title]").textContent = title;
+      document.getElementById("content").srcdoc = html;
+      document.querySelector("[data-confirm]").addEventListener("click", () => {
+        window.workshopConfirmation.confirm();
+      });
+      document.querySelector("[data-cancel]").addEventListener("click", () => {
+        window.workshopConfirmation.cancel();
+      });
+    </script>
+  </body>
+</html>`;
+}
+
+function resolveTemporaryConfirmation(sender: WebContents, result: TemporaryConfirmationResult) {
+  const state = temporaryConfirmationWindows.get(sender.id);
+  if (!state) {
+    return result;
+  }
+
+  state.settle(result);
+  return result;
+}
+
+function openTemporaryConfirmationWindow(params: unknown): Promise<TemporaryConfirmationResult> {
+  const request = normalizeTemporaryConfirmationParams(params);
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: request.width,
+      height: request.height,
+      minWidth: 420,
+      minHeight: 320,
+      show: false,
+      frame: true,
+      resizable: true,
+      movable: true,
+      fullscreenable: false,
+      skipTaskbar: false,
+      title: request.title,
+      backgroundColor: "#f6f6f2",
+      ...windowIconOption(),
+      webPreferences: {
+        preload: path.join(__dirname, "confirmationPreload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true
+      }
+    });
+    const webContentsId = win.webContents.id;
+    let settled = false;
+    const settle = (result: TemporaryConfirmationResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      temporaryConfirmationWindows.delete(webContentsId);
+      if (!win.isDestroyed()) {
+        win.close();
+      }
+      resolve(result);
+    };
+
+    temporaryConfirmationWindows.set(webContentsId, { win, settle });
+    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    win.on("closed", () => settle({ confirmed: false, reason: "closed" }));
+    win.once("ready-to-show", () => showInCurrentWorkspace(win));
+    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderTemporaryConfirmationHtml(request))}`).catch(() => {
+      settle({ confirmed: false, reason: "closed" });
+    });
+  });
 }
 
 interface NormalizedStickyTarget {
@@ -1451,6 +1650,42 @@ function createSettingsWindow() {
   return win;
 }
 
+function createManualWindow() {
+  const win = new BrowserWindow({
+    width: 820,
+    height: 640,
+    minWidth: 640,
+    minHeight: 500,
+    show: false,
+    frame: true,
+    resizable: true,
+    movable: true,
+    fullscreenable: false,
+    skipTaskbar: false,
+    alwaysOnTop: false,
+    title: "使用手册",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 16 } : undefined,
+    backgroundColor: "#f6f6f2",
+    ...windowIconOption(),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  win.on("closed", () => {
+    if (manualWindowRef === win) {
+      manualWindowRef = null;
+    }
+  });
+
+  loadRenderer(win, { surface: "manual" });
+  return win;
+}
+
 function createUpdateWindow() {
   const win = new BrowserWindow({
     width: 640,
@@ -1495,6 +1730,16 @@ function showSettingsWindow() {
   hideTaskPreviewWindow();
   positionWindowOnScreen(settingsWindowRef);
   showInCurrentWorkspace(settingsWindowRef);
+}
+
+function showManualWindow() {
+  if (!manualWindowRef || manualWindowRef.isDestroyed()) {
+    manualWindowRef = createManualWindow();
+  }
+
+  hideTaskPreviewWindow();
+  positionWindowOnScreen(manualWindowRef);
+  showInCurrentWorkspace(manualWindowRef);
 }
 
 function shouldCheckFromMenu(status: AppUpdateStatus) {
@@ -2195,6 +2440,10 @@ function buildAppEntryMenu(source: WindowOpenSource): MenuItemConstructorOptions
       click: () => showWindow(source)
     },
     {
+      label: "使用手册",
+      click: () => showManualWindow()
+    },
+    {
       label: "设置",
       click: () => showSettingsWindow()
     },
@@ -2247,6 +2496,16 @@ function configureApplicationMenu() {
       { role: "close", label: "关闭窗口" }
     ]
   };
+  const helpMenu: MenuItemConstructorOptions = {
+    label: "帮助",
+    submenu: [
+      {
+        label: "使用手册",
+        accelerator: "CommandOrControl+/",
+        click: () => showManualWindow()
+      }
+    ]
+  };
 
   if (process.platform === "darwin") {
     Menu.setApplicationMenu(
@@ -2274,7 +2533,8 @@ function configureApplicationMenu() {
           ]
         },
         editMenu,
-        windowMenu
+        windowMenu,
+        helpMenu
       ])
     );
     return;
@@ -2296,7 +2556,8 @@ function configureApplicationMenu() {
         ]
       },
       editMenu,
-      windowMenu
+      windowMenu,
+      helpMenu
     ])
   );
 }
@@ -2378,7 +2639,7 @@ function sendWorkshopRefresh(event: WorkshopRefreshEvent, sender?: WebContents) 
 }
 
 function sendConfigChanged(config: AppConfig) {
-  const windows = [windowRef, settingsWindowRef, updateWindowRef, ...stickyWindows, ...recordWindows];
+  const windows = [windowRef, settingsWindowRef, manualWindowRef, updateWindowRef, ...stickyWindows, ...recordWindows];
   for (const win of windows) {
     if (win && !win.isDestroyed()) {
       win.webContents.send("config:changed", config);
@@ -2479,6 +2740,12 @@ async function openProjectLocalDirectory(projectId: number) {
 }
 
 function registerIpc() {
+  ipcMain.handle("confirmation:confirm", (event, payload?: unknown) =>
+    resolveTemporaryConfirmation(event.sender, { confirmed: true, reason: "confirmed", payload })
+  );
+  ipcMain.handle("confirmation:cancel", (event, payload?: unknown) =>
+    resolveTemporaryConfirmation(event.sender, { confirmed: false, reason: "cancelled", payload })
+  );
   ipcMain.handle("config:get", () => readConfig());
   ipcMain.handle("config:save", (_event, config: Partial<AppConfig>) => saveConfig(config));
   ipcMain.handle("auth:sendVerification", (_event, request: VerificationRequest) =>
@@ -2500,6 +2767,7 @@ function registerIpc() {
   );
   ipcMain.handle("shell:openExternal", (_event, url: string) => shell.openExternal(url));
   ipcMain.handle("settings:open", () => showSettingsWindow());
+  ipcMain.handle("manual:open", () => showManualWindow());
   ipcMain.handle("sticky:open", (_event, target?: StickyTarget | number) => showStickyWindow(target));
   ipcMain.handle("record:open", (_event, target?: PersonalRecordTarget) => showPersonalRecordWindow(target));
   ipcMain.handle("record:list", () => listPersonalRecords());

@@ -24,10 +24,12 @@ Workshop Desktop 来源于一个 AI 开发流程判断：个人思考、任务�
 - 支持按项目、状态和关键词过滤
 - 支持每日固定时间刷新，例如每天 `09:00`
 - 支持打开桌面便签窗口，并可切换置顶
-- 个人记录分为个人、项目、任务三类；项目记录可多条，任务记录按任务唯一；记录完成后仍显示，归档后从列表隐藏
+- 个人记录分为个人、项目、任务三类；项目记录可多条，任务记录按任务唯一；记录完成后仍显示，转为任务或归档后从列表隐藏
 - 项目列表和任务列表会提示是否已有个人记录
 - 任务列表采用紧凑展示，长任务标题在列表中截断，详情中查看完整内容
+- 内置使用手册，覆盖软件使用和 Codex 与 Workshop 协作实践；手册内容随应用发版更新，并在有新版本内容时提示未读
 - 启动后提供仅本机可访问的 app server，允许本地 CLI/AI 通过正式接口新增个人记录，并读取记录、项目和项目任务
+- 本地 CLI/AI 可以请求 Workshop 渲染一次性 HTML 确认窗口，由用户确认或取消高风险批量变更方案
 - macOS 发布版支持从公开 GitHub Release 检查更新、自动下载，并可从设置面板或顶部应用菜单打开独立更新窗口确认重启安装
 
 ## 后端契约
@@ -162,6 +164,7 @@ npx --yes pnpm dev
 npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI 写入。" --open
 npx --yes pnpm app:record:list -- --project-id 98
 npx --yes pnpm app:task:list -- --project-id 98
+npx --yes pnpm app:confirmation:open --title "确认测试" --html "<h1>确认测试</h1><p>这是一段由 AI/CLI 提供的临时页面。</p>"
 ```
 
 这些命令要求 Workshop Desktop 正在运行；CLI 会通过本机 app server 请求桌面端新增或读取数据，不直接写内部数据文件。

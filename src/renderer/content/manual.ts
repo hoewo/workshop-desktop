@@ -1,4 +1,4 @@
-export const manualRevision = "2026-06-13.1";
+export const manualRevision = "2026-06-13.3";
 
 export type ManualCategory = "software" | "collaboration";
 
@@ -80,16 +80,33 @@ Workshop Desktop 是一个轻量个人执行客户端，主要用于查看个人
     id: "updates",
     category: "software",
     title: "设置与更新",
-    summary: "设置项、检查更新和安装更新。",
+    summary: "设置项、AI 协作、检查更新和安装更新。",
     bodyMarkdown: `# 设置与更新
 
-设置窗口集中处理账号连接、刷新节奏、Dock 展示、快捷键和应用更新。
+设置窗口集中处理账号连接、刷新节奏、Dock 展示、快捷键、AI 协作和应用更新。
 
 - 每日定时更新会在指定时间刷新项目和任务。
 - 便签默认置顶会影响新打开的便签和记录窗口。
+- AI 协作区块可以安装或更新 Workshop Codex skill；新开的 Codex 线程会读取新 skill。
 - macOS 发布版可以从设置或应用菜单检查更新。
 - 新版本下载完成后，需要手动点击重启安装。
+- 发布版启动时会自动安装用户级 \`workshop\` 和 \`workshop-desktop\` CLI，供本机 AI/CLI 连接正在运行的桌面端。
 - 开发模式不会执行真实自动更新。`
+  },
+  {
+    id: "codex-skill",
+    category: "collaboration",
+    title: "安装协作 Skill",
+    summary: "让 Codex 理解 Workshop 协作规则。",
+    bodyMarkdown: `# 安装协作 Skill
+
+Workshop Codex skill 是给 Codex 读取的协作说明，不在桌面端内部执行。
+
+- 发布版首次启动会提示安装 Workshop Codex skill。
+- 设置里的 AI 协作区块可以检查、安装或更新这个 skill。
+- skill 默认安装到 \`~/.codex/skills/workshop-codex-collaboration\`。
+- 如果已有不同版本，桌面端会先备份旧版本再安装内置版本。
+- 安装后需要打开新的 Codex 线程，新的线程才会自动发现 skill。`
   },
   {
     id: "codex-send",
@@ -119,6 +136,7 @@ Workshop Desktop 是一个轻量个人执行客户端，主要用于查看个人
 - 需要明确执行时，由你把记录转为 Workshop 任务。
 - 需要 Codex 处理时，从任务或项目/任务记录发送。
 - Codex 完成后，可以通过 app server 新增一条短记录，保留结论、影响和下一步。
+- 本机命令行优先使用 \`workshop\`；它会通过 app server 调用桌面端，不直接写内部数据文件。
 - 只有当内容被人工整理进 repo 文档，或转为 Workshop 任务后，它才进入正式事实或执行体系。`
   },
   {

@@ -19,9 +19,11 @@ import * as http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
+import { ensureWorkshopCliInstalled } from "./cliInstaller";
 import { CodexAppServerClient } from "./codexAppServer";
 import { buildCodexUserInput } from "./codexPrompt";
 import { PersonalRecordStore, normalizeRecordScope, normalizeRecordStatus } from "./recordStore";
+import { getWorkshopCodexSkillStatus, installWorkshopCodexSkill } from "./skillInstaller";
 import { AppUpdateService } from "./updateService";
 import { WorkshopApiService } from "./workshopApiService";
 import type {
@@ -85,6 +87,7 @@ const defaultConfig: AppConfig = {
   showDockIcon: true,
   globalShortcutEnabled: true,
   lastSeenManualRevision: "",
+  lastSeenSkillInstallPromptVersion: "",
   projectLocalDirectories: {}
 };
 
@@ -265,6 +268,18 @@ function bundledResourcePath(fileName: string) {
   return app.isPackaged ? path.join(process.resourcesPath, fileName) : path.join(process.cwd(), "resources", fileName);
 }
 
+function bundledCliScriptPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "cli", "workshop-desktop-cli.mjs")
+    : path.join(process.cwd(), "scripts", "workshop-desktop-cli.mjs");
+}
+
+function bundledWorkshopCodexSkillPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "skills", "workshop-codex-collaboration")
+    : path.join(process.cwd(), "resources", "skills", "workshop-codex-collaboration");
+}
+
 function loadBundledImage(fileName: string) {
   const imagePaths = app.isPackaged
     ? [bundledResourcePath(fileName)]
@@ -321,6 +336,8 @@ function sanitizeConfig(config: AppConfig): AppConfig {
     showDockIcon: config.showDockIcon !== false,
     globalShortcutEnabled: config.globalShortcutEnabled !== false,
     lastSeenManualRevision: typeof config.lastSeenManualRevision === "string" ? config.lastSeenManualRevision : "",
+    lastSeenSkillInstallPromptVersion:
+      typeof config.lastSeenSkillInstallPromptVersion === "string" ? config.lastSeenSkillInstallPromptVersion : "",
     projectLocalDirectories: sanitizeProjectLocalDirectories(config.projectLocalDirectories)
   };
 }
@@ -3478,6 +3495,56 @@ async function openProjectLocalDirectory(projectId: number) {
   }
 }
 
+async function getBundledWorkshopCodexSkillStatus() {
+  return getWorkshopCodexSkillStatus(bundledWorkshopCodexSkillPath());
+}
+
+async function installBundledWorkshopCodexSkill() {
+  return installWorkshopCodexSkill(bundledWorkshopCodexSkillPath());
+}
+
+async function promptWorkshopCodexSkillInstallIfNeeded() {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  const [config, status] = await Promise.all([readConfig(), getBundledWorkshopCodexSkillStatus()]);
+  if (!status.bundled || status.upToDate || !status.sourceHash) {
+    return;
+  }
+
+  if (config.lastSeenSkillInstallPromptVersion === status.sourceHash) {
+    return;
+  }
+
+  const result = await dialog.showMessageBox({
+    type: "info",
+    title: "启用 Codex 协作",
+    message: "安装 Workshop Codex skill，获得完整 AI 协作体验",
+    detail:
+      "该 skill 会安装到 ~/.codex/skills，用于指导 Codex 解析当前 Workshop 项目、初始化 repo 最小文档结构，并通过 workshop CLI 安全回写记录。",
+    buttons: ["安装 Skill", "稍后"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  });
+
+  if (result.response === 0) {
+    const installResult = await installBundledWorkshopCodexSkill();
+    if (installResult.error || !installResult.upToDate) {
+      await dialog.showMessageBox({
+        type: "warning",
+        title: "Skill 安装失败",
+        message: installResult.error || "Workshop Codex skill 未能安装完成",
+        detail: "可以稍后在设置页的 AI 协作区块重新安装。"
+      });
+      return;
+    }
+  }
+
+  await saveConfig({ lastSeenSkillInstallPromptVersion: status.sourceHash });
+}
+
 function registerIpc() {
   ipcMain.handle("confirmation:confirm", (event, payload?: unknown) =>
     resolveTemporaryConfirmation(event.sender, { confirmed: true, reason: "confirmed", payload })
@@ -3557,6 +3624,8 @@ function registerIpc() {
   ipcMain.handle("appUpdate:getStatus", () => getAppUpdateService().getStatus());
   ipcMain.handle("appUpdate:check", () => getAppUpdateService().checkForUpdates());
   ipcMain.handle("appUpdate:install", () => getAppUpdateService().installDownloadedUpdate());
+  ipcMain.handle("workshopSkill:getStatus", () => getBundledWorkshopCodexSkillStatus());
+  ipcMain.handle("workshopSkill:install", () => installBundledWorkshopCodexSkill());
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -3592,6 +3661,13 @@ app.whenReady().then(async () => {
   await startAppServer().catch((error) => {
     console.warn(error instanceof Error ? error.message : "app server failed to start");
   });
+  const cliInstall = await ensureWorkshopCliInstalled({
+    appExecutablePath: process.execPath,
+    cliScriptPath: bundledCliScriptPath()
+  });
+  if (!cliInstall.installed) {
+    console.warn(cliInstall.error || "Workshop CLI auto-install failed");
+  }
   await reconcileConfirmationRequestsOnStartup().catch(() => undefined);
   await reconcileCodexRunsOnStartup().catch(() => undefined);
   applyDockVisibility(config);
@@ -3621,6 +3697,11 @@ app.whenReady().then(async () => {
   setTimeout(() => {
     void getAppUpdateService().checkForUpdates();
   }, 3000);
+  setTimeout(() => {
+    void promptWorkshopCodexSkillInstallIfNeeded().catch((error) => {
+      console.warn(error instanceof Error ? error.message : "Workshop Codex skill prompt failed");
+    });
+  }, 1200);
   if (!hasValidLogin(config)) {
     setTimeout(() => showWindow("screen"), 400);
   }

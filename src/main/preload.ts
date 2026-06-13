@@ -77,6 +77,8 @@ const bridge: DesktopBridge = {
   getUpdateStatus: () => ipcRenderer.invoke("appUpdate:getStatus"),
   checkForUpdates: () => ipcRenderer.invoke("appUpdate:check"),
   installUpdate: () => ipcRenderer.invoke("appUpdate:install"),
+  getWorkshopCodexSkillStatus: () => ipcRenderer.invoke("workshopSkill:getStatus"),
+  installWorkshopCodexSkill: () => ipcRenderer.invoke("workshopSkill:install"),
   onConfigChanged: (callback) => {
     const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as AppConfig);
     ipcRenderer.on("config:changed", listener);

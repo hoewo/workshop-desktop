@@ -3,23 +3,34 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-function usage() {
+function commandName() {
+  const override = process.env.WORKSHOP_CLI_COMMAND_NAME?.trim();
+  if (override) {
+    return path.basename(override);
+  }
+  const invoked = path.basename(process.argv[1] || "workshop");
+  return invoked.endsWith(".mjs") || invoked === "node" ? "workshop" : invoked;
+}
+
+function usage(command = commandName()) {
   return `Usage:
-  node scripts/workshop-desktop-cli.mjs record create --title "Title" [--body "Markdown"] [--open]
-  node scripts/workshop-desktop-cli.mjs record create --title "Title" --body-file ./note.md --project-id 98 --project-name workshop-desktop --open
-  node scripts/workshop-desktop-cli.mjs record list [--scope project] [--project-id 98] [--query "keyword"]
-  node scripts/workshop-desktop-cli.mjs record get --id <record-id>
-  node scripts/workshop-desktop-cli.mjs record open --id <record-id>
-  node scripts/workshop-desktop-cli.mjs record annotate --annotations-file ./annotations.json
-  node scripts/workshop-desktop-cli.mjs project list
-  node scripts/workshop-desktop-cli.mjs task list [--project-id 98] [--state pending,completed]
-  node scripts/workshop-desktop-cli.mjs task get --id <task-id> [--project-id 98]
-  node scripts/workshop-desktop-cli.mjs context current
-  node scripts/workshop-desktop-cli.mjs confirmation open --title "确认标题" --html-file ./confirm.html
-  node scripts/workshop-desktop-cli.mjs confirmation request --title "确认标题" --html-file ./confirm.html --action-file ./action.json
-  node scripts/workshop-desktop-cli.mjs confirmation status [--id <request-id>]
+  ${command} doctor
+  ${command} record create --title "Title" [--body "Markdown"] [--open]
+  ${command} record create --title "Title" --body-file ./note.md --project-id 98 --project-name workshop-desktop --open
+  ${command} record list [--scope project] [--project-id 98] [--query "keyword"]
+  ${command} record get --id <record-id>
+  ${command} record open --id <record-id>
+  ${command} record annotate --annotations-file ./annotations.json
+  ${command} project list
+  ${command} task list [--project-id 98] [--state pending,completed]
+  ${command} task get --id <task-id> [--project-id 98]
+  ${command} context current
+  ${command} confirmation open --title "确认标题" --html-file ./confirm.html
+  ${command} confirmation request --title "确认标题" --html-file ./confirm.html --action-file ./action.json
+  ${command} confirmation status [--id <request-id>]
 
 Options:
+  --help                  Show this help.
   --title <text>          Record title. If body has no markdown title, the title is prepended.
   --body <markdown>       Record markdown body.
   --body-file <path>      Read markdown body from a file.
@@ -46,7 +57,7 @@ Options:
   --height <number>       Temporary confirmation window height.
   --include-body          Include markdown bodies when listing records.
   --open                  Ask the desktop app to open the created record.
-  --json                  Print the raw JSON response.
+  --json                  Print machine-readable JSON.
 `;
 }
 
@@ -78,13 +89,16 @@ function parseArgs(argv) {
   const result = { _: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--") {
+      continue;
+    }
     if (!arg.startsWith("--")) {
       result._.push(arg);
       continue;
     }
 
     const key = arg.slice(2);
-    if (key === "open" || key === "json" || key === "include-body") {
+    if (key === "open" || key === "json" || key === "include-body" || key === "help") {
       result[key] = true;
       continue;
     }
@@ -269,11 +283,11 @@ async function loadJsonOption(options, jsonKey, fileKey, label) {
   }
 }
 
-async function loadConnection() {
+async function resolveConnection() {
   const envPort = Number(process.env.WORKSHOP_DESKTOP_SERVER_PORT);
   const envToken = process.env.WORKSHOP_DESKTOP_SERVER_TOKEN?.trim();
   if (Number.isFinite(envPort) && envPort > 0 && envToken) {
-    return { port: envPort, token: envToken };
+    return { port: envPort, token: envToken, source: "env", path: null };
   }
 
   const connectionPaths = userDataDirs().map((dir) => path.join(dir, "app-server.json"));
@@ -289,10 +303,107 @@ async function loadConnection() {
       throw new Error(`Invalid Workshop Desktop app server connection file: ${connectionPath}`);
     }
 
-    return connection;
+    return { port: connection.port, token: connection.token, source: "file", path: connectionPath };
   }
 
   throw new Error(`Workshop Desktop app server is not running or cannot be found at ${connectionPaths.join(" or ")}`);
+}
+
+async function loadConnection() {
+  const connection = await resolveConnection();
+  return { port: connection.port, token: connection.token };
+}
+
+async function probeConnection(connection) {
+  const startedAt = Date.now();
+  let response;
+  try {
+    response = await fetch(`http://127.0.0.1:${connection.port}/rpc`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${connection.token}`
+      },
+      body: JSON.stringify({ method: "context.current", params: {} })
+    });
+  } catch {
+    return {
+      reachable: false,
+      fullAccess: false,
+      authScope: "unknown",
+      latencyMs: Date.now() - startedAt,
+      error: "Cannot reach Workshop Desktop app server."
+    };
+  }
+
+  const payload = await response.json().catch(() => null);
+  const error = payload?.error ? String(payload.error) : "";
+  return {
+    reachable: true,
+    fullAccess: response.ok && payload?.ok === true,
+    authScope: response.ok && payload?.ok === true ? "full" : error.includes("只允许 record.create") ? "restricted" : "unknown",
+    latencyMs: Date.now() - startedAt,
+    statusCode: response.status,
+    error: response.ok && payload?.ok === true ? undefined : error || `HTTP ${response.status}`
+  };
+}
+
+function printDoctor(result) {
+  console.log(`Command: ${result.command}`);
+  console.log(`Node: ${result.node}`);
+  console.log(`Connection source: ${result.connection?.source || "missing"}`);
+  if (result.connection?.path) {
+    console.log(`Connection file: ${result.connection.path}`);
+  }
+  if (result.connection?.port) {
+    console.log(`App server: 127.0.0.1:${result.connection.port}`);
+  }
+  console.log(`Reachable: ${result.appServer.reachable ? "yes" : "no"}`);
+  console.log(`Auth scope: ${result.appServer.authScope || "unknown"}`);
+  if (result.error || result.appServer.error) {
+    console.log(`Error: ${result.error || result.appServer.error}`);
+  }
+}
+
+async function doctor(options) {
+  const result = {
+    ok: false,
+    command: commandName(),
+    node: process.version,
+    cwd: process.cwd(),
+    userDataDirs: userDataDirs(),
+    env: {
+      hasServerPort: Boolean(process.env.WORKSHOP_DESKTOP_SERVER_PORT),
+      hasServerToken: Boolean(process.env.WORKSHOP_DESKTOP_SERVER_TOKEN)
+    },
+    connection: null,
+    appServer: {
+      reachable: false,
+      fullAccess: false,
+      authScope: "unknown"
+    }
+  };
+
+  try {
+    const connection = await resolveConnection();
+    result.connection = {
+      source: connection.source,
+      path: connection.path,
+      port: connection.port,
+      hasToken: Boolean(connection.token)
+    };
+    result.appServer = await probeConnection(connection);
+    result.ok = result.appServer.reachable === true;
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  printDoctor(result);
 }
 
 async function rpc(method, params) {
@@ -593,6 +704,16 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const [resource, action] = options._;
 
+  if (options.help === true || resource === "help") {
+    console.log(usage());
+    return;
+  }
+
+  if (resource === "doctor") {
+    await doctor(options);
+    return;
+  }
+
   if (resource === "record" && action === "create") {
     await createRecord(options);
     return;
@@ -658,6 +779,11 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  const message = error instanceof Error ? error.message : String(error);
+  if (process.argv.includes("--json")) {
+    console.error(JSON.stringify({ ok: false, error: message }, null, 2));
+  } else {
+    console.error(message);
+  }
   process.exitCode = 1;
 });

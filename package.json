@@ -5,6 +5,10 @@
   "description": "A lightweight cross-platform desktop client for Workshop todos.",
   "author": "Workshop",
   "main": "dist/main/main.js",
+  "bin": {
+    "workshop": "scripts/workshop-desktop-cli.mjs",
+    "workshop-desktop": "scripts/workshop-desktop-cli.mjs"
+  },
   "packageManager": "pnpm@11.5.2",
   "scripts": {
     "dev": "pnpm run build:main && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron dist/main/main.js\"",
@@ -21,6 +25,7 @@
     "package:dist": "bash scripts/package.sh dist",
     "release": "bash scripts/release.sh",
     "check:precommit": "bash scripts/pre-commit-check.sh",
+    "cli:install": "bash scripts/install-workshop-cli.sh",
     "app:cli": "node scripts/workshop-desktop-cli.mjs",
     "app:record:create": "node scripts/workshop-desktop-cli.mjs record create",
     "app:record:list": "node scripts/workshop-desktop-cli.mjs record list",
@@ -82,6 +87,14 @@
       {
         "from": "resources/tray-iconTemplate@2x.png",
         "to": "tray-iconTemplate@2x.png"
+      },
+      {
+        "from": "scripts/workshop-desktop-cli.mjs",
+        "to": "cli/workshop-desktop-cli.mjs"
+      },
+      {
+        "from": "resources/skills/workshop-codex-collaboration",
+        "to": "skills/workshop-codex-collaboration"
       }
     ],
     "publish": [

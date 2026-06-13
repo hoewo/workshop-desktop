@@ -180,6 +180,21 @@ Consequences:
 - CLI 优先读取稳定目录的 `app-server.json`，并兼容旧开发目录，便于迁移期间继续连接当前运行实例。
 - 需要空数据或隔离实验时，必须显式设置 `WORKSHOP_DESKTOP_USER_DATA`。
 
+### D-013 客户端分发 Workshop Codex skill
+
+Status: accepted
+
+Decision: Workshop Desktop 发布包内置 `workshop-codex-collaboration` skill，并在首次启动提供轻提示；设置页提供 AI 协作区块，允许用户检查、安装或更新该 skill 到本机 Codex skill 目录。
+
+Rationale: 只安装客户端只能得到本地 CLI bridge，用户的 AI 仍缺少项目 ID 解析、repo 最小文档结构、记录/任务边界和确认页规则。把 skill 作为客户端携带的协作说明包，可以让普通用户在不 clone repo、不运行 pnpm 的情况下获得完整协作体验。
+
+Consequences:
+
+- 默认安装目标是 `~/.codex/skills/workshop-codex-collaboration`，可用 `WORKSHOP_DESKTOP_CODEX_SKILLS_DIR` 在开发验证时覆盖。
+- 如果目标目录已有不同内容，安装前必须备份旧目录，不静默覆盖用户改过的 skill。
+- 客户端只负责分发和安装 skill；skill 的读取和执行归用户 AI 环境，不在桌面端进程内执行。
+- AI 协作区块和首次提示不能扩大 app server token 权限，也不能绕过 D-008 的执行/回写分离。
+
 ## 开放问题
 
 - NebulaAuth token 是否继续保存在 Electron `userData/config.json`，还是在更广泛使用前迁移到系统钥匙串？

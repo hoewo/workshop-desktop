@@ -1,6 +1,6 @@
-import { AlertTriangle, BookOpenText, CalendarClock, LoaderCircle, LogOut, X } from "lucide-react";
+import { AlertTriangle, Bot, BookOpenText, CalendarClock, CheckCircle2, Download, LoaderCircle, LogOut, X } from "lucide-react";
 import type { FormEvent } from "react";
-import type { AppConfig, AppUpdateStatus } from "../../../shared/types";
+import type { AppConfig, AppUpdateStatus, WorkshopCodexSkillStatus } from "../../../shared/types";
 import { AuthFields } from "../AuthFields";
 import { UpdateStatusPanel } from "../UpdateStatusPanel";
 
@@ -8,10 +8,13 @@ export function SettingsSurface({
   draftConfig,
   error,
   isSavingConfig,
+  isInstallingWorkshopSkill,
   updateStatus,
+  workshopSkillStatus,
   onCheckForUpdates,
   onCloseWindow,
   onInstallUpdate,
+  onInstallWorkshopSkill,
   onOpenManual,
   onLogout,
   onSaveConfig,
@@ -20,10 +23,13 @@ export function SettingsSurface({
   draftConfig: AppConfig;
   error: string;
   isSavingConfig: boolean;
+  isInstallingWorkshopSkill: boolean;
   updateStatus: AppUpdateStatus | null;
+  workshopSkillStatus: WorkshopCodexSkillStatus | null;
   onCheckForUpdates: () => void;
   onCloseWindow: () => void;
   onInstallUpdate: () => void;
+  onInstallWorkshopSkill: () => void;
   onOpenManual: () => void;
   onLogout: () => void;
   onSaveConfig: (event: FormEvent<HTMLFormElement>) => void;
@@ -106,6 +112,32 @@ export function SettingsSurface({
 
           <UpdateStatusPanel status={updateStatus} onCheckForUpdates={onCheckForUpdates} onInstallUpdate={onInstallUpdate} />
 
+          <div className={`skill-status-block ${getSkillStatusClass(workshopSkillStatus)}`}>
+            <div className="skill-status-copy">
+              <span>AI 协作</span>
+              <strong>{getSkillStatusLabel(workshopSkillStatus)}</strong>
+              <small>{getSkillStatusDescription(workshopSkillStatus)}</small>
+              {workshopSkillStatus?.backupDir ? <small>已备份旧版本：{workshopSkillStatus.backupDir}</small> : null}
+            </div>
+            <button
+              className="secondary-button skill-action-button"
+              type="button"
+              onClick={onInstallWorkshopSkill}
+              disabled={isInstallingWorkshopSkill || workshopSkillStatus?.bundled === false}
+            >
+              {isInstallingWorkshopSkill ? (
+                <LoaderCircle className="spin" size={15} />
+              ) : workshopSkillStatus?.upToDate ? (
+                <CheckCircle2 size={15} />
+              ) : workshopSkillStatus?.installed ? (
+                <Download size={15} />
+              ) : (
+                <Bot size={15} />
+              )}
+              <span>{getSkillActionLabel(workshopSkillStatus, isInstallingWorkshopSkill)}</span>
+            </button>
+          </div>
+
           <button className="secondary-button settings-manual-button" type="button" onClick={onOpenManual}>
             <BookOpenText size={16} />
             <span>打开使用手册</span>
@@ -123,4 +155,65 @@ export function SettingsSurface({
       </section>
     </main>
   );
+}
+
+function getSkillStatusLabel(status: WorkshopCodexSkillStatus | null) {
+  if (!status) {
+    return "检查中";
+  }
+  if (!status.bundled) {
+    return "内置资源缺失";
+  }
+  if (status.upToDate) {
+    return "Skill 已安装";
+  }
+  if (status.installed) {
+    return "Skill 可更新";
+  }
+  return "Skill 未安装";
+}
+
+function getSkillStatusDescription(status: WorkshopCodexSkillStatus | null) {
+  if (!status) {
+    return "正在检查本机 Codex skill 目录。";
+  }
+  if (status.error) {
+    return status.error;
+  }
+  if (!status.bundled) {
+    return "当前应用包没有携带 Workshop Codex skill。";
+  }
+  if (status.upToDate) {
+    return `已安装到 ${status.targetDir}`;
+  }
+  if (status.installed) {
+    return `安装到 ${status.targetDir}，更新前会备份旧版本。`;
+  }
+  return `安装到 ${status.targetDir}，新开的 Codex 线程会自动发现。`;
+}
+
+function getSkillActionLabel(status: WorkshopCodexSkillStatus | null, busy: boolean) {
+  if (busy) {
+    return "安装中";
+  }
+  if (status?.upToDate) {
+    return "重新安装";
+  }
+  if (status?.installed) {
+    return "更新 Skill";
+  }
+  return "安装 Skill";
+}
+
+function getSkillStatusClass(status: WorkshopCodexSkillStatus | null) {
+  if (!status) {
+    return "skill-checking";
+  }
+  if (status.error || !status.bundled) {
+    return "skill-error";
+  }
+  if (status.upToDate) {
+    return "skill-ready";
+  }
+  return "skill-action-needed";
 }

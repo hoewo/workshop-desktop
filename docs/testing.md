@@ -1,6 +1,30 @@
 # 测试与验证
 
-本项目当前有构建、主进程架构 smoke tests 和打包检查。
+本项目当前有开发模式手工验证、构建检查、主进程架构 smoke tests 和打包检查。
+
+## 验证入口选择
+
+日常功能测试和交互检查默认走开发模式：
+
+```bash
+npx --yes pnpm dev
+```
+
+适用范围包括登录、API 调用、窗口、菜单、快捷键、便签窗口、个人记录和本地 AI Bridge 等需要真实桌面端运行状态的验证。
+
+提交前或涉及共享代码边界时，运行提交前检查：
+
+```bash
+bash scripts/pre-commit-check.sh
+```
+
+需要单独确认 production build 时，再运行构建脚本：
+
+```bash
+./scripts/package.sh build
+```
+
+打包、安装包形态检查和正式发布不走开发模式，统一使用 `scripts/package.sh` 和 `scripts/release.sh` 这两个脚本入口。真实自动更新验证必须使用 GitHub Release 里的签名、公证包，不能用 `pnpm dev`、本地 `.app` 或目录包代替。
 
 ## 安装
 
@@ -41,6 +65,14 @@ npx --yes pnpm run build
 
 构建验证会执行主进程 TypeScript 构建、renderer TypeScript 类型检查和 renderer Vite production build，避免 Vite 在未做语义检查时把漏 import 等运行时错误打进包。
 
+提交前完整门禁使用：
+
+```bash
+bash scripts/pre-commit-check.sh
+```
+
+它会运行主进程类型检查、主进程 smoke tests、renderer 类型检查和 renderer production build。
+
 ## 自动化测试
 
 主进程关键架构边界有最小 smoke tests：
@@ -67,7 +99,9 @@ npx --yes pnpm dev
 再在另一个终端新增一条记录：
 
 ```bash
-npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI 通过 app server 写入。" --open
+bash scripts/install-workshop-cli.sh
+workshop --json doctor
+workshop record create --title "AI 记录验证" --body "由 CLI 通过 app server 写入。" --open
 ```
 
 预期结果：
@@ -79,13 +113,13 @@ npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI �
 读取记录和任务：
 
 ```bash
-npx --yes pnpm app:record:list -- --project-id 98
-npx --yes pnpm app:record:get -- --id <record-id>
-npx --yes pnpm app:record:open --id <record-id>
-npx --yes pnpm app:record:annotate --annotations-file ./annotations.json --json
-npx --yes pnpm app:project:list
-npx --yes pnpm app:task:list -- --project-id 98
-npx --yes pnpm app:context:current --json
+workshop record list --project-id 98
+workshop record get --id <record-id>
+workshop record open --id <record-id>
+workshop record annotate --annotations-file ./annotations.json --json
+workshop project list
+workshop task list --project-id 98
+workshop context current --json
 ```
 
 预期结果：
@@ -99,7 +133,7 @@ npx --yes pnpm app:context:current --json
 临时确认窗口验证：
 
 ```bash
-npx --yes pnpm app:confirmation:open --title "确认测试" --html "<h1>确认测试</h1><p>这是一段由 AI/CLI 提供的临时页面。</p>" --json
+workshop confirmation open --title "确认测试" --html "<h1>确认测试</h1><p>这是一段由 AI/CLI 提供的临时页面。</p>" --json
 ```
 
 预期结果：
@@ -111,8 +145,8 @@ npx --yes pnpm app:confirmation:open --title "确认测试" --html "<h1>确认�
 异步确认请求验证：
 
 ```bash
-npx --yes pnpm app:confirmation:request --title "异步确认测试" --html "<h1>确认</h1><p>确认后由 Workshop 执行动作。</p>" --action-json '{"type":"record.appendBody","recordId":"<record-id>","markdown":"## 整理\n\n- 已确认追加。"}' --json
-npx --yes pnpm app:confirmation:status --id <request-id> --json
+workshop confirmation request --title "异步确认测试" --html "<h1>确认</h1><p>确认后由 Workshop 执行动作。</p>" --action-json '{"type":"record.appendBody","recordId":"<record-id>","markdown":"## 整理\n\n- 已确认追加。"}' --json
+workshop confirmation status --id <request-id> --json
 ```
 
 预期结果：
@@ -122,6 +156,30 @@ npx --yes pnpm app:confirmation:status --id <request-id> --json
 - 用户取消或关闭窗口时，不执行动作，状态为 `cancelled` 或 `closed`。
 
 如果桌面端未运行，CLI 应提示找不到 app server，而不是直接写内部数据文件。
+发布版启动时会自动安装用户级 `workshop` 和 `workshop-desktop` 命令；开发环境可用 `bash scripts/install-workshop-cli.sh` 安装同名入口。
+`workshop-desktop` 是同一个 CLI 的别名；旧的 `npx --yes pnpm app:*` scripts 仅保留兼容，不作为推荐验证入口。
+
+## AI 协作 Skill 验证
+
+设置页的 AI 协作区块应能检查并安装内置 `workshop-codex-collaboration` skill。
+
+开发模式可用临时目录验证，不要覆盖真实 `~/.codex/skills`：
+
+```bash
+WORKSHOP_DESKTOP_CODEX_SKILLS_DIR=/tmp/workshop-codex-skills npx --yes pnpm dev
+```
+
+预期结果：
+
+- 打开设置页时，AI 协作区块显示未安装或可更新。
+- 点击“安装 Skill”或“更新 Skill”后，目录 `/tmp/workshop-codex-skills/workshop-codex-collaboration` 存在。
+- 再次打开设置页时显示“Skill 已安装”。
+- 如果目标目录已有不同内容，安装前会在同级生成 `workshop-codex-collaboration.backup-*` 备份目录。
+
+打包验证应确认发布包携带：
+
+- `resources/skills/workshop-codex-collaboration/SKILL.md`
+- `resources/skills/workshop-codex-collaboration/agents/openai.yaml`
 
 ## 打包
 
@@ -162,9 +220,9 @@ macOS 更新链路依赖公开 GitHub Release 和签名包。验证时需要：
 
 ## 手工验证
 
-涉及登录、API 调用、任务状态变更或当前用户过滤的改动，需要真实 Workshop/NebulaAuth 环境验证。
+涉及登录、API 调用、任务状态变更或当前用户过滤的改动，默认用 `npx --yes pnpm dev` 启动桌面端，并在真实 Workshop/NebulaAuth 环境验证。
 
-涉及窗口、菜单、快捷键、便签窗口或个人记录的改动，需要在运行中的 Electron 应用里直接检查相关界面：
+涉及窗口、菜单、快捷键、便签窗口或个人记录的改动，默认在 dev 模式运行中的 Electron 应用里直接检查相关界面：
 
 - 顶部应用菜单
 - Dock/托盘菜单入口

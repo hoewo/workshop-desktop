@@ -107,6 +107,7 @@ export function normalizeConfig(config: AppConfig): AppConfig {
     appId: config.appId.trim() || "workshop-desktop",
     sessionId: config.sessionId.trim(),
     lastSeenManualRevision: config.lastSeenManualRevision || "",
+    lastSeenSkillInstallPromptVersion: config.lastSeenSkillInstallPromptVersion || "",
     dailyRefreshTime: config.dailyRefreshTime || "09:00"
   };
 }

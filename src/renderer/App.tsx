@@ -20,6 +20,7 @@ import type {
   TaskStateChangeNotice,
   TasksPayload,
   VerificationCodeType,
+  WorkshopCodexSkillStatus,
   WindowFitRequest
 } from "../shared/types";
 import { manualRevision } from "./content/manual";
@@ -96,6 +97,8 @@ export default function App() {
   const [records, setRecords] = useState<PersonalRecordMeta[]>([]);
   const [codexRuns, setCodexRuns] = useState<CodexRunMeta[]>([]);
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
+  const [workshopSkillStatus, setWorkshopSkillStatus] = useState<WorkshopCodexSkillStatus | null>(null);
+  const [isInstallingWorkshopSkill, setIsInstallingWorkshopSkill] = useState(false);
 
   useEffect(() => {
     if (surface !== "tray") {
@@ -136,6 +139,30 @@ export default function App() {
     return () => {
       cancelled = true;
       unsubscribe();
+    };
+  }, [surface]);
+
+  useEffect(() => {
+    if (surface !== "settings") {
+      return;
+    }
+
+    let cancelled = false;
+    window.workshopDesktop
+      .getWorkshopCodexSkillStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setWorkshopSkillStatus(status);
+        }
+      })
+      .catch((nextError) => {
+        if (!cancelled) {
+          setWorkshopSkillStatus(null);
+          setError(nextError instanceof Error ? nextError.message : "读取 Workshop Codex skill 状态失败");
+        }
+      });
+    return () => {
+      cancelled = true;
     };
   }, [surface]);
 
@@ -1630,6 +1657,23 @@ export default function App() {
     }
   }
 
+  async function handleInstallWorkshopSkill() {
+    try {
+      setIsInstallingWorkshopSkill(true);
+      const status = await window.workshopDesktop.installWorkshopCodexSkill();
+      setWorkshopSkillStatus(status);
+      if (status.error || !status.upToDate) {
+        setError(status.error || "Workshop Codex skill 安装未完成");
+      } else {
+        setError("");
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "安装 Workshop Codex skill 失败");
+    } finally {
+      setIsInstallingWorkshopSkill(false);
+    }
+  }
+
   async function handleStickyAlwaysOnTop(enabled: boolean) {
     const saved = await window.workshopDesktop.setStickyAlwaysOnTop(enabled);
     setConfig(saved);
@@ -1664,10 +1708,13 @@ export default function App() {
         draftConfig={draftConfig}
         error={error}
         isSavingConfig={isSavingConfig}
+        isInstallingWorkshopSkill={isInstallingWorkshopSkill}
         updateStatus={updateStatus}
+        workshopSkillStatus={workshopSkillStatus}
         onCheckForUpdates={() => void handleCheckForUpdates()}
         onCloseWindow={() => void window.workshopDesktop.closeWindow()}
         onInstallUpdate={() => void handleInstallUpdate()}
+        onInstallWorkshopSkill={() => void handleInstallWorkshopSkill()}
         onOpenManual={() => void window.workshopDesktop.openManual()}
         onLogout={() => void handleLogout()}
         onSaveConfig={(event) => void handleSaveConfig(event)}

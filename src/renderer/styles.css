@@ -1540,6 +1540,64 @@ textarea:focus {
   background: rgba(250, 231, 226, 0.72);
 }
 
+.skill-status-block {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(30, 36, 34, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.skill-status-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.skill-status-copy span {
+  color: #5f6863;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.skill-status-copy strong {
+  color: #1e2422;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.skill-status-copy small {
+  color: #66716b;
+  font-size: 11px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.skill-action-button {
+  width: auto;
+  min-width: 96px;
+  padding: 0 11px;
+}
+
+.skill-ready {
+  border-color: rgba(38, 105, 84, 0.18);
+  background: rgba(216, 235, 226, 0.64);
+}
+
+.skill-action-needed {
+  border-color: rgba(170, 128, 46, 0.2);
+  background: rgba(251, 241, 214, 0.68);
+}
+
+.skill-error {
+  border-color: rgba(159, 58, 46, 0.22);
+  background: rgba(250, 231, 226, 0.72);
+}
+
 .settings-block {
   display: flex;
   flex-direction: column;

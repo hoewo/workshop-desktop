@@ -19,6 +19,7 @@ export interface AppConfig {
   showDockIcon: boolean;
   globalShortcutEnabled: boolean;
   lastSeenManualRevision: string;
+  lastSeenSkillInstallPromptVersion: string;
   projectLocalDirectories: Record<string, string>;
 }
 
@@ -474,6 +475,21 @@ export interface AppUpdateStatus {
   downloadedAt?: string;
 }
 
+export interface WorkshopCodexSkillStatus {
+  skillName: string;
+  bundled: boolean;
+  installed: boolean;
+  upToDate: boolean;
+  sourceDir: string;
+  targetDir: string;
+  sourceHash?: string;
+  installedHash?: string;
+  version?: string;
+  backupDir?: string;
+  installedAt?: string;
+  error?: string;
+}
+
 export interface DesktopBridge {
   getConfig: () => Promise<AppConfig>;
   saveConfig: (config: Partial<AppConfig>) => Promise<AppConfig>;
@@ -511,6 +527,8 @@ export interface DesktopBridge {
   getUpdateStatus: () => Promise<AppUpdateStatus>;
   checkForUpdates: () => Promise<AppUpdateStatus>;
   installUpdate: () => Promise<void>;
+  getWorkshopCodexSkillStatus: () => Promise<WorkshopCodexSkillStatus>;
+  installWorkshopCodexSkill: () => Promise<WorkshopCodexSkillStatus>;
   onConfigChanged: (callback: (config: AppConfig) => void) => () => void;
   onCodexRunsChanged: (callback: (runs: CodexRunMeta[]) => void) => () => void;
   onUpdateStatus: (callback: (status: AppUpdateStatus) => void) => () => void;

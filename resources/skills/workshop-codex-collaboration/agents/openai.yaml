@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workshop Codex 协作"
+  short_description: "安装 Workshop 并管理跨 repo 协作"
+  default_prompt: "使用 $workshop-codex-collaboration 安装或验证 Workshop Desktop，初始化 repo 最小文档结构，并按规则解析项目上下文和回写结论。"

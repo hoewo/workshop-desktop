@@ -30,6 +30,8 @@ function baseConfig(overrides = {}) {
     stickyAlwaysOnTop: true,
     showDockIcon: true,
     globalShortcutEnabled: true,
+    lastSeenManualRevision: "",
+    lastSeenSkillInstallPromptVersion: "",
     projectLocalDirectories: {},
     ...overrides
   };
@@ -122,6 +124,48 @@ test("temporary confirmation bridge stays on the app-server boundary", async () 
   assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 record\.annotate/);
   assert.match(confirmationPreload, /workshopConfirmation/);
   assert.match(confirmationPreload, /confirmation:cancel/);
+});
+
+test("packaged app carries and auto-installs the Workshop CLI shim", async () => {
+  const [mainBundle, cliInstallerBundle, skillInstallerBundle, packageJsonRaw, bundledSkillRaw, bundledSkillMetadataRaw] = await Promise.all([
+    readFile(path.join(process.cwd(), "dist/main/main.js"), "utf8"),
+    readFile(path.join(process.cwd(), "dist/main/cliInstaller.js"), "utf8"),
+    readFile(path.join(process.cwd(), "dist/main/skillInstaller.js"), "utf8"),
+    readFile(path.join(process.cwd(), "package.json"), "utf8"),
+    readFile(path.join(process.cwd(), "resources/skills/workshop-codex-collaboration/SKILL.md"), "utf8"),
+    readFile(path.join(process.cwd(), "resources/skills/workshop-codex-collaboration/agents/openai.yaml"), "utf8")
+  ]);
+  const packageJson = JSON.parse(packageJsonRaw);
+
+  assert.match(mainBundle, /ensureWorkshopCliInstalled/);
+  assert.match(mainBundle, /workshop-desktop-cli\.mjs/);
+  assert.match(mainBundle, /workshopSkill:getStatus/);
+  assert.match(mainBundle, /workshopSkill:install/);
+  assert.match(mainBundle, /workshop-codex-collaboration/);
+  assert.match(cliInstallerBundle, /ELECTRON_RUN_AS_NODE/);
+  assert.match(cliInstallerBundle, /workshop-desktop/);
+  assert.match(skillInstallerBundle, /WORKSHOP_CODEX_SKILL_NAME/);
+  assert.match(skillInstallerBundle, /backup-/);
+  assert.match(bundledSkillRaw, /Workshop \+ Codex 跨项目协作/);
+  assert.match(bundledSkillMetadataRaw, /安装 Workshop 并管理跨 repo 协作/);
+  assert.deepEqual(packageJson.bin, {
+    workshop: "scripts/workshop-desktop-cli.mjs",
+    "workshop-desktop": "scripts/workshop-desktop-cli.mjs"
+  });
+  assert.equal(
+    packageJson.build.extraResources.some(
+      (resource) => resource.from === "scripts/workshop-desktop-cli.mjs" && resource.to === "cli/workshop-desktop-cli.mjs"
+    ),
+    true
+  );
+  assert.equal(
+    packageJson.build.extraResources.some(
+      (resource) =>
+        resource.from === "resources/skills/workshop-codex-collaboration" &&
+        resource.to === "skills/workshop-codex-collaboration"
+    ),
+    true
+  );
 });
 
 test("CodexAppServerClient handles streaming deltas and terminal statuses", () => {

@@ -34,6 +34,7 @@ Workshop Desktop 来源于一个 AI 开发流程判断：个人思考、任务�
 - 本地 CLI/AI 可以请求 Workshop 渲染一次性 HTML 确认窗口，由用户确认或取消高风险批量变更方案
 - 本地 CLI/AI 可以提交异步确认请求；用户确认后，由 Workshop 自己执行已声明的记录或任务变更，并保留请求状态供 CLI 查询
 - 本地 CLI/AI 可以在用户确认后给已有记录写入 AI 整理标注，用于 Codex 后续检索和归纳，不改变记录正文或可见状态
+- 发布版内置 Workshop Codex skill，首次启动会轻提示安装；设置页可检查、安装或更新 skill，让用户的 AI 按本项目协作规范使用 Workshop CLI 和 repo 最小文档结构
 - macOS 发布版支持从公开 GitHub Release 检查更新、自动下载，并可从设置面板或顶部应用菜单打开独立更新窗口确认重启安装
 
 ## 后端契约
@@ -165,17 +166,22 @@ bash scripts/pre-commit-check.sh
 
 ```bash
 npx --yes pnpm dev
-npx --yes pnpm app:record:create -- --title "AI 记录验证" --body "由 CLI 写入。" --open
-npx --yes pnpm app:record:list -- --project-id 98
-npx --yes pnpm app:record:open --id <record-id>
-npx --yes pnpm app:task:list -- --project-id 98
-npx --yes pnpm app:context:current --json
-npx --yes pnpm app:confirmation:open --title "确认测试" --html "<h1>确认测试</h1><p>这是一段由 AI/CLI 提供的临时页面。</p>"
-npx --yes pnpm app:confirmation:request --title "异步确认测试" --html "<h1>确认</h1><p>确认后由 Workshop 执行动作。</p>" --action-file ./action.json
-npx --yes pnpm app:confirmation:status --id <request-id>
+bash scripts/install-workshop-cli.sh
+workshop --json doctor
+workshop record create --title "AI 记录验证" --body "由 CLI 写入。" --open
+workshop record list --project-id 98
+workshop record open --id <record-id>
+workshop task list --project-id 98
+workshop context current --json
+workshop confirmation open --title "确认测试" --html "<h1>确认测试</h1><p>这是一段由 AI/CLI 提供的临时页面。</p>"
+workshop confirmation request --title "异步确认测试" --html "<h1>确认</h1><p>确认后由 Workshop 执行动作。</p>" --action-file ./action.json
+workshop confirmation status --id <request-id>
 ```
 
 这些命令要求 Workshop Desktop 正在运行；CLI 会通过本机 app server 请求桌面端新增或读取数据，不直接写内部数据文件。
+发布版启动时会自动安装用户级 `workshop` 和 `workshop-desktop` 命令；开发环境可用 `bash scripts/install-workshop-cli.sh` 安装同名入口。
+`workshop-desktop` 是同一个 CLI 的别名；如果不想安装到 PATH，也可以直接运行 `node scripts/workshop-desktop-cli.mjs ...`。
+发布版同时内置 `workshop-codex-collaboration` skill，设置页的 AI 协作区块可以安装或更新到 `~/.codex/skills/workshop-codex-collaboration`。
 
 打包本平台目录包：
 

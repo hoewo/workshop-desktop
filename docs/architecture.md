@@ -6,6 +6,7 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 
 - `src/main/main.ts`：Electron 主进程。负责 Dock、托盘、菜单入口、全局快捷键、窗口生命周期、本地配置存储、任务预览窗口、跨窗口刷新通知和 IPC 编排。
 - `src/main/codexAppServer.ts`：codex app-server JSON-RPC 客户端（JSONL over stdio）。负责 thread/turn 生命周期、通知分发、崩溃恢复和审批兜底拒绝。
+- `src/main/skillInstaller.ts`：Workshop Codex skill 安装器。负责比较内置 skill 与用户 Codex skill 目录，安装或更新 `workshop-codex-collaboration`，并在覆盖前备份已有不同版本。
 - `src/main/workshopApiService.ts`：Workshop/NebulaAuth API 服务层。负责登录验证码、登录、登出、token 刷新，以及主进程明确支持的 Workshop 用户、组织、项目和任务请求。
 - `src/main/recordStore.ts`：本地个人记录 store。负责记录 index/body 文件读写、记录规范化、写入串行化和原子文件替换。
 - `src/main/updateService.ts`：应用更新服务。负责驱动 `electron-updater` 从公开 GitHub Release 检查/下载更新，并向 renderer 广播更新状态。
@@ -19,7 +20,8 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 - `src/renderer/styles/tokens.css`：renderer 基础设计 token，覆盖颜色、间距和圆角。
 - `src/renderer/styles.css`：renderer 全局样式和业务样式组合层。具体业务样式仍保留在同一文件中渐进整理。
 - `src/shared/types.ts`：配置、API envelope、项目、任务、个人记录、IPC bridge 和窗口事件的共享类型。
-- `scripts/workshop-desktop-cli.mjs`：本地 CLI 客户端。通过 app server 驱动正在运行的桌面端，不直接写内部数据文件。
+- `scripts/workshop-desktop-cli.mjs`：本地 CLI 客户端，对外命令名为 `workshop` 和 `workshop-desktop`。发布版启动时会自动安装用户级 shim，通过随 app 打包的 CLI 脚本连接 app server，不直接写内部数据文件。
+- `resources/skills/workshop-codex-collaboration/`：随发布包携带的 Codex skill，用于安装到用户本机 Codex skill 目录。它是给用户 AI 读取的协作规范，不在桌面端进程内执行。
 - `resources/`：打包应用使用的 app、托盘和 template 图标。
 - `scripts/package.sh`：构建、目录包和 release 包的包装脚本。
 
@@ -31,6 +33,8 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 - 项目本地目录绑定也存储在 Electron `userData/config.json`，按 Workshop 项目 ID 记录本机路径。
 - 个人记录是本地桌面数据，存储在 Electron `userData/personal-records/`。
 - app server 连接信息存储在 Electron `userData/app-server.json`，包含本机端口和本次启动生成的 token；CLI 优先读取稳定 `workshop-desktop` 目录，并兼容旧开发目录 `Electron` 的连接文件。
+- 用户级 CLI shim 默认安装在 `~/.local/bin`，并由发布版启动时刷新；shim 使用 Electron 自带的 Node 运行随 app 打包的 CLI 脚本，不要求用户单独安装 Node。
+- Workshop Codex skill 默认安装到 `~/.codex/skills/workshop-codex-collaboration`。如果安装目标已有不同版本，桌面端先把旧目录备份为同级 `workshop-codex-collaboration.backup-*`，再复制内置版本。
 - Codex 运行状态表存储在 Electron `userData/codex-runs/index.json`；exec 后端的输出文件也在该目录。Codex 线程本体归 codex 所有，落盘在 `~/.codex/sessions`。
 - 异步确认请求状态存储在 Electron `userData/confirmation-requests/index.json`。它用于记录一次确认窗口的等待、确认、取消或失败状态，不是记录、任务或项目事实。
 - release、build、截图和依赖输出都是生成物，不进入 Git。
@@ -102,6 +106,7 @@ NebulaAuth 调用使用：
 - 单个任务详情可以发送到 Codex 执行。发送前会保存任务备注，Codex 的工作目录使用该任务所属项目的本地目录绑定。
 - 项目或任务记录详情可以发送到 Codex 执行。没有项目上下文的个人记录不作为 Codex 执行入口。
 - 主面板在项目列表下方显示最近 Codex 运行（运行中/已完成/失败/已中断），悬停查看最后消息。
+- 设置面板显示 AI 协作状态，可以安装或更新 Workshop Codex skill。发布版首次启动会轻提示安装 skill；用户也可以稍后在设置页处理。
 - 设置面板和顶部应用菜单的独立更新窗口都显示应用更新状态。发现新版本后自动下载；下载完成后由用户点击“重启更新”或“安装并重启应用”触发安装。
 - 列表页面用于定位对象；详情页面用于处理一个对象。
 - 打开项目工作区时，可以同时打开项目任务面和相关项目记录面。
@@ -112,4 +117,5 @@ NebulaAuth 调用使用：
 - 本应用不是完整团队项目管理客户端。当前任务可见性是个人范围：只展示当前用户创建或执行的任务。
 - 本应用不是 repo 知识库。本地个人记录可以捕捉想法，但 repo 文档只存长期项目事实。
 - 本应用不是 AI 治理流程本身。它可以帮助捕捉想法并推进到任务；流程解释由 skill 和 repo 文档负责。
+- 本应用可以分发 Workshop Codex skill，但不把 skill 内容当作运行时代码执行；skill 的生效位置是用户的 AI 环境。
 - 本地 AI bridge 是应用能力入口，不是后门文件写入；所有写入必须经过桌面端服务层并触发 UI 同步。

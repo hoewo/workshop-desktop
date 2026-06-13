@@ -51,21 +51,21 @@ AI 创建记录时默认使用短记录。记录面向人类后续阅读和编�
 
 ## AI 记录方式
 
-正式记录必须通过正在运行的 Workshop Desktop app server/CLI 创建。新增记录可直接使用 `record.create`；编辑记录正文或创建任务必须先用 `confirmation.request` 打开 Workshop 临时确认页，用户确认后由 Workshop 执行动作。把任务或记录发送给 Codex 执行时，应通过 Workshop Desktop 的 `codex.send` 服务层能力，不要让客户端直接打开 Terminal。
+正式记录必须通过正在运行的 Workshop Desktop app server/CLI 创建。优先使用自定义 CLI `workshop`（`workshop-desktop` 是同一入口的别名），不要依赖 `npx --yes pnpm app:*` 参数转发作为正式入口。新增记录可直接使用 `record.create`；编辑记录正文或创建任务必须先用 `confirmation.request` 打开 Workshop 临时确认页，用户确认后由 Workshop 执行动作。把任务或记录发送给 Codex 执行时，应通过 Workshop Desktop 的 `codex.send` 服务层能力，不要让客户端直接打开 Terminal。
 
 本 repo 的 Workshop 项目 ID 是 `98`，项目名是 `workshop-desktop`。创建项目记录时使用：
 
 ```bash
-npx --yes pnpm app:record:create -- --title "记录标题" --body "记录内容" --scope project --project-id 98 --project-name workshop-desktop --open
+workshop record create --title "记录标题" --body "记录内容" --scope project --project-id 98 --project-name workshop-desktop --open
 ```
 
 也可以从文件读取记录正文：
 
 ```bash
-npx --yes pnpm app:record:create -- --title "记录标题" --body-file ./path/to/note.md --scope project --project-id 98 --project-name workshop-desktop --open
+workshop record create --title "记录标题" --body-file ./path/to/note.md --scope project --project-id 98 --project-name workshop-desktop --open
 ```
 
-如果桌面端没有运行，CLI 报错后应停止并告知用户；不要改为直接写 `~/Library/Application Support/workshop-desktop/personal-records/`。
+发布版启动时会自动安装用户级 `workshop` 和 `workshop-desktop` 命令；开发环境如果 `workshop` 还没有安装到 PATH，可在 repo 根目录执行 `bash scripts/install-workshop-cli.sh`。如果桌面端没有运行，CLI 报错后应停止并告知用户；不要改为直接写 `~/Library/Application Support/workshop-desktop/personal-records/`。
 
 ## Workshop Desktop 派发的执行
 

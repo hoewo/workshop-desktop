@@ -49,12 +49,12 @@
 ./scripts/package.sh dist
 ```
 
-macOS 本地无签名 secrets 时可只生成 zip 做本机验证。正式 macOS release 由 GitHub Actions 生成签名、公证后的 zip，并上传 `latest-mac.yml` 供自动更新使用。
+macOS 本地无签名 secrets 时可只生成 zip 做本机验证。正式 macOS release 由 GitHub Actions 生成签名、公证后的 universal zip，并上传 `latest-mac.yml` 供自动更新使用。
 
-本机默认生成当前平台安装包：
+本机默认生成当前平台安装包；云端 macOS release 必须包含：
 
 ```text
-release/Workshop.Todo-<version>-arm64-mac.zip
+release/Workshop.Todo-<version>-universal-mac.zip
 ```
 
 ## 正式发布
@@ -94,6 +94,8 @@ npx --yes pnpm release -- major
 - 等待 `Release` GitHub Actions workflow 结束。
 - 使用 `gh release view` 校验 GitHub Release 资产。
 
+也可以在 GitHub Actions 页面手动触发 `Release` workflow。手动触发不会修改 `package.json`，需要勾选 `confirm_release`，确认它会在 macOS 和 Windows 构建成功后创建当前 `package.json` 版本对应的 `vX.Y.Z` tag，再发布 GitHub Release。如果该 tag 已存在，workflow 会在构建前失败；需要先通过 release 脚本或手工提交方式提升版本号。
+
 tag 约定使用 annotated `vX.Y.Z`：
 
 ```bash
@@ -106,14 +108,14 @@ git tag -a vX.Y.Z -m "vX.Y.Z"
 
 云端发布通过 GitHub Actions 生成：
 
-- macOS arm64 zip
-- macOS zip blockmap
+- macOS universal zip
+- macOS universal zip blockmap
 - `latest-mac.yml`
 - Windows x64 NSIS installer
 - Windows x64 portable exe
 - `latest.yml`
 
-发布完成的判定必须来自 GitHub Actions `Release` workflow 成功，以及 `gh release view` 能看到 macOS zip、`latest-mac.yml`、Windows exe 和 `latest.yml` 等预期资产。只有 source archives 不算发布完成。
+发布完成的判定必须来自 GitHub Actions `Release` workflow 成功，以及 `gh release view` 能看到 macOS universal zip、`latest-mac.yml`、Windows exe 和 `latest.yml` 等预期资产。只有 source archives 不算发布完成。
 
 ## macOS 自动更新
 
@@ -131,7 +133,7 @@ macOS 自动更新验证必须使用签名、公证后的 GitHub Release 包作�
 4. 在 macOS 顶部应用菜单点击“检查更新...”，确认会打开独立更新窗口并显示同一更新状态。
 5. 下载完成后点击“重启更新”或“安装并重启应用”，确认应用重启后版本变为新版本。
 
-更新链路变更后，至少确认 `latest-mac.yml`、macOS zip、zip blockmap、签名和公证状态。必要时下载 release zip 后验证：
+更新链路变更后，至少确认 `latest-mac.yml`、macOS universal zip、zip blockmap、签名和公证状态。必要时下载 release zip 后验证：
 
 ```bash
 codesign --verify --deep --strict --verbose=2 /path/to/Workshop\ Todo.app
@@ -160,7 +162,7 @@ macOS 云端发布需要以下 GitHub Actions secrets：
 
 - GitHub Release 只有 source archives：通常是 publish job 被跳过、tag 不符合触发条件或 workflow 失败。
 - tag/version 不一致：修正 `package.json` version 或重新创建正确的 annotated `vX.Y.Z` tag，不要把错误 tag 当作完成发布。
-- 缺少 macOS zip、`latest-mac.yml`、Windows exe 或 `latest.yml`：先检查 GitHub Actions 日志和 electron-builder publish 输出。
+- 缺少 macOS universal zip、`latest-mac.yml`、Windows exe 或 `latest.yml`：先检查 GitHub Actions 日志和 electron-builder publish 输出。
 - macOS 包未签名或未公证：先检查 release secrets、证书类型和 notarization 输出。
 - 本机找不到 `pnpm`、`npm` 或 `gh`：优先检查 `/opt/homebrew/bin` 是否在当前执行环境 PATH 中。
 - 自动更新无法发现新版本：先确认旧版是已安装的签名 release 包，新版 GitHub Release 公开可访问，且 `latest-mac.yml` 指向正确 zip。

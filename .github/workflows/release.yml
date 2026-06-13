@@ -6,6 +6,12 @@ on:
       - "v*"
       - "[0-9]*"
   workflow_dispatch:
+    inputs:
+      confirm_release:
+        description: "Create vX.Y.Z tag from package.json and publish GitHub Release"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -14,20 +20,46 @@ jobs:
   release-context:
     name: Validate release context
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_version: ${{ steps.release.outputs.release_version }}
+      manual_release: ${{ steps.release.outputs.manual_release }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate tag matches package version
+      - name: Resolve release target
+        id: release
         shell: bash
+        env:
+          CONFIRM_RELEASE: ${{ github.event.inputs.confirm_release }}
         run: |
+          package_version="$(node -p "require('./package.json').version")"
+          if [[ ! "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "package.json version '$package_version' is not a plain X.Y.Z version." >&2
+            exit 1
+          fi
+
           if [[ "$GITHUB_REF" != refs/tags/* ]]; then
-            echo "No tag ref detected; skipping package version validation."
+            if [[ "${CONFIRM_RELEASE:-false}" != "true" ]]; then
+              echo "Manual release requires confirm_release=true because it creates a tag and publishes a GitHub Release." >&2
+              exit 1
+            fi
+
+            release_tag="v${package_version}"
+            if git ls-remote --exit-code --tags origin "refs/tags/${release_tag}" >/dev/null 2>&1; then
+              echo "Release tag '${release_tag}' already exists. Bump package.json version or use the existing tag release." >&2
+              exit 1
+            fi
+            {
+              echo "release_tag=${release_tag}"
+              echo "release_version=${package_version}"
+              echo "manual_release=true"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          package_version="$(node -p "require('./package.json').version")"
           tag_version="${GITHUB_REF_NAME#v}"
 
           if [[ "$package_version" != "$tag_version" ]]; then
@@ -35,11 +67,17 @@ jobs:
             exit 1
           fi
 
-  macos-arm64:
-    name: Build macOS arm64
+          {
+            echo "release_tag=${GITHUB_REF_NAME}"
+            echo "release_version=${package_version}"
+            echo "manual_release=false"
+          } >> "$GITHUB_OUTPUT"
+
+  macos-universal:
+    name: Build macOS universal
     needs:
       - release-context
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
       ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
@@ -116,7 +154,7 @@ jobs:
           NODE
           echo "APPLE_API_KEY=$apple_key_path" >> "$GITHUB_ENV"
 
-      - name: Package signed macOS arm64 builds
+      - name: Package signed macOS universal build
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -125,7 +163,7 @@ jobs:
         shell: bash
         run: |
           for attempt in 1 2 3; do
-            if npx electron-builder --mac zip --arm64 --publish never; then
+            if npx electron-builder --mac zip --universal --publish never; then
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then
@@ -134,10 +172,26 @@ jobs:
             sleep $((attempt * 30))
           done
 
+      - name: Validate macOS artifacts
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          expected=(
+            "release/Workshop.Todo-${version}-universal-mac.zip"
+            "release/Workshop.Todo-${version}-universal-mac.zip.blockmap"
+            "release/latest-mac.yml"
+          )
+          for file in "${expected[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Missing expected macOS artifact: $file" >&2
+              exit 1
+            fi
+          done
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: workshop-todo-macos-arm64
+          name: workshop-todo-macos-universal
           path: |
             release/*.zip
             release/*.zip.blockmap
@@ -223,28 +277,50 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/')
     needs:
-      - macos-arm64
+      - release-context
+      - macos-universal
       - windows-x64
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout release commit
+        if: needs.release-context.outputs.manual_release == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
 
+      - name: Create release tag
+        if: needs.release-context.outputs.manual_release == 'true'
+        env:
+          RELEASE_TAG: ${{ needs.release-context.outputs.release_tag }}
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release tag '${RELEASE_TAG}' already exists." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$RELEASE_TAG" -m "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "$RELEASE_TAG"
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.release-context.outputs.release_tag }}
         run: |
           mapfile -t assets < <(find release-artifacts -type f | sort)
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
-              --title "$GITHUB_REF_NAME" \
-              --notes "macOS arm64 and Windows x64 builds for Workshop Todo."
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --title "$RELEASE_TAG" \
+              --notes "macOS universal and Windows x64 builds for Workshop Todo."
           fi

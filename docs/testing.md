@@ -111,7 +111,7 @@ npx --yes pnpm app:confirmation:open --title "确认测试" --html "<h1>确认�
 ./scripts/package.sh dist
 ```
 
-macOS 本地无签名 secrets 时可只生成 zip 做本机验证。正式云端 release 会生成签名、公证后的 zip，并上传 `latest-mac.yml` 供自动更新使用。
+macOS 本地无签名 secrets 时可只生成 zip 做本机验证。正式云端 release 会生成签名、公证后的 universal zip，并上传 `latest-mac.yml` 供自动更新使用。
 
 ## 发布
 

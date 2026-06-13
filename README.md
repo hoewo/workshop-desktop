@@ -181,15 +181,16 @@ npx --yes pnpm app:confirmation:open --title "确认测试" --html "<h1>确认�
 ./scripts/package.sh dist
 ```
 
-本机默认生成当前平台安装包。macOS 云端发布生成签名、公证后的 zip；本地无签名 secrets 时仍可只构建 zip 做本机验证。
+本机默认生成当前平台安装包。macOS 云端发布生成签名、公证后的 universal zip；本地无签名 secrets 时仍可只构建当前机器架构 zip 做本机验证。
 
 ```text
-release/Workshop.Todo-<version>-arm64-mac.zip
+release/Workshop.Todo-<version>-universal-mac.zip
 ```
 
 云端发布通过 GitHub Actions 生成：
 
-- macOS arm64 zip、zip blockmap、`latest-mac.yml`
+- macOS universal zip、zip blockmap
+- `latest-mac.yml`
 - Windows x64 NSIS installer
 - Windows x64 portable exe
 

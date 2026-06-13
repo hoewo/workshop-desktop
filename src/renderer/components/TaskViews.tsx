@@ -1,4 +1,4 @@
-import { Archive, Check, ChevronRight, PauseCircle, Play, RotateCcw, SquareTerminal } from "lucide-react";
+import { Archive, Check, ChevronRight, NotebookPen, PauseCircle, Play, RotateCcw, SquareTerminal } from "lucide-react";
 import { useRef } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import type { TaskState } from "../../shared/types";

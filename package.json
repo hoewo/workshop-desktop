@@ -1,6 +1,6 @@
 {
   "name": "workshop-desktop",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "private": true,
   "description": "A lightweight cross-platform desktop client for Workshop todos.",
   "author": "Workshop",
@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "pnpm run build:main && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron dist/main/main.js\"",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:renderer": "vite build",
+    "build:renderer": "tsc --noEmit -p tsconfig.json && vite build",
     "build": "pnpm run build:main && pnpm run build:renderer",
     "preview": "vite preview --host 127.0.0.1",
     "start": "pnpm run build && electron dist/main/main.js",

@@ -34,6 +34,8 @@ npx --yes pnpm dev
 npx --yes pnpm run build
 ```
 
+构建验证会执行主进程 TypeScript 构建、renderer TypeScript 类型检查和 renderer Vite production build，避免 Vite 在未做语义检查时把漏 import 等运行时错误打进包。
+
 ## 自动化测试
 
 主进程关键架构边界有最小 smoke tests：

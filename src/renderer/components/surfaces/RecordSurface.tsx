@@ -32,6 +32,7 @@ import {
 } from "../../lib/records";
 import { ListCellArchiveButton, ListCellCompleteButton } from "../ListCellActions";
 import { MarkdownPreview } from "../MarkdownPreview";
+import { WindowFocusOverlay } from "../WindowFocusOverlay";
 import { ProjectDirectorySubtitle, WindowHeaderTitle } from "../WindowHeader";
 
 export function RecordSurface({
@@ -149,6 +150,7 @@ export function RecordSurface({
         !activeRecord && recordListCollapsed ? "collapsed-shell" : ""
       } ${windowFocusClass} ${focusPulseVisible ? "window-focus-pulse" : ""}`}
     >
+      <WindowFocusOverlay focusClass={windowFocusClass} />
       <header className="record-titlebar">
         <div className="sticky-drag">
           <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">

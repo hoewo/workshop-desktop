@@ -80,7 +80,8 @@ export function readShellContentHeight() {
     const paddingBlock = cssNumber(shellStyle.paddingTop) + cssNumber(shellStyle.paddingBottom);
     const rowGap = cssNumber(shellStyle.rowGap || shellStyle.gap);
     const visibleChildren = Array.from(shell.children).filter((child): child is HTMLElement => {
-      return child instanceof HTMLElement && window.getComputedStyle(child).display !== "none";
+      const style = window.getComputedStyle(child);
+      return child instanceof HTMLElement && style.display !== "none" && style.position !== "fixed";
     });
     const childrenHeight = visibleChildren.reduce((height, child) => {
       const isList = child.classList.contains("sticky-task-list") || child.classList.contains("record-list");

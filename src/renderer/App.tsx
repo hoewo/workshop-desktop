@@ -420,6 +420,45 @@ export default function App() {
     setRecordMode("edit");
   }, []);
 
+  const refreshActiveRecordFromNotice = useCallback(async (notice: PersonalRecordChangeNotice | null) => {
+    const activeRecordId = activeRecordRef.current?.id;
+    if (!notice?.id || !activeRecordId || notice.id !== activeRecordId) {
+      return;
+    }
+
+    if (notice.deleted) {
+      activeRecordRef.current = null;
+      recordBodyRef.current = "";
+      recordDirtyRef.current = false;
+      setActiveRecord(null);
+      setRecordBody("");
+      setRecordDirty(false);
+      setRecordSaveStatus("idle");
+      setRecordMessage("记录已删除");
+      return;
+    }
+
+    if (recordDirtyRef.current || recordSaveInFlightRef.current) {
+      setRecordMessage("记录已在其他窗口更新，当前有未保存编辑，暂未自动刷新");
+      return;
+    }
+
+    const record = await window.workshopDesktop.getPersonalRecord(notice.id);
+    if (!record || activeRecordRef.current?.id !== notice.id || recordDirtyRef.current || recordSaveInFlightRef.current) {
+      return;
+    }
+
+    activeRecordRef.current = record;
+    recordBodyRef.current = record.bodyMarkdown;
+    recordDirtyRef.current = false;
+    setActiveRecord(record);
+    setRecordListContext(getRecordListContext(record));
+    setRecordBody(record.bodyMarkdown);
+    setRecordDirty(false);
+    setRecordSaveStatus("saved");
+    setRecordMessage("");
+  }, []);
+
   const saveRecordNow = useCallback(async () => {
     recordSaveQueuedRef.current = true;
 
@@ -591,6 +630,8 @@ export default function App() {
   useEffect(
     () =>
       window.workshopDesktop.onRecordsChanged((notice: PersonalRecordChangeNotice | null) => {
+        void refreshActiveRecordFromNotice(notice);
+
         if (notice?.status === "completed") {
           markRecordCompletionFeedback(notice.id, () => void loadRecords());
           return;
@@ -599,7 +640,7 @@ export default function App() {
         clearRecordCompletionFeedback();
         void loadRecords();
       }),
-    [clearRecordCompletionFeedback, loadRecords, markRecordCompletionFeedback]
+    [clearRecordCompletionFeedback, loadRecords, markRecordCompletionFeedback, refreshActiveRecordFromNotice]
   );
 
   useEffect(() => {

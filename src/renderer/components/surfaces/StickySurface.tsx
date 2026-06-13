@@ -3,6 +3,7 @@ import type { AppConfig, TaskState } from "../../../shared/types";
 import { getProjectLocalDirectory } from "../../lib/appModel";
 import type { HeaderTitleContent } from "../../lib/records";
 import type { EnrichedTask } from "../../lib/tasks";
+import { WindowFocusOverlay } from "../WindowFocusOverlay";
 import { ProjectDirectorySubtitle, WindowHeaderTitle } from "../WindowHeader";
 import { TaskDetail, TaskRow } from "../TaskViews";
 
@@ -25,6 +26,7 @@ export function StickyLoginRequiredSurface({
         focusPulseVisible ? "window-focus-pulse" : ""
       }`}
     >
+      <WindowFocusOverlay focusClass={windowFocusClass} />
       <header className="sticky-titlebar">
         <div className="sticky-drag">
           <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">
@@ -115,6 +117,7 @@ export function StickySurface({
         isStickyContentCollapsed ? "collapsed-shell" : ""
       } ${windowFocusClass} ${focusPulseVisible ? "window-focus-pulse" : ""}`}
     >
+      <WindowFocusOverlay focusClass={windowFocusClass} />
       <header className="sticky-titlebar">
         <div className="sticky-drag">
           <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">

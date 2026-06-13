@@ -1591,26 +1591,20 @@ textarea:focus {
   gap: 0;
 }
 
-.sticky-shell.window-selected-focus::before,
-.sticky-shell.window-selected-idle::before,
-.record-shell.window-selected-focus::before,
-.record-shell.window-selected-idle::before {
-  content: "";
+.window-focus-overlay {
   position: fixed;
-  z-index: 9998;
   inset: 2px;
+  z-index: 9998;
   border-radius: 10px;
   pointer-events: none;
 }
 
-.sticky-shell.window-selected-focus::before,
-.record-shell.window-selected-focus::before {
-  border: 1px solid rgba(38, 105, 84, 0.64);
+.window-focus-overlay.is-focused {
+  box-shadow: inset 0 0 0 1.5px rgba(38, 105, 84, 0.64);
 }
 
-.sticky-shell.window-selected-idle::before,
-.record-shell.window-selected-idle::before {
-  border: 1px solid rgba(38, 105, 84, 0.34);
+.window-focus-overlay.is-idle {
+  box-shadow: inset 0 0 0 1.5px rgba(38, 105, 84, 0.32);
 }
 
 .sticky-shell.window-focus-pulse::after,

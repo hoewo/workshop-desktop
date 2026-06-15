@@ -114,6 +114,7 @@ export async function ensureWorkshopCliInstalled({
 
     await Promise.all(
       commandPaths.map(async (commandPath) => {
+        await fs.rm(commandPath, { force: true });
         await fs.writeFile(commandPath, createShim(appExecutablePath, cliScriptPath), {
           encoding: "utf8",
           mode: 0o755

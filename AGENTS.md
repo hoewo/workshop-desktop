@@ -65,7 +65,21 @@ workshop record create --title "记录标题" --body "记录内容" --scope proj
 workshop record create --title "记录标题" --body-file ./path/to/note.md --scope project --project-id 98 --project-name workshop-desktop --open
 ```
 
-发布版启动时会自动安装用户级 `workshop` 和 `workshop-desktop` 命令；开发环境如果 `workshop` 还没有安装到 PATH，可在 repo 根目录执行 `bash scripts/install-workshop-cli.sh`。如果桌面端没有运行，CLI 报错后应停止并告知用户；不要改为直接写 `~/Library/Application Support/workshop-desktop/personal-records/`。
+检查是否已有记录时，先用轻量列表，不要默认拉取正文：
+
+```bash
+workshop record list --project-id 98 --json
+```
+
+`record list` 默认只返回记录元数据（如 id、标题、状态、范围、项目/任务归属和时间戳），用于标题级筛选和去重判断。只有需要阅读某条候选记录正文时，再单独读取：
+
+```bash
+workshop record get --id <record-id> --json
+```
+
+只有在已知结果集很小且确实需要批量正文时，才使用 `record list --include-body`。
+
+发布版在非 Windows 平台启动时会自动安装用户级 `workshop` 和 `workshop-desktop` 命令；Windows 发布包当前尚未自动安装 CLI shim。开发环境如果 `workshop` 还没有安装到 PATH，可在 repo 根目录执行 `bash scripts/install-workshop-cli.sh`。如果桌面端没有运行，CLI 报错后应停止并告知用户；不要改为直接写 `~/Library/Application Support/workshop-desktop/personal-records/`。
 
 ## Workshop Desktop 派发的执行
 

@@ -60,12 +60,13 @@ macOS 本地无签名 secrets 时可只生成 zip 做本机验证。正式 macOS
 release/Workshop.Todo-<version>-universal-mac.zip
 ```
 
-发布版启动时会自动安装用户级 CLI shim：
+非 Windows 发布版启动时会自动安装用户级 CLI shim：
 
 - 默认写入 `~/.local/bin/workshop` 和 `~/.local/bin/workshop-desktop`。
 - shim 使用 Electron 自带的 Node 执行随 app 打包的 `cli/workshop-desktop-cli.mjs`，不要求用户单独安装 Node。
 - macOS 会以幂等方式在当前用户 shell profile 中补充 `~/.local/bin` PATH；已打开的终端可能需要新开窗口后才能识别命令。
 - 自动安装不写 `/usr/local/bin`，不需要管理员权限。
+- Windows 发布包当前生成 installer 和 portable exe，但尚未自动安装 CLI shim；Windows CLI 分发需后续单独实现。
 
 发布版也会携带 Workshop Codex skill：
 

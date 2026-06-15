@@ -1,121 +1,60 @@
 # 架构
 
-Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看和处理 Workshop 里的个人待办。Workshop 后端仍然是项目、任务、用户和认证的事实源；桌面端负责本地桌面体验、本地配置和本地个人记录。
+Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看和处理 Workshop 里的个人待办、本地记录和 AI 执行入口。它是人的当前注意力工作台，不是完整知识库、完整项目管理系统或后端事实源。
 
-## 运行模块
+代码是当前运行时事实。本文只记录稳定架构边界和设计约束；文件清单、接口名、RPC method、CLI 参数和具体 UI 流程由代码、类型和测试统一维护。
 
-- `src/main/main.ts`：Electron 主进程。负责 Dock、托盘、菜单入口、全局快捷键、窗口生命周期、本地配置存储、任务预览窗口、跨窗口刷新通知和 IPC 编排。
-- `src/main/codexAppServer.ts`：codex app-server JSON-RPC 客户端（JSONL over stdio）。负责 thread/turn 生命周期、通知分发、崩溃恢复和审批兜底拒绝。
-- `src/main/skillInstaller.ts`：Workshop Codex skill 安装器。负责比较内置 skill 与用户 Codex skill 目录，安装或更新 `workshop-codex-collaboration`，并在覆盖前备份已有不同版本。
-- `src/main/workshopApiService.ts`：Workshop/NebulaAuth API 服务层。负责登录验证码、登录、登出、token 刷新，以及主进程明确支持的 Workshop 用户、组织、项目和任务请求。
-- `src/main/recordStore.ts`：本地个人记录 store。负责记录 index/body 文件读写、记录规范化、写入串行化和原子文件替换。
-- `src/main/updateService.ts`：应用更新服务。负责驱动 `electron-updater` 从公开 GitHub Release 检查/下载更新，并向 renderer 广播更新状态。
-- `src/main/preload.ts`：通过 `contextBridge` 暴露类型化的 `workshopDesktop` 桥接接口。
-- `src/main/taskPreviewPreload.ts`：任务预览窗口专用桥接，只暴露保持预览、隐藏预览和打开任务便签能力。
-- `src/renderer/App.tsx`：React UI 编排层。负责登录、设置、使用手册、项目/任务聚合、当前用户任务过滤、任务状态操作、便签窗口、任务预览和个人记录窗口的状态与流程；Workshop 业务数据通过主进程显式服务方法获取，不直接传任意 API path。
-- `src/renderer/components/`：renderer 纯展示组件。当前包含认证字段、Markdown 预览、任务行/详情/项目菜单行、窗口标题和 Workshop 标识；`components/surfaces/` 按 tray、sticky、record、login、settings、manual、update 拆分窗口级渲染分支。
-- `src/renderer/content/manual.ts`：内置使用手册内容。负责维护软件使用和 Codex 与 Workshop 协作实践的目录、正文和手册 revision；内容随应用发版更新，不作为远程文档中心。
-- `src/renderer/hooks/`：renderer UI 状态 hooks。当前封装焦点脉冲和完成反馈定时器，避免 `App.tsx` 直接管理这些 timer/ref。
-- `src/renderer/lib/`：renderer 纯工具和视图模型。当前包含 URL 初始状态解析、配置规范化、记录/任务列表模型、窗口尺寸测量工具。
-- `src/renderer/styles/tokens.css`：renderer 基础设计 token，覆盖颜色、间距和圆角。
-- `src/renderer/styles.css`：renderer 全局样式和业务样式组合层。具体业务样式仍保留在同一文件中渐进整理。
-- `src/shared/types.ts`：配置、API envelope、项目、任务、个人记录、IPC bridge 和窗口事件的共享类型。
-- `scripts/workshop-desktop-cli.mjs`：本地 CLI 客户端，对外命令名为 `workshop` 和 `workshop-desktop`。发布版启动时会自动安装用户级 shim，通过随 app 打包的 CLI 脚本连接 app server，不直接写内部数据文件。
-- `resources/skills/workshop-codex-collaboration/`：随发布包携带的 Codex skill，用于安装到用户本机 Codex skill 目录。它是给用户 AI 读取的协作规范，不在桌面端进程内执行。
-- `resources/`：打包应用使用的 app、托盘和 template 图标。
-- `scripts/package.sh`：构建、目录包和 release 包的包装脚本。
+## 架构原则
 
-## 数据归属
+- 主进程拥有本地状态、文件写入、窗口生命周期、app server、Codex 派发、更新和安装类能力。
+- Renderer 只通过 preload 暴露的类型化桥接调用能力，不直接访问后端、app server token 或本地数据文件。
+- Workshop API / NebulaAuth 访问集中在主进程服务层，renderer 不暴露任意 API path。
+- CLI 是 app server 的命令门面，不是业务层或数据层。
+- Skill 是用户 AI 环境读取的协作说明，不在桌面端进程内执行。
+- 文档解释为什么这样分层；代码维护实际入口和接口细节。
 
-- Workshop 项目和任务存在远端 Workshop API 中。
-- 开发模式和发布包默认共用同一个 Electron `userData` 目录，目录名固定为 `workshop-desktop`；`WORKSHOP_DESKTOP_USER_DATA` 仅用于显式隔离测试数据。
-- NebulaAuth token、桌面端设置和使用手册已读 revision 当前存储在 Electron `userData/config.json`。
-- 项目本地目录绑定也存储在 Electron `userData/config.json`，按 Workshop 项目 ID 记录本机路径。
-- 个人记录是本地桌面数据，存储在 Electron `userData/personal-records/`。
-- app server 连接信息存储在 Electron `userData/app-server.json`，包含本机端口和本次启动生成的 token；CLI 优先读取稳定 `workshop-desktop` 目录，并兼容旧开发目录 `Electron` 的连接文件。
-- 用户级 CLI shim 默认安装在 `~/.local/bin`，并由发布版启动时刷新；shim 使用 Electron 自带的 Node 运行随 app 打包的 CLI 脚本，不要求用户单独安装 Node。
-- Workshop Codex skill 默认安装到 `~/.codex/skills/workshop-codex-collaboration`。如果安装目标已有不同版本，桌面端先把旧目录备份为同级 `workshop-codex-collaboration.backup-*`，再复制内置版本。
-- Codex 运行状态表存储在 Electron `userData/codex-runs/index.json`；exec 后端的输出文件也在该目录。Codex 线程本体归 codex 所有，落盘在 `~/.codex/sessions`。
-- 异步确认请求状态存储在 Electron `userData/confirmation-requests/index.json`。它用于记录一次确认窗口的等待、确认、取消或失败状态，不是记录、任务或项目事实。
-- release、build、截图和依赖输出都是生成物，不进入 Git。
+## 数据与事实归属
 
-## API 边界
+- Workshop 后端是项目、任务、用户、组织和认证的事实源。
+- 桌面端拥有本机设置、本地记录、项目本地目录绑定、app server 连接、确认请求状态、Codex 运行状态和使用手册已读状态。
+- Repo 中的代码和最小文档保存已审查的长期项目事实。
+- Workshop 记录是人的思考材料，不自动成为任务、决策、迭代或 repo fact。
+- Codex 线程本体归 Codex 所有；桌面端只保存发送关系和运行状态。
+- build、release、截图、下载包和依赖输出是生成物，不进入 Git。
+- Electron `userData` 是应用内部数据；AI 和 CLI 不直接读写它作为正式能力。
 
-默认网关是 `https://api.feitianchengzi.com`。
+## 服务边界
 
-Workshop 业务调用使用：
+- 后端业务访问、token 刷新、记录读写、确认请求、更新、skill 安装、CLI shim 安装和 Codex 派发都应通过主进程服务能力完成。
+- 本地记录读写集中在记录 store，状态和正文变更必须触发桌面端服务层与 UI 同步。
+- 项目本地目录绑定是设备级配置，不是 Workshop 后端事实，也不是 repo fact。
+- 使用手册随应用发版更新，不承担远程文档中心职责。
+- 运行状态表是执行遥测，不是知识对象。
 
-```text
-/{serviceName}/v1/user
-```
+## 本地 AI Bridge 与 CLI
 
-默认 `serviceName` 是 `workshop`。当前应用使用：
+- app server 只绑定 `127.0.0.1`。
+- token 分完整 token 和受限 token：完整 token 面向本机用户能力；受限 token 只用于被派发 agent 的窄回写能力。
+- CLI 只调用 app server，负责发现、参数、文件输入、JSON 输出和友好命令封装；它不保存业务事实。
+- 新增记录是低风险 append-only 写入；编辑已有对象、改变状态、创建任务、批量整理和执行派发等高风险动作应通过确认页或用户手势完成。
+- `codex.send` 属于 Workshop UI / service layer 的执行动作，不是被派发 agent 可递归触发的能力。
+- CLI 能力补齐不是逐个补命令，而是验证主进程服务层是否提供清晰、可组合、可确认的能力面。
+- 具体 RPC method、CLI 子命令、confirmation action 和权限 allowlist 由代码和测试维护，不在本文枚举。
 
-- `GET /users`
-- `GET /organizations`
-- `GET /projects`
-- `GET /tasks`
-- `POST /tasks`
-- `PUT /tasks/{id}`
+## 交互边界
 
-Renderer 不暴露通用 `api.request`。`preload` 只暴露主进程明确支持的 Workshop 业务方法：获取当前用户、列组织、列项目、列任务、创建任务和更新任务状态；主进程通过 `workshopApiService` 执行对应的 allowlist 请求。
+- Workshop Desktop 负责聚焦当前项目、任务、记录和确认动作。
+- Codex / 用户 AI 负责理解材料、检索记录池、生成候选整理、执行代码任务并提出写入动作。
+- 任务或记录发送到 Codex 时，工作目录来自 Workshop 项目的本机目录绑定。
+- 个人记录、项目记录和任务记录都面向人类阅读与编辑；AI 创建记录时默认保持短记录。
+- 稳定事实进入 repo 时必须经过最小文档边界检查。
+- 设置页和首次启动提示可以帮助用户安装或更新内置 skill，但客户端只负责分发和安装，不负责执行 skill。
 
-NebulaAuth 调用使用：
+## 非目标
 
-- `POST /auth-server/v1/public/send_verification`
-- `POST /auth-server/v1/public/login`
-- `POST /auth-server/v1/public/refresh_token`
-
-## 本地 AI Bridge
-
-桌面端启动后会开启一个仅绑定 `127.0.0.1` 的 app server。token 分两级：完整 token 写入 `userData/app-server.json`，供本机 CLI 和用户侧 AI 使用；受限 token 在派发 Codex 执行时通过环境变量 `WORKSHOP_DESKTOP_SERVER_PORT` / `WORKSHOP_DESKTOP_SERVER_TOKEN` 注入被执行进程，只允许 `record.create`（见 D-008）。
-
-当前能力：
-
-- `context.current`：读取桌面端最近聚焦的 Workshop 上下文，例如主面板、项目、任务、记录或记录草稿。该上下文用于帮助 Codex 理解“这条记录/当前任务”指向什么对象。
-- `record.create`：新增一条个人记录、项目记录或任务记录。通过 bridge 创建的记录带 `origin: agent`。
-- `record.create` 支持 `open: true`，由桌面端创建记录后打开对应记录窗口。
-- `record.list` / `record.get`：读取本地可见记录列表和单条记录正文。
-- `record.open`：按 recordId 请求桌面端打开已有记录窗口。
-- `record.annotate`：给已有记录写入 AI 整理标注。标注存储在记录 metadata 中，不改写正文，也不改变记录状态。
-- `project.list`：读取当前登录用户可访问的 Workshop 项目。
-- `task.list`：按项目读取 Workshop 任务。
-- `codex.send`：把一个 Workshop 任务或记录交给本地 Codex 执行。执行目录来自该 Workshop 项目的本机目录绑定。
-- `confirmation.open`：打开一个由调用方提供 HTML 的临时确认窗口。HTML 作为静态内容渲染，Workshop 外壳提供确认/取消按钮并把结果返回给调用方。
-- `confirmation.request`：打开异步临时确认窗口并立即返回 `requestId`。用户确认后，Workshop 在主进程执行请求中声明的记录或任务动作；调用方可稍后读取状态。
-- `confirmation.status`：读取异步确认请求的最近状态，或按 `requestId` 查询单条请求。
-- 执行默认走桌面端自启的 `codex app-server`（线程出现在 Codex app 对应项目下，状态进运行表）；`backend: "exec"` 时退回静默 `codex exec`（D-009）。客户端不直接打开 Terminal，也不直接拼接本机命令。
-- 派发不包装：turn 输入只有用户内容，不附带任何说明或来源标注。回写通道、token 限制、文档纪律和项目 ID 全部由目标项目的 `AGENTS.md` 声明——只有声明了 Workshop 派发段落的项目才有回写。运行与任务/记录的关联由运行状态表持有，不进 prompt。
-
-当前不支持：
-
-- 外部进程直接写 `userData/personal-records/` 作为正式能力。
-- 远端网络访问 app server。
-- 受限 token 调用 `record.create` 以外的方法（包括读取方法、`context.current`、`record.open`、`record.annotate`、`confirmation.request` 和 `codex.send`）。
-- 受限 token 打开临时确认窗口；`confirmation.open` 只允许完整 token 调用。
-- AI 在没有用户确认的情况下自动创建远端 Workshop 任务。
-- AI 绕过用户确认把个人记录当成已接受 repo 事实。
-
-## 交互模型
-
-- 托盘/Dock 面板是项目分组和个人任务的紧凑入口。
-- 使用手册是独立窗口，从主面板 Help 图标、应用菜单和设置页打开；手册覆盖软件使用和 Codex 与 Workshop 协作实践。
-- 便签窗口是轻量任务工作面。项目便签窗口展示任务列表；任务便签窗口聚焦单个任务。
-- 个人记录窗口处理个人、项目和任务三类记录。
-- 项目任务列表和项目记录列表在标题下方显示本地目录绑定入口；未绑定时提示绑定，已绑定时显示路径并点击打开文件夹。
-- 单个任务详情可以发送到 Codex 执行。发送前会保存任务备注，Codex 的工作目录使用该任务所属项目的本地目录绑定。
-- 项目或任务记录详情可以发送到 Codex 执行。没有项目上下文的个人记录不作为 Codex 执行入口。
-- 主面板在项目列表下方显示最近 Codex 运行（运行中/已完成/失败/已中断），悬停查看最后消息。
-- 设置面板显示 AI 协作状态，可以安装或更新 Workshop Codex skill。发布版首次启动会轻提示安装 skill；用户也可以稍后在设置页处理。
-- 设置面板和顶部应用菜单的独立更新窗口都显示应用更新状态。发现新版本后自动下载；下载完成后由用户点击“重启更新”或“安装并重启应用”触发安装。
-- 列表页面用于定位对象；详情页面用于处理一个对象。
-- 打开项目工作区时，可以同时打开项目任务面和相关项目记录面。
-
-## 边界
-
-- 本应用不是 Workshop 后端，不应复制后端对项目、任务分配、任务状态或用户身份的归属。
-- 本应用不是完整团队项目管理客户端。当前任务可见性是个人范围：只展示当前用户创建或执行的任务。
-- 本应用不是 repo 知识库。本地个人记录可以捕捉想法，但 repo 文档只存长期项目事实。
-- 本应用不是 AI 治理流程本身。它可以帮助捕捉想法并推进到任务；流程解释由 skill 和 repo 文档负责。
-- 本应用可以分发 Workshop Codex skill，但不把 skill 内容当作运行时代码执行；skill 的生效位置是用户的 AI 环境。
-- 本地 AI bridge 是应用能力入口，不是后门文件写入；所有写入必须经过桌面端服务层并触发 UI 同步。
+- 不复制 Workshop 后端的项目、任务、用户或认证事实。
+- 不成为完整团队项目管理客户端。
+- 不把本地记录池升级成固定类型系统。
+- 不把 repo 文档变成个人笔记、会议原文、AI 运行日志或临时计划归档。
+- 不把 app server 设计成远程网络 API。
+- 不把 CLI 设计成绕过服务层或用户确认的数据后门。

@@ -144,6 +144,7 @@ test("packaged app carries and auto-installs the Workshop CLI shim", async () =>
   assert.match(mainBundle, /workshop-codex-collaboration/);
   assert.match(cliInstallerBundle, /ELECTRON_RUN_AS_NODE/);
   assert.match(cliInstallerBundle, /workshop-desktop/);
+  assert.match(cliInstallerBundle, /\.rm\(commandPath/);
   assert.match(skillInstallerBundle, /WORKSHOP_CODEX_SKILL_NAME/);
   assert.match(skillInstallerBundle, /backup-/);
   assert.match(bundledSkillRaw, /Workshop \+ Codex 跨项目协作/);
@@ -347,20 +348,28 @@ test("PersonalRecordStore keeps one visible record per task and preserves origin
       id: fresh.id,
       annotation: {
         namespace: "codex.archive整理",
-        aiTitle: "Archived task note",
-        type: "implemented_bugfix",
-        summary: "This archived note is only needed as historical context.",
-        status: "handled",
+        intent: "execution_summary",
+        retention: "archived",
+        resolution: "obsolete",
+        tags: ["bugfix", "bugfix", "verification", "x".repeat(51)],
+        relatedRecordIds: [first.id, "bad id!"],
+        relatedTaskId: 7,
         confidence: 0.91
       }
     });
     assert.equal(annotated.updatedAt, archived.updatedAt);
     assert.equal(annotated.annotations?.[0]?.namespace, "codex.archive整理");
+    assert.equal(annotated.annotations?.[0]?.intent, "execution_summary");
+    assert.equal(annotated.annotations?.[0]?.retention, "archived");
+    assert.equal(annotated.annotations?.[0]?.resolution, "obsolete");
+    assert.deepEqual(annotated.annotations?.[0]?.tags, ["bugfix", "verification"]);
+    assert.deepEqual(annotated.annotations?.[0]?.relatedRecordIds, [first.id]);
+    assert.equal(annotated.annotations?.[0]?.relatedTaskId, 7);
     assert.equal(annotated.annotations?.[0]?.confidence, 0.91);
     assert.equal((await store.listVisible()).length, 0);
     const annotatedBody = await store.get(fresh.id);
     assert.equal(annotatedBody?.bodyMarkdown, "# Archived");
-    assert.equal(annotatedBody?.annotations?.[0]?.type, "implemented_bugfix");
+    assert.equal(annotatedBody?.annotations?.[0]?.intent, "execution_summary");
 
     await store.delete(first.id);
     assert.equal(await store.get(first.id), null);

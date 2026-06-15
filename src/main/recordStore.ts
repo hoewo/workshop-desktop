@@ -5,6 +5,9 @@ import type {
   AnnotatePersonalRecordRequest,
   PersonalRecord,
   PersonalRecordAnnotation,
+  PersonalRecordAnnotationIntent,
+  PersonalRecordAnnotationResolution,
+  PersonalRecordAnnotationRetention,
   PersonalRecordMeta,
   PersonalRecordOrigin,
   PersonalRecordScope,
@@ -65,6 +68,43 @@ function safeConfidence(value: unknown) {
   return Math.min(Math.max(value, 0), 1);
 }
 
+const recordAnnotationIntents: PersonalRecordAnnotationIntent[] = ["task", "question", "discussion", "principle", "execution_summary", "note"];
+const recordAnnotationRetentions: PersonalRecordAnnotationRetention[] = ["temp", "keep", "candidate", "archived"];
+const recordAnnotationResolutions: PersonalRecordAnnotationResolution[] = ["open", "answered", "decided", "converted", "obsolete"];
+
+function safeEnum<T extends string>(value: unknown, allowed: readonly T[]) {
+  return typeof value === "string" && allowed.includes(value as T) ? (value as T) : undefined;
+}
+
+function safeTextList(value: unknown, maxItems: number, maxItemLength: number) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  for (const item of value) {
+    const text = safeText(item, maxItemLength);
+    if (text) {
+      seen.add(text);
+    }
+    if (seen.size >= maxItems) {
+      break;
+    }
+  }
+
+  const items = [...seen];
+  return items.length > 0 ? items : undefined;
+}
+
+function safeRecordIdList(value: unknown) {
+  const items = safeTextList(value, 50, 120)?.filter((id) => /^[a-zA-Z0-9_-]+$/.test(id));
+  return items && items.length > 0 ? items : undefined;
+}
+
+function safePositiveInteger(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
+}
+
 function normalizeRecordAnnotation(value: unknown, existing?: PersonalRecordAnnotation): PersonalRecordAnnotation | null {
   const source = isPlainObject(value) ? value : {};
   const namespace = safeText(source.namespace, 80) ?? existing?.namespace;
@@ -75,6 +115,12 @@ function normalizeRecordAnnotation(value: unknown, existing?: PersonalRecordAnno
   const now = new Date().toISOString();
   const createdAt = safeTimestamp(source.createdAt, existing?.createdAt ?? now);
   const updatedAt = safeTimestamp(source.updatedAt, now);
+  const intent = safeEnum(source.intent, recordAnnotationIntents);
+  const retention = safeEnum(source.retention, recordAnnotationRetentions);
+  const resolution = safeEnum(source.resolution, recordAnnotationResolutions);
+  const tags = safeTextList(source.tags, 20, 50);
+  const relatedRecordIds = safeRecordIdList(source.relatedRecordIds);
+  const relatedTaskId = safePositiveInteger(source.relatedTaskId);
   const aiTitle = safeText(source.aiTitle, 160) ?? undefined;
   const type = safeText(source.type, 80) ?? undefined;
   const summary = safeText(source.summary, 800) ?? undefined;
@@ -83,6 +129,12 @@ function normalizeRecordAnnotation(value: unknown, existing?: PersonalRecordAnno
 
   return {
     namespace,
+    ...(intent ? { intent } : {}),
+    ...(retention ? { retention } : {}),
+    ...(resolution ? { resolution } : {}),
+    ...(tags ? { tags } : {}),
+    ...(relatedRecordIds ? { relatedRecordIds } : {}),
+    ...(relatedTaskId !== undefined ? { relatedTaskId } : {}),
     ...(aiTitle ? { aiTitle } : {}),
     ...(type ? { type } : {}),
     ...(summary ? { summary } : {}),

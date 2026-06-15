@@ -228,9 +228,19 @@ export type PersonalRecordScope = "none" | "project" | "task";
 export type PersonalRecordStatus = "active" | "completed" | "promoted" | "archived";
 // 缺省视为 human，兼容没有 origin 字段的历史记录。
 export type PersonalRecordOrigin = "human" | "agent";
+export type PersonalRecordAnnotationIntent = "task" | "question" | "discussion" | "principle" | "execution_summary" | "note";
+export type PersonalRecordAnnotationRetention = "temp" | "keep" | "candidate" | "archived";
+export type PersonalRecordAnnotationResolution = "open" | "answered" | "decided" | "converted" | "obsolete";
 
 export interface PersonalRecordAnnotation {
   namespace: string;
+  intent?: PersonalRecordAnnotationIntent;
+  retention?: PersonalRecordAnnotationRetention;
+  resolution?: PersonalRecordAnnotationResolution;
+  tags?: string[];
+  relatedRecordIds?: string[];
+  relatedTaskId?: number;
+  // Legacy loose fields are preserved for old annotations. New record整理 should use the structured fields above.
   aiTitle?: string;
   type?: string;
   summary?: string;

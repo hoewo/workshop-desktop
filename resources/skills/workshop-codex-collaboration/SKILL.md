@@ -15,6 +15,14 @@ description: >-
 
 不要把 Workshop 当成 repo 知识库、流程本体或事实源。Codex 的工作仍以目标 repo 的代码、`AGENTS.md` 和最小文档为准；Workshop 用于提供当前上下文、任务/记录入口、确认页和结果回写。
 
+## 核心协作模型
+
+- Workshop 是人的当前注意力工作台：它帮助用户聚焦当前项目、任务、记录和确认动作。
+- Codex / 用户 AI 是记录池的理解、检索、整理和执行入口：它可以读取材料、生成候选整理、执行代码任务并提出写入动作。
+- Workshop Desktop 是配合这套规范的工具 app，不是完整知识库、完整项目管理系统或流程本体。
+- `workshop` CLI 是交互方式；repo `AGENTS.md` 是项目级覆盖层；最小 repo 文档是已审查事实层。
+- 稳定事实进入 repo 时必须经过文档边界检查；不要把 Workshop 记录原文整段搬进 repo。
+
 ## 总流程
 
 1. 读取目标 repo 的 `AGENTS.md`，如果存在。
@@ -33,8 +41,8 @@ description: >-
 - 如果用户明确要求“安装 Workshop Desktop”或“帮我装好 workshop”，可以直接执行安装。
 - 如果用户只是询问安装方式，先说明将下载 GitHub Release、写入用户应用目录并启动应用，得到确认后再执行。
 - 不使用 `sudo`，不写 `/usr/local/bin`，不要求普通用户安装 Node、pnpm 或 clone repo。
-- 发布版启动后会自动安装用户级 `workshop` 和 `workshop-desktop` 命令到 `~/.local/bin`。
-- 安装完成后打开新终端或直接运行：
+- 发布版在非 Windows 平台启动后会自动安装用户级 `workshop` 和 `workshop-desktop` 命令到 `~/.local/bin`。Windows 发布包当前尚未自动安装 CLI shim。
+- 在支持 CLI 自动安装的平台，安装完成后打开新终端或直接运行：
   ```bash
   workshop --json doctor
   ```
@@ -104,11 +112,9 @@ Invoke-WebRequest $asset.browser_download_url -OutFile $installer
 Start-Process -FilePath $installer -Wait
 ```
 
-安装后启动 Workshop Desktop。如果 installer 没有自动启动，可在开始菜单打开 `Workshop Todo`，然后打开新终端验证：
+安装后启动 Workshop Desktop。如果 installer 没有自动启动，可在开始菜单打开 `Workshop Todo`。
 
-```powershell
-workshop --json doctor
-```
+当前 Windows 发布包尚未自动安装 `workshop` CLI shim；不要声称 Windows 端一定可以直接执行 `workshop --json doctor`。若用户需要 CLI 验证，先说明 Windows CLI 自动安装仍待实现，或改用支持 CLI 自动安装的平台验证。
 
 ### 开发 repo 内安装
 
@@ -169,7 +175,7 @@ bash scripts/install-workshop-cli.sh
 
 - `README.md`：项目是什么、怎么运行、核心能力入口。
 - `AGENTS.md`：AI 协作规则、项目级 Workshop 项目 ID、默认上下文、执行边界。
-- `docs/architecture.md`：当前架构、模块职责、数据归属、外部边界。
+- `docs/architecture.md`：架构边界、数据归属、服务边界和非目标；不维护文件清单、接口清单或 method 清单。
 - `docs/testing.md`：开发运行、构建验证、自动化测试、手工验证入口。
 - `docs/decisions.md`：已接受决策和开放问题。
 - `docs/domain.md`：仅当项目有稳定业务术语、状态机、记录/任务/领域对象时维护。
@@ -211,7 +217,7 @@ bash scripts/install-workshop-cli.sh
 初始化文档的写法：
 
 - `AGENTS.md` 写 AI 如何开始、读哪些上下文、如何获取 Workshop 项目 ID、如何验证、如何回写。
-- `architecture.md` 写当前模块边界和运行时事实，不写愿景。
+- `architecture.md` 写稳定架构边界和运行时事实归属，不写愿景，也不重复代码里已经维护的文件名、接口名或命令名。
 - `testing.md` 写可实际运行的开发、测试、构建、手工验证命令。
 - `decisions.md` 只写已接受决策和开放问题；不要塞任务清单。
 - 不创建 `.tasks/`、`Tasks/`、`notes/`、`ai-log/`、`meeting-notes/` 这类默认目录，除非用户明确要求或 repo 已有稳定规范。
@@ -256,10 +262,15 @@ workshop --json doctor
 workshop context current --json
 workshop project list --json
 workshop record list --project-id <project-id> --json
+workshop record get --id <record-id> --json
 workshop task list --project-id <project-id> --json
 ```
 
+查询记录时优先走标题/元数据级检索：`record list` 默认只返回 id、标题、状态、范围、项目/任务归属、时间戳和标注等元数据，不要为了找候选记录就加 `--include-body`。需要判断某条记录正文时，再对少量候选记录调用 `record get --id <record-id> --json`。只有已知结果集很小且用户明确需要批量正文时，才使用 `record list --include-body`。
+
 不要直接读写 `~/Library/Application Support/workshop-desktop/` 作为正式能力。不要把 CLI 当成绕过用户确认的后门。
+
+补齐 CLI 能力时，不要从“缺一个命令”直接倒推实现；先确认目标项目是否已有清晰的服务层、权限边界、确认页动作和测试，再把这些能力封装成统一命令入口。
 
 ## Workshop 派发模式
 
@@ -276,10 +287,34 @@ workshop task list --project-id <project-id> --json
 - Workshop 记录是人类思考材料，不是任务、决策、迭代或 repo fact 的类型系统。
 - Workshop 任务属于 Workshop 任务体系。
 - Repo fact 只通过 repo 文件和文档审查进入项目事实层。
+- Codex 可以理解、检索、整理记录池并执行代码任务；最终事实写入必须通过 Workshop 确认页、Workshop 任务体系或 repo 文档审查完成。
+- 记录数量增长后，优先增强检索、标注、关联和确认流程，不要默认把记录升级成复杂固定类型系统。
 - AI 可以在任务完成、形成稳定结论、或用户要求记录时创建短记录。
 - AI 默认不编辑、删除、合并、重组用户已有记录。
 - AI 默认不创建 Workshop 任务；创建任务或改任务状态需要用户明确要求或确认。
+- 归档记录或改变记录状态只有在目标项目 CLI / confirmation action 明确提供正式能力时才执行；不要通过直接改 `userData` 代替。
 - `codex.send` 是 Workshop UI/service layer 拥有的执行动作，不是 Codex 可随意递归触发的能力。
+
+## 记录整理架构
+
+记录正文是唯一面向人的叙事源。AI 需要补充摘要、执行结果、结论、风险或后续建议时，应写入正文；追加或改写已有记录正文必须走确认页。
+
+记录标注是 metadata 上的标准化索引，只放简洁字段，不放长摘要：
+
+```json
+{
+  "namespace": "codex.record整理",
+  "intent": "task | question | discussion | principle | execution_summary | note",
+  "retention": "temp | keep | candidate | archived",
+  "resolution": "open | answered | decided | converted | obsolete",
+  "tags": ["product-boundary"],
+  "relatedRecordIds": ["<record-id>"],
+  "relatedTaskId": 123,
+  "confidence": 0.86
+}
+```
+
+`intent` 是 AI 对内容主意图的判断，不是记录本体强类型。`retention` 是保留策略；`temp` 代表执行过程材料，任务完成后通常不沉淀正文。`resolution` 表示问题、讨论或任务型记录当前是否已有答案、结论或转化结果。分类变化时优先重跑标注，不迁移记录正文或扩展记录状态机。
 
 ## 回写规范
 

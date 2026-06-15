@@ -64,7 +64,7 @@ Consequences:
 
 Status: accepted
 
-Decision: Workshop Desktop 启动后提供仅本机可访问的 app server，本地 CLI/AI 通过它请求桌面端执行应用动作。第一版只验证新增个人记录。
+Decision: Workshop Desktop 启动后提供仅本机可访问的 app server，本地 CLI/AI 通过它请求桌面端执行应用动作。初始验证从新增个人记录开始；当前 bridge 已扩展到记录读写入口、项目/任务只读查询、当前上下文、确认页和 Codex 派发相关能力，具体入口和权限边界以代码、类型和测试为准。
 
 Rationale: Codex 等本地 AI 完成任务后，需要把不适合留在 repo 的信息沉淀为用户可见的项目记录或个人记录。正式能力必须由桌面端拥有状态、写入数据并刷新 UI，不能依赖外部进程直接改内部数据文件。
 
@@ -72,7 +72,7 @@ Consequences:
 
 - app server 只绑定 `127.0.0.1`。
 - 每次启动生成 token，并写入 Electron `userData/app-server.json` 供本机 CLI 发现。
-- CLI 使用 app server 新增记录，并提供记录、项目和项目任务的只读查询；后续可扩展更新记录、打开便签草稿、创建任务候选等能力。
+- CLI 使用 app server 新增记录，并提供记录、项目、项目任务、当前上下文和确认页相关能力；高风险写入必须遵循 D-008、D-011 和 repo `AGENTS.md` 的确认规则。
 - 直接写 `userData/personal-records/` 只允许作为开发调试手段，不是正式集成方式。
 
 ### D-006 项目本地目录是设备级绑定
@@ -195,6 +195,51 @@ Consequences:
 - 客户端只负责分发和安装 skill；skill 的读取和执行归用户 AI 环境，不在桌面端进程内执行。
 - AI 协作区块和首次提示不能扩大 app server token 权限，也不能绕过 D-008 的执行/回写分离。
 
+### D-014 Workshop 是当前注意力工作台，Codex 是记录池理解与执行入口
+
+Status: accepted
+
+Decision: Workshop Desktop 的稳定定位是人的当前注意力工作台；Codex / 用户 AI 是记录池的理解、检索、整理和执行入口。Workshop Desktop 提供当前上下文、记录/任务入口、确认页和安全写入通道；CLI 是交互方式，`workshop-codex-collaboration` skill 是跨项目协作规范。
+
+Rationale: 记录数量增长后，若把 Workshop 扩展成完整知识库、流程本体或复杂类型系统，会污染当前执行入口并增加产品负担。更稳的边界是：Workshop 负责让用户聚焦和确认，Codex 负责理解材料、生成候选整理和执行代码任务，repo 文档负责保存已审查的长期事实。
+
+Consequences:
+
+- 记录仍是人的思考材料，不升级成任务、决策、迭代或 repo fact 的类型系统。
+- 记录池整理优先增强检索、标注、关联和确认流程，不默认新增复杂固定类型。
+- 新增短记录可以由 AI 直接创建；改写已有记录、创建任务、改变任务状态、批量整理、删除、合并或重组记录需要用户确认。
+- 稳定事实进入 repo 时必须经过最小文档边界检查；不要把 Workshop 记录原文整段搬入 repo。
+
+### D-015 CLI 能力由主进程服务面驱动
+
+Status: accepted
+
+Decision: CLI 能力补齐不按“缺一个命令补一个命令”推进；先确认主进程服务层、app server 权限面和 confirmation action 是否清晰、可组合、可测试。CLI 只做统一命令门面，具体接口名、method 和参数由代码与测试维护。
+
+Rationale: 如果 CLI 需要绕过服务层、直接读写 `userData`，或在文档里手工维护接口清单，说明架构边界还不够稳。合理架构下，命令补齐应主要暴露已有服务能力，而不是新建第二套业务逻辑。
+
+Consequences:
+
+- 架构文档只记录服务边界和原则，不枚举 RPC method、CLI 子命令或接口路径。
+- 新 CLI 能力优先补主进程服务能力、权限 allowlist、confirmation action 和测试，再补命令封装。
+- 记录归档、记录状态、批量整理、任务状态等写入能力必须明确低风险直写或确认页路径。
+- CLI 不保存业务事实，也不把直接修改本地数据文件作为正式实现。
+
+### D-016 记录正文是唯一叙事源，标注是标准化索引
+
+Status: accepted
+
+Decision: 记录整理采用“正文 + 标注”双层模型。记录正文是唯一面向人的叙事源；AI 需要补充摘要、执行结果、结论、风险或后续建议时，应追加或改写正文。记录标注只保存标准化短字段，例如 `intent`、`retention`、`resolution`、`tags`、`relatedRecordIds` 和 `relatedTaskId`。
+
+Rationale: 如果 metadata 承载长摘要，会产生“正文一套、AI 看另一套”的分裂。把可读内容放回正文，把 metadata 收敛成可重算的索引字段，可以支持 AI 检索和归类，同时保持记录仍是人的思考材料。
+
+Consequences:
+
+- `record.annotate` 只用于低风险结构化标注，不写长篇正文内容。
+- `record.appendBody` / `record.updateBody` 仍是补充可读整理内容的正式路径，并需要用户确认。
+- 标注分类不是记录本体的强类型；后续调整分类时优先重跑标注，而不是迁移记录正文或扩展记录状态机。
+- UI 可以选择展示少量标注 badge，但正文仍是记录详情的主内容。
+
 ## 开放问题
 
 - NebulaAuth token 是否继续保存在 Electron `userData/config.json`，还是在更广泛使用前迁移到系统钥匙串？
@@ -204,5 +249,6 @@ Consequences:
 - 异步确认动作集合是否需要扩展到删除、合并、重组记录，还是继续保持窄集合？
 - Codex 运行除主面板状态行外，是否需要完整日志视图和系统级完成通知？
 - 发送到 Codex 前是否需要让用户预览最终组装的 prompt？
+- 是否需要为记录归档或记录状态变更提供正式 CLI / confirmation action，而不是只能通过 UI 操作？
 - 是否改接 `codex app-server daemon` 共享实例，以换取 Codex app 的实时可见？当前为列表可见；实测（CLI/app 0.133.0）turn 进行中在 Codex app 打开该线程，页面可能挂住，需重启 Codex app 才恢复，执行本身不受影响。
 - 派发执行是否需要工作区隔离（per-run worktree 或要求干净工作区）？实测派发 agent 与本地未提交修改在同一 checkout 并发写作。

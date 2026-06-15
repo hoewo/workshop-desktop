@@ -851,6 +851,39 @@ function normalizeAnnotationConfidence(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? clamp(value, 0, 1) : undefined;
 }
 
+const recordAnnotationIntents = ["task", "question", "discussion", "principle", "execution_summary", "note"] as const;
+const recordAnnotationRetentions = ["temp", "keep", "candidate", "archived"] as const;
+const recordAnnotationResolutions = ["open", "answered", "decided", "converted", "obsolete"] as const;
+
+function normalizeAnnotationEnum<T extends string>(value: unknown, allowed: readonly T[]) {
+  return typeof value === "string" && allowed.includes(value as T) ? (value as T) : undefined;
+}
+
+function normalizeAnnotationTextList(value: unknown, maxItems: number, maxItemLength: number) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  for (const item of value) {
+    const text = safeWindowText(item, maxItemLength);
+    if (text) {
+      seen.add(text);
+    }
+    if (seen.size >= maxItems) {
+      break;
+    }
+  }
+
+  const items = [...seen];
+  return items.length > 0 ? items : undefined;
+}
+
+function normalizeAnnotationRecordIds(value: unknown) {
+  const ids = normalizeAnnotationTextList(value, 50, 120)?.filter((id) => /^[a-zA-Z0-9_-]+$/.test(id));
+  return ids && ids.length > 0 ? ids : undefined;
+}
+
 function normalizeAppServerRecordAnnotationItem(value: unknown): AnnotatePersonalRecordRequest {
   const item = isPlainObject(value) ? value : {};
   const id = safeWindowText(item.id, 120);
@@ -863,6 +896,12 @@ function normalizeAppServerRecordAnnotationItem(value: unknown): AnnotatePersona
     throw new Error("record.annotate 需要 annotation.namespace");
   }
 
+  const intent = normalizeAnnotationEnum(rawAnnotation.intent, recordAnnotationIntents);
+  const retention = normalizeAnnotationEnum(rawAnnotation.retention, recordAnnotationRetentions);
+  const resolution = normalizeAnnotationEnum(rawAnnotation.resolution, recordAnnotationResolutions);
+  const tags = normalizeAnnotationTextList(rawAnnotation.tags, 20, 50);
+  const relatedRecordIds = normalizeAnnotationRecordIds(rawAnnotation.relatedRecordIds);
+  const relatedTaskId = normalizeOptionalPositiveNumber(rawAnnotation.relatedTaskId, "关联任务 ID");
   const aiTitle = safeWindowText(rawAnnotation.aiTitle, 160) ?? undefined;
   const type = safeWindowText(rawAnnotation.type, 80) ?? undefined;
   const summary = safeWindowText(rawAnnotation.summary, 800) ?? undefined;
@@ -873,6 +912,12 @@ function normalizeAppServerRecordAnnotationItem(value: unknown): AnnotatePersona
     id,
     annotation: {
       namespace,
+      ...(intent ? { intent } : {}),
+      ...(retention ? { retention } : {}),
+      ...(resolution ? { resolution } : {}),
+      ...(tags ? { tags } : {}),
+      ...(relatedRecordIds ? { relatedRecordIds } : {}),
+      ...(relatedTaskId !== undefined ? { relatedTaskId } : {}),
       ...(aiTitle ? { aiTitle } : {}),
       ...(type ? { type } : {}),
       ...(summary ? { summary } : {}),

@@ -113,8 +113,8 @@ workshop record create --title "AI 记录验证" --body "由 CLI 通过 app serv
 读取记录和任务：
 
 ```bash
-workshop record list --project-id 98
-workshop record get --id <record-id>
+workshop record list --project-id 98 --json
+workshop record get --id <record-id> --json
 workshop record open --id <record-id>
 workshop record annotate --annotations-file ./annotations.json --json
 workshop project list
@@ -125,6 +125,7 @@ workshop context current --json
 预期结果：
 
 - 读取命令通过 app server 返回记录、项目或任务，不直接读取 `userData` 文件。
+- `workshop record list` 默认只返回记录元数据，不包含 `bodyMarkdown`；需要正文时使用 `workshop record get --id <record-id> --json`，只有小结果集批量读正文时才使用 `--include-body`。
 - 打开记录命令通过 app server 请求桌面端打开已有记录窗口。
 - 标注命令通过 app server 更新记录 metadata，不改写记录正文。
 - 当前上下文命令返回最近聚焦的 Workshop 窗口对象；如果长时间未切换焦点，结果可标记为 `stale`。
@@ -156,7 +157,7 @@ workshop confirmation status --id <request-id> --json
 - 用户取消或关闭窗口时，不执行动作，状态为 `cancelled` 或 `closed`。
 
 如果桌面端未运行，CLI 应提示找不到 app server，而不是直接写内部数据文件。
-发布版启动时会自动安装用户级 `workshop` 和 `workshop-desktop` 命令；开发环境可用 `bash scripts/install-workshop-cli.sh` 安装同名入口。
+非 Windows 发布版启动时会自动安装用户级 `workshop` 和 `workshop-desktop` 命令；开发环境可用 `bash scripts/install-workshop-cli.sh` 安装同名入口。Windows 发布包当前尚未自动安装 CLI shim。
 `workshop-desktop` 是同一个 CLI 的别名；旧的 `npx --yes pnpm app:*` scripts 仅保留兼容，不作为推荐验证入口。
 
 ## AI 协作 Skill 验证
@@ -176,10 +177,15 @@ WORKSHOP_DESKTOP_CODEX_SKILLS_DIR=/tmp/workshop-codex-skills npx --yes pnpm dev
 - 再次打开设置页时显示“Skill 已安装”。
 - 如果目标目录已有不同内容，安装前会在同级生成 `workshop-codex-collaboration.backup-*` 备份目录。
 
-打包验证应确认发布包携带：
+源码资源检查应确认：
 
 - `resources/skills/workshop-codex-collaboration/SKILL.md`
 - `resources/skills/workshop-codex-collaboration/agents/openai.yaml`
+
+目录包或 release 包检查应确认产物携带：
+
+- `Contents/Resources/cli/workshop-desktop-cli.mjs`
+- `Contents/Resources/skills/workshop-codex-collaboration/SKILL.md`
 
 ## 打包
 
@@ -248,7 +254,3 @@ macOS 更新链路依赖公开 GitHub Release 和签名包。验证时需要：
 - 在项目记录或任务记录详情点击发送到 Codex，会先保存记录，再由桌面端后台启动 Codex。
 - 未绑定本地目录时，界面应提示先绑定目录。
 - 没有项目上下文的个人记录不能直接发送。
-
-## 本机注意事项
-
-如果 Vite/Rollup 原生依赖在内置环境下失败，先用本机正常 Node 环境重试同一命令，再判断是否是代码问题。

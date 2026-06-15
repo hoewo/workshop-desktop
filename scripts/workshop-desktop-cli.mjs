@@ -35,7 +35,7 @@ Options:
   --body <markdown>       Record markdown body.
   --body-file <path>      Read markdown body from a file.
   --scope <none|project|task>
-  --status <active|completed|promoted>
+  --status <active|completed|promoted|archived>
   --organization-id <number>
   --project-id <number>
   --project-name <text>
@@ -51,7 +51,7 @@ Options:
   --action-json <json>    Async confirmation action JSON.
   --action-file <path>    Read async confirmation action JSON from a file.
   --annotations-json <json>
-  --annotations-file <path>
+  --annotations-file <path> Annotation JSON. Standard fields: intent, retention, resolution, tags, relatedRecordIds, relatedTaskId.
   --request-id <text>     Async confirmation request ID.
   --width <number>        Temporary confirmation window width.
   --height <number>       Temporary confirmation window height.

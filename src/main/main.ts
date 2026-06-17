@@ -22,10 +22,21 @@ import type { AddressInfo } from "node:net";
 import { ensureWorkshopCliInstalled } from "./cliInstaller";
 import { CodexAppServerClient } from "./codexAppServer";
 import { buildCodexUserInput } from "./codexPrompt";
+import {
+  findLocalProjectByDirectory,
+  findWorkshopProjectDirectoryId,
+  getLocalProjectDirectoryForWorkshopProject,
+  safeLinkedWorkshopProjectId,
+  safeLocalProjectId,
+  safeLocalProjectText,
+  sanitizeLocalProjects,
+  sanitizeProjectLocalDirectories
+} from "./localProjectMigration";
 import { PersonalRecordStore, normalizeRecordScope, normalizeRecordStatus } from "./recordStore";
 import { getWorkshopCodexSkillStatus, installWorkshopCodexSkill } from "./skillInstaller";
 import { AppUpdateService } from "./updateService";
 import { WorkshopApiService } from "./workshopApiService";
+import { normalizeCodexFailureMessage } from "../shared/codexErrors";
 import type {
   AnnotatePersonalRecordRequest,
   ApiResponse,
@@ -35,11 +46,14 @@ import type {
   AppConfig,
   CodexRunBackend,
   CodexRunMeta,
+  CodexRunStatus,
   ConfirmationAction,
+  CreateLocalProjectRequest,
   CreateTaskRequest,
   ListProjectsRequest,
   ListTasksRequest,
   LoginRequest,
+  LocalProject,
   Organization,
   OrganizationsPayload,
   PersonalRecord,
@@ -88,7 +102,8 @@ const defaultConfig: AppConfig = {
   globalShortcutEnabled: true,
   lastSeenManualRevision: "",
   lastSeenSkillInstallPromptVersion: "",
-  projectLocalDirectories: {}
+  projectLocalDirectories: {},
+  localProjects: []
 };
 
 const PANEL_SHORTCUT_ACCELERATOR = "CommandOrControl+Alt+W";
@@ -98,6 +113,7 @@ const NOTE_ARRANGE_MARGIN = 12;
 const NOTE_ARRANGE_GAP = 12;
 const NOTE_ARRANGE_LIST_MIN_HEIGHT = 180;
 const NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT = 56;
+const DARWIN_ON_SCREEN_WINDOW_IDS_TIMEOUT_MS = 1200;
 const CURRENT_CONTEXT_STALE_MS = 5 * 60 * 1000;
 const CONFIRMATION_REQUESTS_LIMIT = 100;
 const USER_DATA_DIR_NAME = "workshop-desktop";
@@ -120,6 +136,8 @@ function defaultUserDataPath(dirName: string) {
 
 let tray: Tray | null = null;
 let windowRef: BrowserWindow | null = null;
+let homeWindowRef: BrowserWindow | null = null;
+let mainWindowHasBeenShown = false;
 const stickyWindows = new Set<BrowserWindow>();
 const stickyWindowTargets = new Map<BrowserWindow, NormalizedStickyTarget>();
 const recordWindows = new Set<BrowserWindow>();
@@ -303,7 +321,7 @@ async function readConfig(): Promise<AppConfig> {
     const saved = JSON.parse(raw) as Partial<AppConfig>;
     return sanitizeConfig({ ...defaultConfig, ...saved });
   } catch {
-    return defaultConfig;
+    return sanitizeConfig(defaultConfig);
   }
 }
 
@@ -325,6 +343,8 @@ function sanitizeConfig(config: AppConfig): AppConfig {
   const authMode = ["nebula", "bearer", "debugHeaders"].includes(config.authMode)
     ? config.authMode
     : "nebula";
+  const projectLocalDirectories = sanitizeProjectLocalDirectories(config.projectLocalDirectories);
+  const localProjects = sanitizeLocalProjects(config.localProjects, projectLocalDirectories);
   return {
     ...config,
     authMode,
@@ -338,26 +358,9 @@ function sanitizeConfig(config: AppConfig): AppConfig {
     lastSeenManualRevision: typeof config.lastSeenManualRevision === "string" ? config.lastSeenManualRevision : "",
     lastSeenSkillInstallPromptVersion:
       typeof config.lastSeenSkillInstallPromptVersion === "string" ? config.lastSeenSkillInstallPromptVersion : "",
-    projectLocalDirectories: sanitizeProjectLocalDirectories(config.projectLocalDirectories)
+    projectLocalDirectories,
+    localProjects
   };
-}
-
-function sanitizeProjectLocalDirectories(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-
-  const directories: Record<string, string> = {};
-  for (const [projectId, directory] of Object.entries(value)) {
-    if (!/^\d+$/.test(projectId) || typeof directory !== "string") {
-      continue;
-    }
-    const trimmed = directory.trim();
-    if (trimmed) {
-      directories[projectId] = trimmed;
-    }
-  }
-  return directories;
 }
 
 function applyDockVisibility(config: AppConfig) {
@@ -395,7 +398,7 @@ function registerGlobalShortcuts(config: AppConfig) {
   }
 
   registeredPanelShortcut = globalShortcut.register(PANEL_SHORTCUT_ACCELERATOR, () => {
-    showWindow("screen");
+    showHomeWindow();
   });
 
   if (!registeredPanelShortcut) {
@@ -480,6 +483,44 @@ function createWindow() {
   return win;
 }
 
+function createHomeWindow() {
+  const win = new BrowserWindow({
+    width: 980,
+    height: 700,
+    minWidth: 760,
+    minHeight: 540,
+    show: false,
+    frame: true,
+    resizable: true,
+    movable: true,
+    fullscreenable: true,
+    skipTaskbar: false,
+    alwaysOnTop: false,
+    title: "Workshop Desktop",
+    backgroundColor: "#f3f2ec",
+    ...windowIconOption(),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  win.on("focus", () => {
+    markCurrentWorkshopContext({ kind: "home", surface: "home" });
+  });
+
+  win.on("closed", () => {
+    homeWindowRef = null;
+    clearCurrentWorkshopContextIfMatches({ kind: "home", surface: "home" });
+  });
+
+  loadRenderer(win, { surface: "home" });
+
+  return win;
+}
+
 function hideTrayAndPreviewIfUnfocused() {
   if (!windowRef || windowRef.webContents.isDevToolsOpened()) {
     return;
@@ -499,12 +540,13 @@ function hideTrayAndPreviewIfUnfocused() {
 }
 
 interface RendererLoadOptions {
-  surface: "tray" | "sticky" | "record" | "settings" | "manual" | "update";
+  surface: "tray" | "home" | "sticky" | "record" | "settings" | "manual" | "update";
   projectId?: number | null;
   taskId?: number | null;
   noteId?: string | null;
   draft?: string | null;
   scopeType?: PersonalRecordScope | null;
+  localProjectId?: string | null;
   projectName?: string | null;
   taskTitle?: string | null;
 }
@@ -525,6 +567,9 @@ function appendRendererQuery(searchParams: URLSearchParams, options: RendererLoa
   }
   if (options.scopeType) {
     searchParams.set("scope_type", options.scopeType);
+  }
+  if (options.localProjectId) {
+    searchParams.set("local_project_id", options.localProjectId);
   }
   if (options.projectName) {
     searchParams.set("project_name", options.projectName);
@@ -590,6 +635,11 @@ function contextMatchesCurrent(context: Omit<WorkshopCurrentContext, "focusedAt"
 }
 
 function markFallbackContextAfterSurfaceClose() {
+  if (homeWindowRef && !homeWindowRef.isDestroyed() && homeWindowRef.isVisible()) {
+    markCurrentWorkshopContext({ kind: "home", surface: "home" });
+    return;
+  }
+
   if (windowRef && !windowRef.isDestroyed() && windowRef.isVisible()) {
     markCurrentWorkshopContext({ kind: "tray", surface: "tray" });
     return;
@@ -631,6 +681,7 @@ function recordTargetContext(target: NormalizedRecordTarget): Omit<WorkshopCurre
       kind: "record",
       surface: "record",
       recordId: target.noteId,
+      ...(target.localProjectId ? { localProjectId: target.localProjectId } : {}),
       ...(target.projectId !== null ? { projectId: target.projectId } : {}),
       ...(target.projectName ? { projectName: target.projectName } : {}),
       ...(target.taskId !== null ? { taskId: target.taskId } : {}),
@@ -642,6 +693,7 @@ function recordTargetContext(target: NormalizedRecordTarget): Omit<WorkshopCurre
     return {
       kind: "record-draft",
       surface: "record",
+      ...(target.localProjectId ? { localProjectId: target.localProjectId } : {}),
       ...(target.projectId !== null ? { projectId: target.projectId } : {}),
       ...(target.projectName ? { projectName: target.projectName } : {}),
       ...(target.taskId !== null ? { taskId: target.taskId } : {}),
@@ -653,6 +705,7 @@ function recordTargetContext(target: NormalizedRecordTarget): Omit<WorkshopCurre
     return {
       kind: "project",
       surface: "record",
+      ...(target.localProjectId ? { localProjectId: target.localProjectId } : {}),
       ...(target.projectId !== null ? { projectId: target.projectId } : {}),
       ...(target.projectName ? { projectName: target.projectName } : {})
     };
@@ -724,6 +777,7 @@ interface CreateRecordParams {
   title?: string | null;
   bodyMarkdown: string;
   scopeType?: PersonalRecordScope;
+  localProjectId?: string;
   projectId?: number;
   projectName?: string;
   taskId?: number;
@@ -734,6 +788,7 @@ interface CreateRecordParams {
 interface ListRecordsParams {
   scopeType?: PersonalRecordScope;
   status?: PersonalRecordStatus;
+  localProjectId?: string;
   projectId?: number;
   taskId?: number;
   query?: string;
@@ -792,6 +847,7 @@ function normalizeAppServerRecordParams(params: unknown): CreateRecordParams {
   const rawBody = typeof value.bodyMarkdown === "string" ? value.bodyMarkdown : typeof value.body === "string" ? value.body : "";
   const bodyMarkdown = title && !/^#{1,6}\s/.test(rawBody.trim()) ? `# ${title}\n\n${rawBody.trim()}`.trimEnd() : rawBody;
   const scopeType = normalizeRecordScope(value.scopeType);
+  const localProjectId = safeLocalProjectId(value.localProjectId);
   const projectId = typeof value.projectId === "number" && Number.isFinite(value.projectId) ? value.projectId : undefined;
   const taskId = typeof value.taskId === "number" && Number.isFinite(value.taskId) ? value.taskId : undefined;
 
@@ -799,6 +855,7 @@ function normalizeAppServerRecordParams(params: unknown): CreateRecordParams {
     title,
     bodyMarkdown: bodyMarkdown.trim() || (title ? `# ${title}` : ""),
     scopeType,
+    localProjectId: localProjectId || undefined,
     projectId,
     projectName: safeWindowText(value.projectName) ?? undefined,
     taskId,
@@ -830,6 +887,7 @@ function normalizeAppServerRecordListParams(params: unknown): ListRecordsParams 
   return {
     ...(value.scopeType || value.scope ? { scopeType } : {}),
     ...(status ? { status } : {}),
+    localProjectId: safeLocalProjectId(value.localProjectId) || undefined,
     projectId: normalizeOptionalPositiveNumber(value.projectId, "项目 ID"),
     taskId: normalizeOptionalPositiveNumber(value.taskId, "任务 ID"),
     query: safeWindowText(value.query, 200) ?? undefined,
@@ -1121,7 +1179,7 @@ function normalizeSendToCodexParams(params: unknown): NormalizedSendToCodexParam
 
 async function getProjectLocalDirectory(projectId: number) {
   const config = await readConfig();
-  const directory = config.projectLocalDirectories[String(projectId)]?.trim();
+  const directory = getLocalProjectDirectoryForWorkshopProject(config, projectId);
   if (!directory) {
     throw new Error("请先绑定本地目录");
   }
@@ -1132,6 +1190,161 @@ async function getProjectLocalDirectory(projectId: number) {
   }
 
   return directory;
+}
+
+async function normalizeLocalDirectoryForStorage(directory: string) {
+  const trimmed = directory.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return fs.realpath(trimmed).catch(() => trimmed);
+}
+
+function getDuplicateLocalProjectDirectoryError(projectName: string) {
+  return `该目录已绑定到本地项目「${projectName}」，请先解除原绑定或选择其他目录。`;
+}
+
+function getDuplicateWorkshopProjectDirectoryError(projectId: number) {
+  return `该目录已绑定到 Workshop 项目 ${projectId}，请先处理原绑定或选择其他目录。`;
+}
+
+async function listLocalProjects() {
+  const config = await readConfig();
+  return config.localProjects;
+}
+
+function normalizeCreateLocalProjectRequest(request: CreateLocalProjectRequest): CreateLocalProjectRequest {
+  if (!isPlainObject(request)) {
+    throw new Error("创建本地项目参数无效");
+  }
+
+  const name = safeLocalProjectText(request.name, "", 80);
+  if (!name) {
+    throw new Error("本地项目需要名称");
+  }
+
+  return {
+    name,
+    ...(safeLocalProjectText(request.localDirectory, "", 500) ? { localDirectory: safeLocalProjectText(request.localDirectory, "", 500) } : {}),
+    ...(safeLinkedWorkshopProjectId(request.linkedWorkshopProjectId)
+      ? { linkedWorkshopProjectId: safeLinkedWorkshopProjectId(request.linkedWorkshopProjectId) }
+      : {}),
+    ...(safeLocalProjectText(request.linkedWorkshopProjectName)
+      ? { linkedWorkshopProjectName: safeLocalProjectText(request.linkedWorkshopProjectName) }
+      : {})
+  };
+}
+
+async function createLocalProject(request: CreateLocalProjectRequest) {
+  const normalized = normalizeCreateLocalProjectRequest(request);
+  const config = await readConfig();
+  const now = new Date().toISOString();
+  const localDirectory = normalized.localDirectory
+    ? await normalizeLocalDirectoryForStorage(normalized.localDirectory)
+    : undefined;
+  let linkedWorkshopProjectId = normalized.linkedWorkshopProjectId;
+
+  if (localDirectory) {
+    const duplicateLocalProject = findLocalProjectByDirectory(config.localProjects, localDirectory);
+    if (duplicateLocalProject) {
+      throw new Error(getDuplicateLocalProjectDirectoryError(duplicateLocalProject.name));
+    }
+
+    const legacyWorkshopProjectId = findWorkshopProjectDirectoryId(config.projectLocalDirectories, localDirectory);
+    if (legacyWorkshopProjectId && linkedWorkshopProjectId && legacyWorkshopProjectId !== linkedWorkshopProjectId) {
+      throw new Error(getDuplicateWorkshopProjectDirectoryError(legacyWorkshopProjectId));
+    }
+    if (legacyWorkshopProjectId && !linkedWorkshopProjectId) {
+      linkedWorkshopProjectId = legacyWorkshopProjectId;
+    }
+  }
+
+  const project: LocalProject = {
+    id: `local-${crypto.randomUUID().slice(0, 8)}`,
+    name: normalized.name,
+    ...(localDirectory ? { localDirectory } : {}),
+    ...(linkedWorkshopProjectId ? { linkedWorkshopProjectId } : {}),
+    ...(normalized.linkedWorkshopProjectName ? { linkedWorkshopProjectName: normalized.linkedWorkshopProjectName } : {}),
+    createdAt: now,
+    updatedAt: now
+  };
+  await saveConfig({ localProjects: [project, ...config.localProjects] });
+  return project;
+}
+
+function normalizeLocalProjectId(id: unknown) {
+  const safeId = safeLocalProjectId(id);
+  if (!safeId) {
+    throw new Error("本地项目 ID 无效");
+  }
+  return safeId;
+}
+
+async function bindLocalProjectDirectory(localProjectId: string, owner?: BrowserWindow | null) {
+  const safeId = normalizeLocalProjectId(localProjectId);
+  const result = owner
+    ? await dialog.showOpenDialog(owner, {
+        properties: ["openDirectory", "createDirectory"],
+        title: "绑定本地项目目录"
+      })
+    : await dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+        title: "绑定本地项目目录"
+      });
+  const [directory] = result.filePaths;
+  if (result.canceled || !directory) {
+    return null;
+  }
+
+  const localDirectory = await normalizeLocalDirectoryForStorage(directory);
+  const config = await readConfig();
+  const currentProject = config.localProjects.find((project) => project.id === safeId);
+  if (!currentProject) {
+    throw new Error("本地项目不存在");
+  }
+
+  const duplicateLocalProject = findLocalProjectByDirectory(config.localProjects, localDirectory, safeId);
+  if (duplicateLocalProject) {
+    throw new Error(getDuplicateLocalProjectDirectoryError(duplicateLocalProject.name));
+  }
+
+  const legacyWorkshopProjectId = findWorkshopProjectDirectoryId(config.projectLocalDirectories, localDirectory);
+  if (
+    legacyWorkshopProjectId &&
+    currentProject.linkedWorkshopProjectId &&
+    currentProject.linkedWorkshopProjectId !== legacyWorkshopProjectId
+  ) {
+    throw new Error(getDuplicateWorkshopProjectDirectoryError(legacyWorkshopProjectId));
+  }
+
+  const now = new Date().toISOString();
+  const localProjects = config.localProjects.map((project) => {
+    if (project.id !== safeId) {
+      return project;
+    }
+    return {
+      ...project,
+      localDirectory,
+      ...(legacyWorkshopProjectId && !project.linkedWorkshopProjectId ? { linkedWorkshopProjectId: legacyWorkshopProjectId } : {}),
+      updatedAt: now
+    };
+  });
+  return saveConfig({ localProjects });
+}
+
+async function openLocalProjectDirectory(localProjectId: string) {
+  const safeId = normalizeLocalProjectId(localProjectId);
+  const config = await readConfig();
+  const project = config.localProjects.find((item) => item.id === safeId);
+  const directory = project?.localDirectory?.trim();
+  if (!directory) {
+    throw new Error("请先绑定本地目录");
+  }
+
+  const error = await shell.openPath(directory);
+  if (error) {
+    throw new Error(error);
+  }
 }
 
 async function resolveCodexExecutable() {
@@ -1276,6 +1489,7 @@ function buildRecordSaveRequest(record: PersonalRecord, bodyMarkdown: string): S
     scopeType: record.scopeType,
     status: record.status,
     origin: record.origin,
+    localProjectId: record.localProjectId,
     projectId: record.projectId,
     projectName: record.projectName,
     taskId: record.taskId,
@@ -1312,6 +1526,7 @@ async function executeConfirmationAction(action?: ConfirmationAction): Promise<u
       bodyMarkdown: params.bodyMarkdown,
       scopeType: params.scopeType ?? "none",
       origin: "agent",
+      localProjectId: params.localProjectId,
       projectId: params.projectId,
       projectName: params.projectName,
       taskId: params.taskId,
@@ -1458,12 +1673,13 @@ async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<
       lastMessageFlushTimer = setTimeout(flushLastMessage, 500);
     }
   };
-  const takeLastMessage = (detail?: string) => {
+  const takeLastMessage = (detail?: string, status?: CodexRunStatus) => {
     if (lastMessageFlushTimer) {
       clearTimeout(lastMessageFlushTimer);
       lastMessageFlushTimer = null;
     }
-    return (detail || pendingLastMessage).slice(0, 600);
+    const message = detail || pendingLastMessage;
+    return (status === "failed" ? normalizeCodexFailureMessage(message) : message).slice(0, 600);
   };
 
   try {
@@ -1475,7 +1691,7 @@ async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<
           queueLastMessage(text);
         },
         onCompleted: (status, detail) => {
-          const lastMessage = takeLastMessage(detail);
+          const lastMessage = takeLastMessage(detail, status);
           void updateCodexRun(run.runId, {
             status,
             completedAt: new Date().toISOString(),
@@ -1487,13 +1703,13 @@ async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<
     await updateCodexRun(run.runId, { threadId, turnId });
     return { localDirectory: run.cwd, runId: run.runId, backend: "app-server", threadId };
   } catch (error) {
-    const lastMessage = takeLastMessage(error instanceof Error ? error.message : "codex 启动失败");
+    const lastMessage = takeLastMessage(error instanceof Error ? error.message : "codex 启动失败", "failed");
     await updateCodexRun(run.runId, {
       status: "failed",
       completedAt: new Date().toISOString(),
       lastMessage
     });
-    throw error;
+    throw new Error(lastMessage);
   }
 }
 
@@ -2039,6 +2255,93 @@ function isWindowOnDisplay(win: BrowserWindow, displayId: number) {
   return screen.getDisplayMatching(win.getBounds()).id === displayId;
 }
 
+function getWindowMediaSourceWindowId(win: BrowserWindow) {
+  const match = /^window:(\d+):/.exec(win.getMediaSourceId());
+  return match?.[1] ?? null;
+}
+
+function getDarwinOnScreenWindowIds() {
+  if (process.platform !== "darwin") {
+    return Promise.resolve<Set<string> | null>(null);
+  }
+
+  const script = `
+ObjC.import("CoreGraphics");
+const ref = $.CGWindowListCopyWindowInfo(1, 0);
+const list = ObjC.castRefToObject(ref);
+const count = Number(list.count);
+const ids = [];
+for (let i = 0; i < count; i += 1) {
+  const window = list.objectAtIndex(i);
+  const id = ObjC.unwrap(window.objectForKey("kCGWindowNumber"));
+  if (id !== undefined && id !== null) {
+    ids.push(String(id));
+  }
+}
+console.log(JSON.stringify(ids));
+`;
+
+  return new Promise<Set<string> | null>((resolve) => {
+    const child = spawn("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], {
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    let output = "";
+    let settled = false;
+
+    const finish = (ids: Set<string> | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve(ids);
+    };
+
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, DARWIN_ON_SCREEN_WINDOW_IDS_TIMEOUT_MS);
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.on("error", () => finish(null));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        finish(null);
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(output) as unknown;
+        if (!Array.isArray(parsed)) {
+          finish(null);
+          return;
+        }
+
+        const ids = new Set(
+          parsed
+            .filter((id): id is string | number => typeof id === "string" || typeof id === "number")
+            .map((id) => String(id))
+        );
+        finish(ids.size > 0 ? ids : null);
+      } catch {
+        finish(null);
+      }
+    });
+  });
+}
+
+function isWindowInCurrentWorkspace(win: BrowserWindow, currentWorkspaceWindowIds: Set<string> | null) {
+  if (!currentWorkspaceWindowIds) {
+    return true;
+  }
+
+  const windowId = getWindowMediaSourceWindowId(win);
+  return Boolean(windowId && currentWorkspaceWindowIds.has(windowId));
+}
+
 function showInCurrentWorkspace(win: BrowserWindow) {
   if (process.platform === "darwin") {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -2134,6 +2437,9 @@ async function listRecordsForAppServer(params: unknown) {
   if (options.status) {
     records = records.filter((record) => record.status === options.status);
   }
+  if (options.localProjectId) {
+    records = records.filter((record) => record.localProjectId === options.localProjectId);
+  }
   if (options.projectId !== undefined) {
     records = records.filter((record) => record.projectId === options.projectId);
   }
@@ -2222,6 +2528,9 @@ function notifyRecordsChanged(notice: PersonalRecordChangeNotice | null = null) 
   if (windowRef && !windowRef.isDestroyed()) {
     windowRef.webContents.send("record:changed", notice);
   }
+  if (homeWindowRef && !homeWindowRef.isDestroyed()) {
+    homeWindowRef.webContents.send("record:changed", notice);
+  }
   for (const win of stickyWindows) {
     if (!win.isDestroyed()) {
       win.webContents.send("record:changed", notice);
@@ -2259,6 +2568,7 @@ interface NormalizedRecordTarget {
   noteId: string | null;
   draft: boolean;
   scopeType: PersonalRecordScope;
+  localProjectId: string | null;
   projectId: number | null;
   projectName: string | null;
   taskId: number | null;
@@ -2270,11 +2580,13 @@ interface NormalizedRecordTarget {
 function normalizeRecordTarget(target?: PersonalRecordTarget): NormalizedRecordTarget {
   const nextTarget = isPlainObject(target) ? target : undefined;
   const noteId = safeWindowText(nextTarget?.noteId, 80);
+  const localProjectId = safeLocalProjectId(nextTarget?.localProjectId);
 
   return {
     noteId: noteId && /^[a-zA-Z0-9_-]+$/.test(noteId) ? noteId : null,
     draft: nextTarget?.draft === true,
     scopeType: normalizeRecordScope(nextTarget?.scopeType),
+    localProjectId: localProjectId || null,
     projectId: typeof nextTarget?.projectId === "number" && Number.isFinite(nextTarget.projectId) ? nextTarget.projectId : null,
     projectName: safeWindowText(nextTarget?.projectName),
     taskId: typeof nextTarget?.taskId === "number" && Number.isFinite(nextTarget.taskId) ? nextTarget.taskId : null,
@@ -2295,6 +2607,10 @@ function isSameRecordListTarget(a: NormalizedRecordTarget, b: NormalizedRecordTa
 
   if (a.scopeType === "none") {
     return true;
+  }
+
+  if (a.localProjectId !== null || b.localProjectId !== null) {
+    return a.localProjectId === b.localProjectId;
   }
 
   if (a.projectId !== null || b.projectId !== null) {
@@ -2391,6 +2707,7 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
     noteId: target.noteId,
     draft: target.draft ? "1" : null,
     scopeType: target.scopeType,
+    localProjectId: target.localProjectId,
     projectId: target.projectId,
     projectName: target.projectName,
     taskId: target.taskId,
@@ -2642,6 +2959,7 @@ function syncRecordWindowTarget(sender: WebContents, record: PersonalRecord) {
     noteId: record.id,
     draft: false,
     scopeType: record.scopeType,
+    localProjectId: safeLocalProjectId(record.localProjectId) || null,
     projectId: typeof record.projectId === "number" && Number.isFinite(record.projectId) ? record.projectId : null,
     projectName: safeWindowText(record.projectName),
     taskId: typeof record.taskId === "number" && Number.isFinite(record.taskId) ? record.taskId : null,
@@ -3017,14 +3335,30 @@ async function getRecordArrangeItem(win: BrowserWindow, sourceOrder: number): Pr
 }
 
 async function getArrangeableNoteItems(sourceWin: BrowserWindow, displayId: number) {
+  const currentWorkspaceWindowIds = await getDarwinOnScreenWindowIds();
+  const workspaceFilter = isWindowInCurrentWorkspace(sourceWin, currentWorkspaceWindowIds) ? currentWorkspaceWindowIds : null;
   const stickyItems = [...stickyWindows]
-    .filter((win) => !win.isDestroyed() && !win.isMinimized() && win.isVisible() && isWindowOnDisplay(win, displayId))
+    .filter(
+      (win) =>
+        !win.isDestroyed() &&
+        !win.isMinimized() &&
+        win.isVisible() &&
+        isWindowOnDisplay(win, displayId) &&
+        isWindowInCurrentWorkspace(win, workspaceFilter)
+    )
     .map((win, index) => getStickyArrangeItem(win, index))
     .filter((item): item is ArrangeItem => Boolean(item));
   const recordItems = (
     await Promise.all(
       [...recordWindows]
-        .filter((win) => !win.isDestroyed() && !win.isMinimized() && win.isVisible() && isWindowOnDisplay(win, displayId))
+        .filter(
+          (win) =>
+            !win.isDestroyed() &&
+            !win.isMinimized() &&
+            win.isVisible() &&
+            isWindowOnDisplay(win, displayId) &&
+            isWindowInCurrentWorkspace(win, workspaceFilter)
+        )
         .map((win, index) => getRecordArrangeItem(win, stickyItems.length + index))
     )
   ).filter((item): item is ArrangeItem => Boolean(item));
@@ -3204,20 +3538,52 @@ function positionWindowOnScreen(win: BrowserWindow) {
   win.setPosition(x, y, false);
 }
 
+function showMainWindowInAssignedWorkspace(win: BrowserWindow) {
+  if (win.isMinimized()) {
+    win.restore();
+  }
+  win.show();
+  win.focus();
+}
+
+function showHomeWindow() {
+  hideTaskPreviewWindow();
+
+  if (!homeWindowRef || homeWindowRef.isDestroyed()) {
+    homeWindowRef = createHomeWindow();
+    positionWindowOnScreen(homeWindowRef);
+  }
+
+  if (homeWindowRef.isMinimized()) {
+    homeWindowRef.restore();
+  }
+
+  showInCurrentWorkspace(homeWindowRef);
+  markCurrentWorkshopContext({ kind: "home", surface: "home" });
+}
+
 function showWindow(source: WindowOpenSource = "tray") {
   if (!windowRef) {
     return;
   }
 
   hideTaskPreviewWindow();
+  if (mainWindowHasBeenShown) {
+    showMainWindowInAssignedWorkspace(windowRef);
+    markCurrentWorkshopContext({ kind: "tray", surface: "tray" });
+    return;
+  }
+
   if (source === "tray" && positionWindowNearTray(windowRef)) {
     showInCurrentWorkspace(windowRef);
+    mainWindowHasBeenShown = true;
     markCurrentWorkshopContext({ kind: "tray", surface: "tray" });
     return;
   }
 
   positionWindowOnScreen(windowRef);
   showInCurrentWorkspace(windowRef);
+  mainWindowHasBeenShown = true;
   markCurrentWorkshopContext({ kind: "tray", surface: "tray" });
 }
 
@@ -3236,10 +3602,24 @@ function toggleWindow() {
 function buildAppEntryMenu(source: WindowOpenSource): MenuItemConstructorOptions[] {
   return [
     {
-      label: "显示面板",
+      label: source === "tray" ? "显示托盘面板" : "打开工作台",
       accelerator: PANEL_SHORTCUT_ACCELERATOR,
-      click: () => showWindow(source)
+      click: () => {
+        if (source === "tray") {
+          showWindow("tray");
+          return;
+        }
+        showHomeWindow();
+      }
     },
+    ...(source === "tray"
+      ? [
+          {
+            label: "打开工作台",
+            click: () => showHomeWindow()
+          }
+        ]
+      : []),
     {
       label: "使用手册",
       click: () => showManualWindow()
@@ -3317,6 +3697,12 @@ function configureApplicationMenu() {
             { role: "about", label: `关于 ${app.name}` },
             { type: "separator" },
             {
+              label: "打开工作台",
+              accelerator: PANEL_SHORTCUT_ACCELERATOR,
+              click: () => showHomeWindow()
+            },
+            { type: "separator" },
+            {
               label: "设置...",
               accelerator: "CommandOrControl+,",
               click: () => showSettingsWindow()
@@ -3346,6 +3732,12 @@ function configureApplicationMenu() {
       {
         label: "应用",
         submenu: [
+          {
+            label: "打开工作台",
+            accelerator: PANEL_SHORTCUT_ACCELERATOR,
+            click: () => showHomeWindow()
+          },
+          { type: "separator" },
           {
             label: "设置...",
             accelerator: "CommandOrControl+,",
@@ -3432,6 +3824,9 @@ function sendWorkshopRefresh(event: WorkshopRefreshEvent, sender?: WebContents) 
   if (windowRef && !windowRef.isDestroyed() && windowRef.webContents !== sender) {
     windowRef.webContents.send("workshop:refresh", event);
   }
+  if (homeWindowRef && !homeWindowRef.isDestroyed() && homeWindowRef.webContents !== sender) {
+    homeWindowRef.webContents.send("workshop:refresh", event);
+  }
   for (const win of stickyWindows) {
     if (!win.isDestroyed() && win.webContents !== sender) {
       win.webContents.send("workshop:refresh", event);
@@ -3440,7 +3835,7 @@ function sendWorkshopRefresh(event: WorkshopRefreshEvent, sender?: WebContents) 
 }
 
 function sendConfigChanged(config: AppConfig) {
-  const windows = [windowRef, settingsWindowRef, manualWindowRef, updateWindowRef, ...stickyWindows, ...recordWindows];
+  const windows = [windowRef, homeWindowRef, settingsWindowRef, manualWindowRef, updateWindowRef, ...stickyWindows, ...recordWindows];
   for (const win of windows) {
     if (win && !win.isDestroyed()) {
       win.webContents.send("config:changed", config);
@@ -3451,6 +3846,9 @@ function sendConfigChanged(config: AppConfig) {
 function sendAppUpdateStatus(status: AppUpdateStatus) {
   if (windowRef && !windowRef.isDestroyed()) {
     windowRef.webContents.send("appUpdate:status", status);
+  }
+  if (homeWindowRef && !homeWindowRef.isDestroyed()) {
+    homeWindowRef.webContents.send("appUpdate:status", status);
   }
   if (settingsWindowRef && !settingsWindowRef.isDestroyed()) {
     settingsWindowRef.webContents.send("appUpdate:status", status);
@@ -3514,11 +3912,38 @@ async function bindProjectLocalDirectory(projectId: number, owner?: BrowserWindo
     return null;
   }
 
+  const localDirectory = await normalizeLocalDirectoryForStorage(directory);
   const config = await readConfig();
+  const duplicateWorkshopProjectId = findWorkshopProjectDirectoryId(config.projectLocalDirectories, localDirectory, projectId);
+  if (duplicateWorkshopProjectId) {
+    throw new Error(getDuplicateWorkshopProjectDirectoryError(duplicateWorkshopProjectId));
+  }
+
+  const linkedLocalProject = findLocalProjectByDirectory(config.localProjects, localDirectory);
+  let localProjects = config.localProjects;
+  if (linkedLocalProject) {
+    if (linkedLocalProject.linkedWorkshopProjectId && linkedLocalProject.linkedWorkshopProjectId !== projectId) {
+      throw new Error(getDuplicateLocalProjectDirectoryError(linkedLocalProject.name));
+    }
+
+    const now = new Date().toISOString();
+    localProjects = config.localProjects.map((localProject) =>
+      localProject.id === linkedLocalProject.id
+        ? {
+            ...localProject,
+            linkedWorkshopProjectId: projectId,
+            localDirectory,
+            updatedAt: now
+          }
+        : localProject
+    );
+  }
+
   return saveConfig({
+    localProjects,
     projectLocalDirectories: {
       ...config.projectLocalDirectories,
-      [String(projectId)]: directory
+      [String(projectId)]: localDirectory
     }
   });
 }
@@ -3529,7 +3954,7 @@ async function openProjectLocalDirectory(projectId: number) {
   }
 
   const config = await readConfig();
-  const directory = config.projectLocalDirectories[String(projectId)]?.trim();
+  const directory = getLocalProjectDirectoryForWorkshopProject(config, projectId);
   if (!directory) {
     throw new Error("请先绑定本地目录");
   }
@@ -3617,10 +4042,13 @@ function registerIpc() {
     workshopApiService.updateTask(request)
   );
   ipcMain.handle("shell:openExternal", (_event, url: string) => shell.openExternal(url));
+  ipcMain.handle("home:open", () => showHomeWindow());
   ipcMain.handle("settings:open", () => showSettingsWindow());
   ipcMain.handle("manual:open", () => showManualWindow());
   ipcMain.handle("sticky:open", (_event, target?: StickyTarget | number) => showStickyWindow(target));
   ipcMain.handle("record:open", (_event, target?: PersonalRecordTarget) => showPersonalRecordWindow(target));
+  ipcMain.handle("localProject:list", () => listLocalProjects());
+  ipcMain.handle("localProject:create", (_event, request: CreateLocalProjectRequest) => createLocalProject(request));
   ipcMain.handle("record:list", () => listPersonalRecords());
   ipcMain.handle("record:get", (_event, id: string) => getPersonalRecord(id));
   ipcMain.handle("record:save", async (event, record: SavePersonalRecordRequest) => {
@@ -3660,6 +4088,10 @@ function registerIpc() {
     }
     return saveConfig({ stickyAlwaysOnTop: enabled });
   });
+  ipcMain.handle("localProjectDirectory:bind", (event, localProjectId: string) =>
+    bindLocalProjectDirectory(localProjectId, BrowserWindow.fromWebContents(event.sender))
+  );
+  ipcMain.handle("localProjectDirectory:open", (_event, localProjectId: string) => openLocalProjectDirectory(localProjectId));
   ipcMain.handle("projectDirectory:bind", (event, projectId: number) =>
     bindProjectLocalDirectory(projectId, BrowserWindow.fromWebContents(event.sender))
   );
@@ -3679,7 +4111,7 @@ if (!gotLock) {
 }
 
 app.on("second-instance", () => {
-  showWindow("screen");
+  showHomeWindow();
 });
 
 app.on("before-quit", () => {
@@ -3694,7 +4126,7 @@ app.on("will-quit", () => {
 });
 
 app.on("activate", () => {
-  showWindow("screen");
+  showHomeWindow();
 });
 
 app.whenReady().then(async () => {
@@ -3748,7 +4180,7 @@ app.whenReady().then(async () => {
     });
   }, 1200);
   if (!hasValidLogin(config)) {
-    setTimeout(() => showWindow("screen"), 400);
+    setTimeout(() => showHomeWindow(), 400);
   }
 });
 

@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import type { RefObject } from "react";
 import type { AppConfig, PersonalRecord, PersonalRecordMeta, Project } from "../../../shared/types";
-import { getProjectLocalDirectory } from "../../lib/appModel";
+import { getLocalProjectLocalDirectory, getProjectLocalDirectory } from "../../lib/appModel";
 import {
   getRecordHeaderTitle,
   getRecordListEmptyLabel,
@@ -49,6 +49,7 @@ export function RecordSurface({
   focusPulseVisible,
   handleArrangeStickyWindows,
   handleNewRecord,
+  handleLocalProjectDirectoryClick,
   handleProjectDirectoryClick,
   handleStickyAlwaysOnTop,
   hasRecordSearchQuery,
@@ -92,6 +93,7 @@ export function RecordSurface({
   focusPulseVisible: boolean;
   handleArrangeStickyWindows: () => void;
   handleNewRecord: () => void;
+  handleLocalProjectDirectoryClick: (localProjectId: string) => void;
   handleProjectDirectoryClick: (projectId: number, source: "record") => void;
   handleStickyAlwaysOnTop: (enabled: boolean) => void;
   hasRecordSearchQuery: boolean;
@@ -174,6 +176,15 @@ export function RecordSurface({
               <ProjectDirectorySubtitle
                 localDirectory={getProjectLocalDirectory(config, recordListContext.projectId)}
                 onClick={() => handleProjectDirectoryClick(recordListContext.projectId as number, "record")}
+              />
+            ) : null}
+            {!activeRecord &&
+            recordListContext.scopeType === "project" &&
+            recordListContext.localProjectId &&
+            recordListContext.projectId === undefined ? (
+              <ProjectDirectorySubtitle
+                localDirectory={getLocalProjectLocalDirectory(config, recordListContext.localProjectId)}
+                onClick={() => handleLocalProjectDirectoryClick(recordListContext.localProjectId as string)}
               />
             ) : null}
             {canAssignRecordToProject && recordScopePickerOpen ? (

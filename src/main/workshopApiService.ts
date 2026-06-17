@@ -246,7 +246,9 @@ export class WorkshopApiService {
       refreshToken: "",
       accessTokenExpiresAt: 0,
       refreshTokenExpiresAt: 0,
-      username: ""
+      userId: "",
+      username: "",
+      sessionId: ""
     });
   }
 

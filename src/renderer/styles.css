@@ -67,6 +67,567 @@ button {
   background: var(--color-bg-elevated);
 }
 
+.home-shell {
+  gap: 16px;
+  padding: 22px 24px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0) 44%),
+    var(--color-bg);
+}
+
+.home-topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+}
+
+.home-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.home-title > div {
+  min-width: 0;
+}
+
+.home-title h1 {
+  margin: 0;
+  color: #1d1f22;
+  font-size: 24px;
+  line-height: 1.08;
+  font-weight: 800;
+}
+
+.home-title span {
+  display: block;
+  margin-top: 3px;
+  color: #66716c;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.home-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-actions .icon-button {
+  position: relative;
+}
+
+.home-actions .icon-button.has-update-dot::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid #fff;
+  border-radius: 999px;
+  background: #d8782f;
+}
+
+.home-metrics {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.home-metrics > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(30, 36, 34, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.home-metrics strong {
+  display: block;
+  color: #1d1f22;
+  font-size: 25px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.home-metrics span {
+  display: block;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #68706c;
+  font-size: 12px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 1.1fr) minmax(240px, 1fr) minmax(220px, 0.8fr);
+  gap: 16px;
+  flex: 1 1 auto;
+}
+
+.home-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(30, 36, 34, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.home-panel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border-bottom: 1px solid rgba(30, 36, 34, 0.08);
+}
+
+.home-panel-head h2 {
+  margin: 0;
+  color: #1f2623;
+  font-size: 16px;
+  line-height: 1.15;
+  font-weight: 780;
+}
+
+.compact-command {
+  width: auto;
+  height: 30px;
+  min-width: 74px;
+  padding: 0 10px;
+}
+
+.home-create-project {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(30, 36, 34, 0.08);
+}
+
+.home-create-project input {
+  height: 32px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.home-create-project button {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #266954;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.home-create-project button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.home-project-list,
+.home-task-list,
+.home-run-list {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.home-project-list,
+.home-task-list {
+  flex: 1 1 auto;
+  padding: 8px;
+}
+
+.home-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-project-menu-item .project-row-content {
+  min-height: 46px;
+  grid-template-columns: 28px minmax(0, 1fr) auto 18px;
+}
+
+.home-project-menu-item:hover .project-row-name-block small,
+.home-project-menu-item:focus-visible .project-row-name-block small,
+.home-project-menu-item.active .project-row-name-block small,
+.home-project-menu-item:hover .project-row-directory,
+.home-project-menu-item:focus-visible .project-row-directory,
+.home-project-menu-item.active .project-row-directory,
+.home-project-menu-item:hover .project-row-badges,
+.home-project-menu-item:focus-visible .project-row-badges,
+.home-project-menu-item.active .project-row-badges {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.home-project-menu-item:hover .project-row-badges span,
+.home-project-menu-item:focus-visible .project-row-badges span,
+.home-project-menu-item.active .project-row-badges span,
+.home-project-menu-item:hover .project-row-badges button,
+.home-project-menu-item:focus-visible .project-row-badges button,
+.home-project-menu-item.active .project-row-badges button {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.home-project-menu-item:hover .project-row-badges span.unbound,
+.home-project-menu-item:focus-visible .project-row-badges span.unbound,
+.home-project-menu-item.active .project-row-badges span.unbound,
+.home-project-menu-item:hover .project-row-badges button.unbound,
+.home-project-menu-item:focus-visible .project-row-badges button.unbound,
+.home-project-menu-item.active .project-row-badges button.unbound {
+  background: rgba(255, 255, 255, 0.24);
+  color: #fff;
+}
+
+.home-project-menu-item:hover .project-row-badges strong,
+.home-project-menu-item:focus-visible .project-row-badges strong,
+.home-project-menu-item.active .project-row-badges strong {
+  color: #fff;
+}
+
+.home-task-row:hover,
+.home-task-row:focus-visible {
+  background: rgba(30, 36, 34, 0.055);
+}
+
+.project-row-name-block {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.project-row-name-block span,
+.project-row-name-block small,
+.project-row-directory {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row-name-block span {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.project-row-name-block small,
+.project-row-directory {
+  color: #68706c;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.project-row-directory {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.project-row-directory:hover,
+.project-row-directory:focus-visible {
+  color: #1f6d56;
+  outline: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.home-project-menu-item:hover .project-row-directory:hover,
+.home-project-menu-item:focus-visible .project-row-directory:hover,
+.home-project-menu-item.active .project-row-directory:hover,
+.home-project-menu-item:hover .project-row-directory:focus-visible,
+.home-project-menu-item:focus-visible .project-row-directory:focus-visible,
+.home-project-menu-item.active .project-row-directory:focus-visible {
+  color: #fff;
+}
+
+.project-row-badges {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: end;
+  min-width: 0;
+}
+
+.project-row-badges span,
+.project-row-badges button {
+  max-width: 74px;
+  overflow: hidden;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(38, 105, 84, 0.1);
+  color: #2b6553;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row-badges button {
+  cursor: pointer;
+}
+
+.project-row-badges button:hover,
+.project-row-badges button:focus-visible {
+  background: rgba(38, 105, 84, 0.16);
+  outline: none;
+}
+
+.project-row-badges span.unbound,
+.project-row-badges button.unbound {
+  background: rgba(129, 95, 44, 0.12);
+  color: #815f2c;
+}
+
+.project-row-badges button.unbound:hover,
+.project-row-badges button.unbound:focus-visible {
+  background: rgba(129, 95, 44, 0.18);
+}
+
+.project-row-badges strong {
+  min-width: 24px;
+  color: #1f6d56;
+  font-size: 15px;
+  line-height: 1;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home-task-row {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 8px;
+  color: #1f2623;
+  cursor: pointer;
+  outline: none;
+}
+
+.home-task-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home-task-content strong {
+  min-width: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  color: #1f2623;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.home-task-content span {
+  min-width: 0;
+  overflow: hidden;
+  color: #68706c;
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-side {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.home-account {
+  flex: 0 0 auto;
+  padding: 10px;
+  gap: 10px;
+}
+
+.home-account-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 2px 0;
+}
+
+.home-account-copy span {
+  color: #6b716e;
+  font-size: 11px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.home-account-copy strong {
+  color: #1f2623;
+  font-size: 15px;
+  line-height: 1.15;
+}
+
+.home-account button {
+  min-width: 0;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  background: #266954;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.home-account.connected button {
+  background: rgba(30, 36, 34, 0.08);
+  color: #405049;
+}
+
+.home-account.connected button:hover {
+  background: rgba(30, 36, 34, 0.12);
+}
+
+.home-account.disconnected button:hover {
+  background: #1f5f4b;
+}
+
+.home-quick-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 10px;
+}
+
+.home-quick-actions button {
+  min-width: 0;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: rgba(38, 105, 84, 0.1);
+  color: #1f6d56;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.home-quick-actions button:hover {
+  background: rgba(38, 105, 84, 0.16);
+}
+
+.home-runs {
+  flex: 1 1 auto;
+}
+
+.home-run-list {
+  flex: 1 1 auto;
+  padding: 8px;
+}
+
+.home-empty-inline {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 8px;
+  color: #6d716e;
+  font-size: 12px;
+}
+
+.remote-login-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(31, 38, 35, 0.28);
+}
+
+.remote-login-sheet {
+  width: min(420px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  border: 1px solid rgba(30, 36, 34, 0.12);
+  border-radius: 8px;
+  background: #f9f8f4;
+  box-shadow: 0 22px 60px rgba(26, 31, 29, 0.22);
+}
+
+.remote-login-sheet header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid rgba(30, 36, 34, 0.08);
+}
+
+.remote-login-sheet h2 {
+  margin: 0;
+  color: #1f2623;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.remote-login-form {
+  padding: 16px;
+}
+
+@media (max-width: 860px) {
+  .home-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 0.82fr);
+  }
+
+  .home-tasks {
+    display: none;
+  }
+}
+
 .loading-shell {
   align-items: center;
   justify-content: center;
@@ -964,9 +1525,14 @@ textarea:focus {
 }
 
 .codex-run-meta {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  overflow: hidden;
   color: #6d716e;
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes codex-run-pulse {
@@ -984,7 +1550,7 @@ textarea:focus {
   flex: 0 0 auto;
   border-radius: 6px;
   color: #1d1f22;
-  cursor: default;
+  cursor: pointer;
   outline: none;
 }
 
@@ -1014,13 +1580,47 @@ textarea:focus {
   padding: 0 7px;
 }
 
+.tray-project-menu-item .project-row-content {
+  min-height: 45px;
+}
+
 .project-menu-item:hover .project-row-arrow,
 .project-menu-item:focus-visible .project-row-arrow,
 .project-menu-item.active .project-row-arrow,
 .project-menu-item:hover .project-row-count,
 .project-menu-item:focus-visible .project-row-count,
-.project-menu-item.active .project-row-count {
+.project-menu-item.active .project-row-count,
+.project-menu-item:hover .project-row-directory,
+.project-menu-item:focus-visible .project-row-directory,
+.project-menu-item.active .project-row-directory,
+.project-menu-item:hover .project-row-badges,
+.project-menu-item:focus-visible .project-row-badges,
+.project-menu-item.active .project-row-badges {
   color: rgba(255, 255, 255, 0.9);
+}
+
+.project-menu-item:hover .project-row-badges span,
+.project-menu-item:focus-visible .project-row-badges span,
+.project-menu-item.active .project-row-badges span,
+.project-menu-item:hover .project-row-badges strong,
+.project-menu-item:focus-visible .project-row-badges strong,
+.project-menu-item.active .project-row-badges strong {
+  color: #fff;
+}
+
+.project-menu-item:hover .project-row-badges span,
+.project-menu-item:focus-visible .project-row-badges span,
+.project-menu-item.active .project-row-badges span {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.project-menu-item:hover .project-row-directory:hover,
+.project-menu-item:focus-visible .project-row-directory:hover,
+.project-menu-item.active .project-row-directory:hover,
+.project-menu-item:hover .project-row-directory:focus-visible,
+.project-menu-item:focus-visible .project-row-directory:focus-visible,
+.project-menu-item.active .project-row-directory:focus-visible {
+  color: #fff;
 }
 
 .project-row-count {

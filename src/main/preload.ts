@@ -3,6 +3,7 @@ import type {
   AppConfig,
   AppUpdateStatus,
   CodexRunMeta,
+  CreateLocalProjectRequest,
   DesktopBridge,
   PersonalRecordChangeNotice,
   PersonalRecordTarget,
@@ -36,6 +37,10 @@ function sanitizeRecordTarget(target?: PersonalRecordTarget) {
   return isPlainObject(target) ? target : undefined;
 }
 
+function sanitizeCreateLocalProjectRequest(request?: CreateLocalProjectRequest) {
+  return isPlainObject(request) ? (request as CreateLocalProjectRequest) : undefined;
+}
+
 function sanitizeSendToCodexRequest(request?: SendToCodexRequest) {
   return isPlainObject(request) ? request : undefined;
 }
@@ -53,10 +58,14 @@ const bridge: DesktopBridge = {
   createTask: (request) => ipcRenderer.invoke("workshop:createTask", request),
   updateTask: (request) => ipcRenderer.invoke("workshop:updateTask", request),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+  openHome: () => ipcRenderer.invoke("home:open"),
   openSettings: () => ipcRenderer.invoke("settings:open"),
   openManual: () => ipcRenderer.invoke("manual:open"),
   openSticky: (target?: StickyTarget | number) => ipcRenderer.invoke("sticky:open", sanitizeStickyTarget(target)),
   openPersonalRecord: (target?: PersonalRecordTarget) => ipcRenderer.invoke("record:open", sanitizeRecordTarget(target)),
+  listLocalProjects: () => ipcRenderer.invoke("localProject:list"),
+  createLocalProject: (request: CreateLocalProjectRequest) =>
+    ipcRenderer.invoke("localProject:create", sanitizeCreateLocalProjectRequest(request)),
   listPersonalRecords: () => ipcRenderer.invoke("record:list"),
   getPersonalRecord: (id: string) => ipcRenderer.invoke("record:get", id),
   savePersonalRecord: (record: SavePersonalRecordRequest) => ipcRenderer.invoke("record:save", record),
@@ -70,6 +79,8 @@ const bridge: DesktopBridge = {
   arrangeStickyWindows: () => ipcRenderer.invoke("sticky:arrange"),
   fitWindowContent: (request) => ipcRenderer.invoke("window:fitContent", request),
   setStickyAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("sticky:setAlwaysOnTop", enabled),
+  bindLocalProjectDirectory: (localProjectId: string) => ipcRenderer.invoke("localProjectDirectory:bind", localProjectId),
+  openLocalProjectDirectory: (localProjectId: string) => ipcRenderer.invoke("localProjectDirectory:open", localProjectId),
   bindProjectLocalDirectory: (projectId: number) => ipcRenderer.invoke("projectDirectory:bind", projectId),
   openProjectLocalDirectory: (projectId: number) => ipcRenderer.invoke("projectDirectory:open", projectId),
   sendToCodex: (request: SendToCodexRequest) => ipcRenderer.invoke("codex:send", sanitizeSendToCodexRequest(request)),

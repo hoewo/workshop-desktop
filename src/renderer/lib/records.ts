@@ -8,6 +8,7 @@ export type RecordListContext =
   | { scopeType: "none" }
   | {
       scopeType: "project";
+      localProjectId?: string;
       projectId?: number;
       projectName?: string;
     };
@@ -69,11 +70,12 @@ export function getRecordHeaderTitle(record: RecordHeaderContext | null, isDetai
 }
 
 export function getRecordListContext(
-  source?: Pick<PersonalRecordMeta, "scopeType" | "projectId" | "projectName"> | PersonalRecordTarget | null
+  source?: Pick<PersonalRecordMeta, "scopeType" | "localProjectId" | "projectId" | "projectName"> | PersonalRecordTarget | null
 ): RecordListContext {
   if (source?.scopeType === "project" || source?.scopeType === "task") {
     return {
       scopeType: "project",
+      localProjectId: source.localProjectId,
       projectId: source.projectId,
       projectName: source.projectName
     };
@@ -89,6 +91,14 @@ export function recordMatchesListContext(record: PersonalRecordMeta, context: Re
 
   if (record.scopeType !== "project") {
     return false;
+  }
+
+  if (context.localProjectId) {
+    return (
+      record.localProjectId === context.localProjectId ||
+      (!record.localProjectId && typeof context.projectId === "number" && record.projectId === context.projectId) ||
+      (!record.localProjectId && Boolean(context.projectName) && record.projectName === context.projectName)
+    );
   }
 
   if (context.projectId !== undefined) {

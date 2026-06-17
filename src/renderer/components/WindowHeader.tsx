@@ -20,7 +20,7 @@ export function ProjectDirectorySubtitle({
   localDirectory?: string;
   onClick: () => void;
 }) {
-  const label = localDirectory?.trim() || "请绑定本地目录";
+  const label = localDirectory?.trim() || "未绑定目录，点击绑定";
   return (
     <button
       className={`project-directory-subtitle ${localDirectory ? "bound" : "unbound"}`}

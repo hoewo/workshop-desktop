@@ -21,6 +21,24 @@ export interface AppConfig {
   lastSeenManualRevision: string;
   lastSeenSkillInstallPromptVersion: string;
   projectLocalDirectories: Record<string, string>;
+  localProjects: LocalProject[];
+}
+
+export interface LocalProject {
+  id: string;
+  name: string;
+  localDirectory?: string;
+  linkedWorkshopProjectId?: number;
+  linkedWorkshopProjectName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateLocalProjectRequest {
+  name: string;
+  localDirectory?: string;
+  linkedWorkshopProjectId?: number;
+  linkedWorkshopProjectName?: string;
 }
 
 export interface ApiEnvelope<T> {
@@ -256,6 +274,7 @@ export interface PersonalRecordMeta {
   scopeType: PersonalRecordScope;
   status: PersonalRecordStatus;
   origin?: PersonalRecordOrigin;
+  localProjectId?: string;
   projectId?: number;
   projectName?: string;
   taskId?: number;
@@ -281,6 +300,7 @@ export interface PersonalRecordTarget {
   noteId?: string;
   draft?: boolean;
   scopeType?: PersonalRecordScope;
+  localProjectId?: string;
   projectId?: number;
   projectName?: string;
   taskId?: number;
@@ -295,6 +315,7 @@ export interface SavePersonalRecordRequest {
   scopeType: PersonalRecordScope;
   status?: PersonalRecordStatus;
   origin?: PersonalRecordOrigin;
+  localProjectId?: string;
   projectId?: number;
   projectName?: string;
   taskId?: number;
@@ -348,11 +369,22 @@ export interface TemporaryConfirmationResult {
   payload?: unknown;
 }
 
-export type WorkshopContextKind = "none" | "project" | "task" | "record" | "record-draft" | "tray" | "settings" | "manual" | "update";
+export type WorkshopContextKind =
+  | "none"
+  | "project"
+  | "task"
+  | "record"
+  | "record-draft"
+  | "tray"
+  | "home"
+  | "settings"
+  | "manual"
+  | "update";
 
 export interface WorkshopCurrentContext {
   kind: WorkshopContextKind;
-  surface?: "tray" | "sticky" | "record" | "settings" | "manual" | "update" | "confirmation";
+  surface?: "tray" | "home" | "sticky" | "record" | "settings" | "manual" | "update" | "confirmation";
+  localProjectId?: string;
   projectId?: number;
   projectName?: string;
   taskId?: number;
@@ -380,6 +412,7 @@ export type ConfirmationAction =
         bodyMarkdown?: string;
         body?: string;
         scopeType?: PersonalRecordScope;
+        localProjectId?: string;
         projectId?: number;
         projectName?: string;
         taskId?: number;
@@ -513,10 +546,13 @@ export interface DesktopBridge {
   createTask: (request: CreateTaskRequest) => Promise<ApiResponse<Task>>;
   updateTask: (request: UpdateTaskRequest) => Promise<ApiResponse<Task>>;
   openExternal: (url: string) => Promise<void>;
+  openHome: () => Promise<void>;
   openSettings: () => Promise<void>;
   openManual: () => Promise<void>;
   openSticky: (target?: StickyTarget | number) => Promise<void>;
   openPersonalRecord: (target?: PersonalRecordTarget) => Promise<void>;
+  listLocalProjects: () => Promise<LocalProject[]>;
+  createLocalProject: (request: CreateLocalProjectRequest) => Promise<LocalProject>;
   listPersonalRecords: () => Promise<PersonalRecordMeta[]>;
   getPersonalRecord: (id: string) => Promise<PersonalRecord | null>;
   savePersonalRecord: (record: SavePersonalRecordRequest) => Promise<PersonalRecord>;
@@ -530,6 +566,8 @@ export interface DesktopBridge {
   arrangeStickyWindows: () => Promise<void>;
   fitWindowContent: (request: WindowFitRequest) => Promise<void>;
   setStickyAlwaysOnTop: (enabled: boolean) => Promise<AppConfig>;
+  bindLocalProjectDirectory: (localProjectId: string) => Promise<AppConfig | null>;
+  openLocalProjectDirectory: (localProjectId: string) => Promise<void>;
   bindProjectLocalDirectory: (projectId: number) => Promise<AppConfig | null>;
   openProjectLocalDirectory: (projectId: number) => Promise<void>;
   sendToCodex: (request: SendToCodexRequest) => Promise<SendToCodexResponse>;

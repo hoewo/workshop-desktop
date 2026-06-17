@@ -79,16 +79,16 @@ Consequences:
 
 Status: accepted
 
-Decision: Workshop 项目到本地工作目录的映射存储在桌面端本地配置中，由任务列表和项目记录列表提供绑定与打开入口。
+Decision: 项目到本地工作目录的映射存储在桌面端本地配置中。D-018 之后，目标模型是本地项目绑定本地目录；旧版 Workshop 项目目录绑定继续作为兼容数据，并迁移为本地项目候选。
 
-Rationale: Codex 执行需要明确 `cwd`，但同一个 Workshop 项目在不同设备上的本地路径可能不同，不能把它当作后端项目事实或 repo 文档事实。
+Rationale: Codex 执行需要明确 `cwd`，但同一个项目在不同设备上的本地路径可能不同，不能把它当作后端项目事实或 repo 文档事实。
 
 Consequences:
 
-- 本地目录绑定按项目 ID 存在 Electron `userData/config.json`。
+- 本地目录绑定存在 Electron `userData/config.json`。
 - 未绑定时，项目任务列表和项目记录列表提示用户绑定本地目录。
 - 绑定后显示本机完整路径，点击打开对应文件夹。
-- 后续发送任务或记录到 Codex 时，应优先使用该绑定路径作为工作目录。
+- 后续发送任务或记录到 Codex 时，应优先使用本地项目绑定路径作为工作目录；旧的远端项目绑定路径只作为迁移期兼容。
 
 ### D-007 发送到 Codex 由服务层执行
 
@@ -124,7 +124,7 @@ Consequences:
 
 Status: accepted
 
-Decision: 发送到 Codex 默认使用桌面端自启的 `codex app-server` 实例（JSON-RPC：`initialize → thread/start → turn/start`），`codex exec` 保留为静默后端可选项（`backend: "exec"`）。每次发送在 `userData/codex-runs/index.json` 记录运行条目（runId、backend、threadId/turnId、关联任务/记录、cwd、status、lastMessage、startedAt/completedAt），主面板显示最近运行状态。
+Decision: 发送到 Codex 默认使用桌面端自启的 `codex app-server` 实例（JSON-RPC：`initialize → thread/start → turn/start`），`codex exec` 保留为静默后端可选项（`backend: "exec"`）。每次发送在 `userData/codex-runs/index.json` 记录运行条目（runId、backend、threadId/turnId、关联任务/记录、cwd、status、lastMessage、startedAt/completedAt），工作台和托盘面板显示最近运行状态。
 
 Rationale: 经实测（CLI 0.133.0），app-server 创建的线程落盘 `~/.codex/sessions` 并出现在 Codex app 对应项目的会话列表中；而 `codex exec` 的会话被默认来源过滤器排除，对 Codex app 不可见。线程在 Codex app 中的项目归属由 cwd 决定，因此 cwd 必须使用项目本地目录绑定（D-006），不能用临时目录。
 
@@ -240,6 +240,58 @@ Consequences:
 - 标注分类不是记录本体的强类型；后续调整分类时优先重跑标注，而不是迁移记录正文或扩展记录状态机。
 - UI 可以选择展示少量标注 badge，但正文仍是记录详情的主内容。
 
+### D-017 工作台主页面与托盘面板分离
+
+Status: accepted
+
+Decision: Workshop Desktop 保留从菜单栏或系统托盘触发的轻量托盘面板，同时提供独立的工作台主页面。Dock、应用菜单、全局快捷键和首次登录流程打开工作台主页面；托盘点击继续打开快速面板。
+
+Rationale: 当前面板的窗口行为是小型、置顶、贴近托盘、失焦隐藏，更适合作为快速入口，不适合作为用户从 Dock 打开的稳定应用主页面。分离两者可以补齐应用存在感，同时保持托盘快速操作体验。
+
+Consequences:
+
+- 工作台主页面是正常应用窗口，可调整大小，不置顶，不随失焦自动关闭。
+- 工作台主页面的项目列表应与托盘面板项目列表保持相近的行结构和交互语言，减少用户在两种入口之间切换时的认知差异。
+- 托盘面板继续保持轻量入口，只承载快速打开项目、记录、便签、设置和最近运行状态。
+- 新增主页面不改变 D-003 和 D-014 的边界：Workshop Desktop 仍是个人当前注意力工作台，不扩展为完整知识库或团队项目管理系统。
+- 后续入口文案应区分“工作台”和“托盘面板”，避免把两种窗口都称为主面板。
+
+### D-018 Desktop 本地项目独立于 Workshop 后端项目
+
+Status: accepted
+
+Decision: Workshop Desktop 的项目概念优先表示本机本地工作区，不依赖 Workshop 后端项目存在。记录、本地目录绑定和 Codex 执行上下文应归属 Desktop 本地项目；Workshop 后端项目只作为可选任务源绑定。
+
+Rationale: 任务和记录是两套系统。记录系统需要在未登录或无远端项目时仍可使用；任务可以来自 Workshop 后端，但不应反向决定 Desktop 的项目身份和记录归属。
+
+Consequences:
+
+- Desktop 本地项目拥有独立 ID、名称、可选本地目录和可选 Workshop 项目绑定。
+- 添加本地项目不强制绑定本地目录；未绑定项目仍可作为项目记录容器使用，目录绑定在需要打开文件夹或发送到 Codex 前完成。
+- 登录不应阻塞本地项目和本地记录的基础使用；登录只影响远端任务源连接，工作台和托盘面板都应免登录显示本地项目。
+- 工作台和托盘面板项目列表可以同时展示 Desktop 本地项目和用户主动拉取到的 Workshop 远端项目；远端项目仍只作为任务源上下文。
+- 工作台和托盘面板项目行点击都进入项目记录；任务便签作为独立入口存在。
+- 本地项目和远端项目都应在项目行内展示本地目录文字；未绑定时显示“未绑定目录，点击绑定”，点击该文字提供绑定或打开入口，不再额外展示“已绑定/未绑定”状态标签。
+- 同一设备上不允许两个独立本地项目绑定同一个本地目录；旧远端目录绑定如果与本地项目目录相同，应归并为本地项目的远端任务源关联。
+- 旧的 `projectLocalDirectories` 仍保留兼容和 fallback；升级迁移必须幂等，优先合并到已有本地项目，只有找不到可合并对象时才创建 `legacy-workshop-*` 本地项目候选。
+- 记录可以挂靠本地项目；远端任务可以引用或关联记录，但不能拥有记录系统。
+- 后续实现应逐步把 UI、记录 scope 和 Codex `cwd` 从远端 `projectId` 迁移到本地项目上下文。
+
+### D-019 远端连接是工作台入口，不是设置页高级配置
+
+Status: accepted
+
+Decision: 远端连接作为工作台主页面的一等入口处理。未连接时，工作台直接提供邮箱/手机号验证码登录；设置页不再展示 baseUrl、Bearer Token 或本地 Header 等高级认证配置。
+
+Rationale: Workshop Desktop 的默认用户路径是先进入本地工作台，再按需连接远端任务源。把远端连接藏在设置页，会让用户把账号连接误解成开发配置，也削弱本地项目和本地记录可离线使用的产品边界。
+
+Consequences:
+
+- 工作台主页面显示远端连接状态，并提供连接、刷新拉取远端和退出登录入口；项目列表标题区保留给添加项目。
+- 设置页只保留本机偏好、更新、使用手册、AI 协作和已连接状态下的退出登录。
+- 高级认证模式可以保留为内部兼容能力，但不作为普通设置项暴露。
+- 退出登录只清远端身份和远端任务数据，不删除本地项目、本地目录绑定或本地记录。
+
 ## 开放问题
 
 - NebulaAuth token 是否继续保存在 Electron `userData/config.json`，还是在更广泛使用前迁移到系统钥匙串？
@@ -247,7 +299,7 @@ Consequences:
 - 后续版本是否需要增加更强的分发检查，或迁移到自有 HTTPS 更新源？
 - app server 的 token 和连接文件是否需要进一步绑定当前用户会话、系统钥匙串或操作确认？
 - 异步确认动作集合是否需要扩展到删除、合并、重组记录，还是继续保持窄集合？
-- Codex 运行除主面板状态行外，是否需要完整日志视图和系统级完成通知？
+- Codex 运行除工作台和托盘面板状态行外，是否需要完整日志视图和系统级完成通知？
 - 发送到 Codex 前是否需要让用户预览最终组装的 prompt？
 - 是否需要为记录归档或记录状态变更提供正式 CLI / confirmation action，而不是只能通过 UI 操作？
 - 是否改接 `codex app-server daemon` 共享实例，以换取 Codex app 的实时可见？当前为列表可见；实测（CLI/app 0.133.0）turn 进行中在 Codex app 打开该线程，页面可能挂住，需重启 Codex app 才恢复，执行本身不受影响。

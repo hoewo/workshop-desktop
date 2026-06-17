@@ -1,8 +1,8 @@
-import { Archive, Check, ChevronRight, NotebookPen, PauseCircle, Play, RotateCcw, SquareTerminal } from "lucide-react";
+import { Archive, Check, PauseCircle, Play, RotateCcw, SquareTerminal } from "lucide-react";
 import { useRef } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import type { TaskState } from "../../shared/types";
-import { formatRelative, splitTags, stateLabels, stateTone, type EnrichedTask, type ProjectTodoGroup } from "../lib/tasks";
+import { formatRelative, splitTags, stateLabels, stateTone, type EnrichedTask } from "../lib/tasks";
 import { ListCellArchiveButton, ListCellCompleteButton } from "./ListCellActions";
 
 export function TaskRow({
@@ -168,55 +168,5 @@ export function TaskDetail({
         </button>
       </div>
     </section>
-  );
-}
-
-export function ProjectMenuRow({
-  group,
-  active,
-  recordCount,
-  onHover,
-  onOpen,
-  onRecord
-}: {
-  group: ProjectTodoGroup;
-  active: boolean;
-  recordCount: number;
-  onHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
-  onOpen: (group: ProjectTodoGroup) => void;
-  onRecord: (group: ProjectTodoGroup) => void;
-}) {
-  return (
-    <article
-      className={`project-menu-item ${group.count === 0 ? "is-empty" : ""} ${active ? "active" : ""}`}
-      role="button"
-      tabIndex={0}
-      onMouseEnter={(event) => onHover(group, event.currentTarget.getBoundingClientRect())}
-      onFocus={(event) => onHover(group, event.currentTarget.getBoundingClientRect())}
-      onClick={() => onOpen(group)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen(group);
-        }
-      }}
-    >
-      <div className="project-row-content">
-        <button
-          className={`project-record-button ${recordCount > 0 ? "has-record" : ""}`}
-          type="button"
-          title={recordCount > 0 ? `${recordCount} 条记录` : "记项目"}
-          onClick={(event) => {
-            event.stopPropagation();
-            onRecord(group);
-          }}
-        >
-          <NotebookPen size={15} />
-        </button>
-        <span className="project-row-name">{group.projectName}</span>
-        <span className="project-row-count">{group.count}</span>
-        <ChevronRight className="project-row-arrow" size={18} />
-      </div>
-    </article>
   );
 }

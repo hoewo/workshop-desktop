@@ -8,6 +8,11 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 const { CodexAppServerClient } = require("../dist/main/codexAppServer.js");
 const { buildCodexUserInput } = require("../dist/main/codexPrompt.js");
+const {
+  getLocalProjectDirectoryForWorkshopProject,
+  sanitizeLocalProjects
+} = require("../dist/main/localProjectMigration.js");
+const { normalizeCodexFailureMessage, summarizeCodexFailureForDisplay } = require("../dist/shared/codexErrors.js");
 const { PersonalRecordStore } = require("../dist/main/recordStore.js");
 const { WorkshopApiService } = require("../dist/main/workshopApiService.js");
 
@@ -33,6 +38,7 @@ function baseConfig(overrides = {}) {
     lastSeenManualRevision: "",
     lastSeenSkillInstallPromptVersion: "",
     projectLocalDirectories: {},
+    localProjects: [],
     ...overrides
   };
 }
@@ -213,6 +219,49 @@ test("CodexAppServerClient handles streaming deltas and terminal statuses", () =
 
   assert.deepEqual(completions.at(-1), { status: "interrupted", detail: "user stopped" });
   assert.equal(client.activeTurns.has("thread-2"), false);
+});
+
+test("Codex rate-limit errors are normalized for users", () => {
+  assert.equal(
+    normalizeCodexFailureMessage("turn/start: RATE_LIMIT_EXCEEDED"),
+    "Codex 请求被限流（RATE_LIMIT_EXCEEDED），请稍后再试。"
+  );
+  assert.equal(summarizeCodexFailureForDisplay("HTTP 429 Too Many Requests"), "限流，稍后重试");
+  assert.equal(normalizeCodexFailureMessage("codex app-server 未运行"), "codex app-server 未运行");
+});
+
+test("local project migration merges legacy Workshop directory bindings by directory", () => {
+  const directory = path.join(os.tmpdir(), "workshop-desktop");
+  const projects = sanitizeLocalProjects(
+    [
+      {
+        id: "local-workshop",
+        name: "workshop-desktop",
+        localDirectory: directory,
+        createdAt: "2026-06-17T00:00:00.000Z",
+        updatedAt: "2026-06-17T00:00:00.000Z"
+      }
+    ],
+    { 98: directory }
+  );
+
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0].id, "local-workshop");
+  assert.equal(projects[0].linkedWorkshopProjectId, 98);
+  assert.equal(
+    getLocalProjectDirectoryForWorkshopProject({ localProjects: projects, projectLocalDirectories: { 98: directory } }, 98),
+    directory
+  );
+});
+
+test("local project migration creates one legacy project when no local match exists", () => {
+  const directory = path.join(os.tmpdir(), "legacy-workshop-98");
+  const projects = sanitizeLocalProjects([], { 98: directory });
+
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0].id, "legacy-workshop-98");
+  assert.equal(projects[0].localDirectory, directory);
+  assert.equal(projects[0].linkedWorkshopProjectId, 98);
 });
 
 async function withTempUserData(fn) {

@@ -1,10 +1,15 @@
-import type { ApiResponse, AppConfig, PersonalRecordTarget } from "../../shared/types";
+import type { ApiResponse, AppConfig, LocalProject, PersonalRecordTarget } from "../../shared/types";
 
-export type Surface = "tray" | "sticky" | "record" | "settings" | "manual" | "update";
+export type Surface = "tray" | "home" | "sticky" | "record" | "settings" | "manual" | "update";
 
 export function getSurface(): Surface {
   const surface = new URLSearchParams(window.location.search).get("surface");
-  return surface === "sticky" || surface === "record" || surface === "settings" || surface === "manual" || surface === "update"
+  return surface === "home" ||
+    surface === "sticky" ||
+    surface === "record" ||
+    surface === "settings" ||
+    surface === "manual" ||
+    surface === "update"
     ? surface
     : "tray";
 }
@@ -31,6 +36,7 @@ function getSafeRecordId(params: URLSearchParams, key: string) {
 
 export function getInitialRecordTarget(): PersonalRecordTarget {
   const params = new URLSearchParams(window.location.search);
+  const localProjectId = getSafeRecordId(params, "local_project_id");
   const projectId = params.get("project_id");
   const taskId = params.get("task_id");
   const scopeType = params.get("scope_type");
@@ -38,6 +44,7 @@ export function getInitialRecordTarget(): PersonalRecordTarget {
     noteId: getSafeRecordId(params, "note_id"),
     draft: params.get("draft") === "1",
     scopeType: scopeType === "project" || scopeType === "task" ? scopeType : "none",
+    localProjectId,
     projectId: projectId && /^\d+$/.test(projectId) ? Number(projectId) : undefined,
     projectName: getSafeQueryText(params, "project_name"),
     taskId: taskId && /^\d+$/.test(taskId) ? Number(taskId) : undefined,
@@ -89,7 +96,22 @@ export function getProjectLocalDirectory(config: AppConfig | null, projectId?: n
   if (!config || projectId === undefined || !Number.isFinite(projectId)) {
     return "";
   }
+  const linkedLocalProject = config.localProjects.find((project) => project.linkedWorkshopProjectId === projectId && project.localDirectory);
+  if (linkedLocalProject?.localDirectory) {
+    return linkedLocalProject.localDirectory;
+  }
   return config.projectLocalDirectories[String(projectId)] || "";
+}
+
+export function getLocalProjectLocalDirectory(config: AppConfig | null, localProjectId?: string) {
+  if (!config || !localProjectId) {
+    return "";
+  }
+  return config.localProjects.find((project) => project.id === localProjectId)?.localDirectory || "";
+}
+
+function normalizeLocalProjects(projects: LocalProject[] | undefined) {
+  return Array.isArray(projects) ? projects : [];
 }
 
 export function normalizeConfig(config: AppConfig): AppConfig {
@@ -108,7 +130,8 @@ export function normalizeConfig(config: AppConfig): AppConfig {
     sessionId: config.sessionId.trim(),
     lastSeenManualRevision: config.lastSeenManualRevision || "",
     lastSeenSkillInstallPromptVersion: config.lastSeenSkillInstallPromptVersion || "",
-    dailyRefreshTime: config.dailyRefreshTime || "09:00"
+    dailyRefreshTime: config.dailyRefreshTime || "09:00",
+    localProjects: normalizeLocalProjects(config.localProjects)
   };
 }
 

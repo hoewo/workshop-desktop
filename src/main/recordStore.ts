@@ -101,6 +101,11 @@ function safeRecordIdList(value: unknown) {
   return items && items.length > 0 ? items : undefined;
 }
 
+function safeLocalProjectId(value: unknown) {
+  const text = safeText(value, 120);
+  return text && /^[a-zA-Z0-9_-]+$/.test(text) ? text : undefined;
+}
+
 function safePositiveInteger(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
 }
@@ -274,6 +279,7 @@ export class PersonalRecordStore {
               ...record,
               scopeType: normalizeRecordScope(record.scopeType),
               status: normalizeRecordStatus(record.status),
+              localProjectId: safeLocalProjectId(record.localProjectId),
               annotations: normalizeRecordAnnotations(record.annotations)
             }))
             .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
@@ -297,6 +303,7 @@ export class PersonalRecordStore {
   private async saveNow(request: SavePersonalRecordRequest): Promise<PersonalRecord> {
     const nextRequest: Record<string, unknown> = isPlainObject(request) ? request : {};
     const bodyMarkdown = typeof nextRequest.bodyMarkdown === "string" ? nextRequest.bodyMarkdown : "";
+    const localProjectId = safeLocalProjectId(nextRequest.localProjectId);
     const projectId = typeof nextRequest.projectId === "number" && Number.isFinite(nextRequest.projectId) ? nextRequest.projectId : undefined;
     const projectName = safeText(nextRequest.projectName) ?? undefined;
     const taskId = typeof nextRequest.taskId === "number" && Number.isFinite(nextRequest.taskId) ? nextRequest.taskId : undefined;
@@ -330,7 +337,7 @@ export class PersonalRecordStore {
       updatedAt: now,
       ...(promotedTaskId ? { promotedTaskId } : existing?.promotedTaskId ? { promotedTaskId: existing.promotedTaskId } : {}),
       ...(existing?.annotations?.length ? { annotations: existing.annotations } : {}),
-      ...(scopeType === "project" || scopeType === "task" ? { projectId, projectName } : {}),
+      ...(scopeType === "project" || scopeType === "task" ? { localProjectId, projectId, projectName } : {}),
       ...(scopeType === "task" ? { taskId, taskTitle } : {})
     };
     const nextRecords = [meta, ...records.filter((record) => record.id !== id)];

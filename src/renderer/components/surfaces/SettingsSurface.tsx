@@ -1,12 +1,12 @@
 import { AlertTriangle, Bot, BookOpenText, CalendarClock, CheckCircle2, Download, LoaderCircle, LogOut, X } from "lucide-react";
 import type { FormEvent } from "react";
 import type { AppConfig, AppUpdateStatus, WorkshopCodexSkillStatus } from "../../../shared/types";
-import { AuthFields } from "../AuthFields";
 import { UpdateStatusPanel } from "../UpdateStatusPanel";
 
 export function SettingsSurface({
   draftConfig,
   error,
+  isRemoteConnected,
   isSavingConfig,
   isInstallingWorkshopSkill,
   updateStatus,
@@ -22,6 +22,7 @@ export function SettingsSurface({
 }: {
   draftConfig: AppConfig;
   error: string;
+  isRemoteConnected: boolean;
   isSavingConfig: boolean;
   isInstallingWorkshopSkill: boolean;
   updateStatus: AppUpdateStatus | null;
@@ -56,8 +57,6 @@ export function SettingsSurface({
         ) : null}
 
         <form onSubmit={onSaveConfig}>
-          <AuthFields draftConfig={draftConfig} setDraftConfig={setDraftConfig} />
-
           <div className="settings-block">
             <label className="toggle-line">
               <input
@@ -102,13 +101,8 @@ export function SettingsSurface({
               checked={draftConfig.globalShortcutEnabled}
               onChange={(event) => setDraftConfig({ ...draftConfig, globalShortcutEnabled: event.target.checked })}
             />
-            <span>全局快捷键 Command+Option+W</span>
+            <span>打开工作台快捷键 Command+Option+W</span>
           </label>
-
-          <div className="settings-warning">
-            <AlertTriangle size={15} />
-            <span>本地 Header 仅用于直连开发服务；生产环境应走网关。</span>
-          </div>
 
           <UpdateStatusPanel status={updateStatus} onCheckForUpdates={onCheckForUpdates} onInstallUpdate={onInstallUpdate} />
 
@@ -145,12 +139,14 @@ export function SettingsSurface({
 
           <button className="save-button" type="submit" disabled={isSavingConfig}>
             {isSavingConfig ? <LoaderCircle className="spin" size={16} /> : <CalendarClock size={16} />}
-            <span>保存并同步</span>
+            <span>保存设置</span>
           </button>
-          <button className="logout-button" type="button" onClick={onLogout}>
-            <LogOut size={16} />
-            <span>退出登录</span>
-          </button>
+          {isRemoteConnected ? (
+            <button className="logout-button" type="button" onClick={onLogout}>
+              <LogOut size={16} />
+              <span>退出登录</span>
+            </button>
+          ) : null}
         </form>
       </section>
     </main>

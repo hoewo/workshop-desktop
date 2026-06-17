@@ -5,6 +5,7 @@ import type {
   AppUpdateStatus,
   CodexRunMeta,
   CurrentUserPayload,
+  LocalProject,
   Organization,
   OrganizationsPayload,
   PersonalRecord,
@@ -24,6 +25,7 @@ import type {
   WindowFitRequest
 } from "../shared/types";
 import { manualRevision } from "./content/manual";
+import { HomeSurface } from "./components/surfaces/HomeSurface";
 import { LoginSurface } from "./components/surfaces/LoginSurface";
 import { ManualSurface } from "./components/surfaces/ManualSurface";
 import { RecordSurface } from "./components/surfaces/RecordSurface";
@@ -99,9 +101,12 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [workshopSkillStatus, setWorkshopSkillStatus] = useState<WorkshopCodexSkillStatus | null>(null);
   const [isInstallingWorkshopSkill, setIsInstallingWorkshopSkill] = useState(false);
+  const [localProjectName, setLocalProjectName] = useState("");
+  const [isCreatingLocalProject, setIsCreatingLocalProject] = useState(false);
+  const [isRemoteLoginOpen, setIsRemoteLoginOpen] = useState(false);
 
   useEffect(() => {
-    if (surface !== "tray") {
+    if (surface !== "tray" && surface !== "home") {
       return undefined;
     }
 
@@ -122,7 +127,7 @@ export default function App() {
   }, [surface]);
 
   useEffect(() => {
-    if (surface !== "tray" && surface !== "settings" && surface !== "update") {
+    if (surface !== "tray" && surface !== "home" && surface !== "settings" && surface !== "update") {
       return undefined;
     }
 
@@ -413,7 +418,7 @@ export default function App() {
       updatedAt: now,
       bodyMarkdown: "",
       ...(scopeType === "project" || scopeType === "task"
-        ? { projectId: target?.projectId, projectName: target?.projectName }
+        ? { localProjectId: target?.localProjectId, projectId: target?.projectId, projectName: target?.projectName }
         : {}),
       ...(scopeType === "task" ? { taskId: target?.taskId, taskTitle: target?.taskTitle } : {})
     };
@@ -524,6 +529,7 @@ export default function App() {
             bodyMarkdown: bodyToSave,
             scopeType: recordToSave.scopeType,
             status: recordToSave.status,
+            localProjectId: recordToSave.localProjectId,
             projectId: recordToSave.projectId,
             projectName: recordToSave.projectName,
             taskId: recordToSave.taskId,
@@ -857,6 +863,10 @@ export default function App() {
         return a.projectName.localeCompare(b.projectName, "zh-CN");
       });
   }, [completingTaskIds, projects, tasks]);
+  const recentTasks = useMemo(
+    () => tasks.filter((task) => task.isMine && (isVisibleTask(task) || completingTaskIds.has(task.id))).sort(compareTasks),
+    [completingTaskIds, tasks]
+  );
 
   const selectedProjectName = useMemo(() => {
     if (projectFilter === "all") {
@@ -909,6 +919,32 @@ export default function App() {
     }
     return counts;
   }, [records]);
+  const localProjectRecordCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!config) {
+      return counts;
+    }
+
+    for (const project of config.localProjects) {
+      const count = records.filter((record) => {
+        if (record.scopeType !== "project") {
+          return false;
+        }
+        if (record.localProjectId) {
+          return record.localProjectId === project.id;
+        }
+        if (project.linkedWorkshopProjectId && record.projectId === project.linkedWorkshopProjectId) {
+          return true;
+        }
+        return Boolean(record.projectName && record.projectName === project.name);
+      }).length;
+      if (count > 0) {
+        counts.set(project.id, count);
+      }
+    }
+
+    return counts;
+  }, [config, records]);
   const selectedTask = isSingleTaskSticky ? filteredTasks[0] : null;
   const selectedTaskRecord = selectedTask ? taskRecordsByTaskId.get(selectedTask.id) : undefined;
   const canExtractTasks = surface === "sticky" && projectFilter !== "all" && taskFilter === "all";
@@ -1092,15 +1128,6 @@ export default function App() {
     });
   }
 
-  function openProjectWorkspace(group: ProjectTodoGroup) {
-    void window.workshopDesktop.openSticky(group.project.id);
-    void window.workshopDesktop.openPersonalRecord({
-      scopeType: "project",
-      projectId: group.project.id,
-      projectName: group.projectName
-    });
-  }
-
   function openProjectRecord(group: ProjectTodoGroup) {
     void window.workshopDesktop.openPersonalRecord({
       scopeType: "project",
@@ -1109,10 +1136,20 @@ export default function App() {
     });
   }
 
+  function openLocalProjectRecord(project: LocalProject) {
+    void window.workshopDesktop.openPersonalRecord({
+      scopeType: "project",
+      localProjectId: project.id,
+      projectId: project.linkedWorkshopProjectId,
+      projectName: project.name
+    });
+  }
+
   function getRecordDraftTargetFromContext(): PersonalRecordTarget | undefined {
     if (activeRecord?.scopeType === "project" || activeRecord?.scopeType === "task") {
       return {
         scopeType: activeRecord.scopeType,
+        localProjectId: activeRecord.localProjectId,
         projectId: activeRecord.projectId,
         projectName: activeRecord.projectName,
         taskId: activeRecord.taskId,
@@ -1123,6 +1160,7 @@ export default function App() {
     if (recordListContext.scopeType === "project") {
       return {
         scopeType: "project",
+        localProjectId: recordListContext.localProjectId,
         projectId: recordListContext.projectId,
         projectName: recordListContext.projectName
       };
@@ -1182,6 +1220,7 @@ export default function App() {
       ...baseRecord,
       status: "active",
       scopeType: "project",
+      localProjectId: undefined,
       projectId: project.id,
       projectName,
       taskId: undefined,
@@ -1222,6 +1261,7 @@ export default function App() {
       bodyMarkdown: record.bodyMarkdown,
       scopeType: record.scopeType,
       status,
+      localProjectId: record.localProjectId,
       projectId: record.projectId,
       projectName: record.projectName,
       taskId: record.taskId,
@@ -1394,6 +1434,7 @@ export default function App() {
           bodyMarkdown: saved.bodyMarkdown,
           scopeType: saved.scopeType,
           status: "promoted",
+          localProjectId: saved.localProjectId,
           projectId: saved.projectId,
           projectName: saved.projectName,
           taskId: saved.taskId,
@@ -1502,6 +1543,29 @@ export default function App() {
     }
   }
 
+  async function handleLocalProjectDirectoryClick(localProjectId: string) {
+    const project = config?.localProjects.find((item) => item.id === localProjectId);
+    if (!project) {
+      setError("本地项目不存在");
+      return;
+    }
+
+    try {
+      if (project.localDirectory) {
+        await window.workshopDesktop.openLocalProjectDirectory(localProjectId);
+        return;
+      }
+
+      const saved = await window.workshopDesktop.bindLocalProjectDirectory(localProjectId);
+      if (saved) {
+        setConfig(saved);
+        setDraftConfig(saved);
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "本地目录操作失败");
+    }
+  }
+
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draftConfig) {
@@ -1527,6 +1591,7 @@ export default function App() {
       setConfig(loggedInConfig);
       setDraftConfig(loggedInConfig);
       setLoginCode("");
+      setIsRemoteLoginOpen(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "登录失败");
     } finally {
@@ -1635,6 +1700,7 @@ export default function App() {
     setDraftConfig(saved);
     setProjects([]);
     setTasks([]);
+    setIsRemoteLoginOpen(false);
     if (surface === "settings") {
       await window.workshopDesktop.closeWindow();
     }
@@ -1680,6 +1746,24 @@ export default function App() {
     setDraftConfig(saved);
   }
 
+  async function handleCreateLocalProject() {
+    const name = localProjectName.trim();
+    if (!name) {
+      return;
+    }
+
+    try {
+      setIsCreatingLocalProject(true);
+      await window.workshopDesktop.createLocalProject({ name });
+      setLocalProjectName("");
+      setError("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "创建本地项目失败");
+    } finally {
+      setIsCreatingLocalProject(false);
+    }
+  }
+
   async function handleArrangeStickyWindows() {
     await window.workshopDesktop.arrangeStickyWindows();
   }
@@ -1707,6 +1791,7 @@ export default function App() {
       <SettingsSurface
         draftConfig={draftConfig}
         error={error}
+        isRemoteConnected={isLoggedIn(config)}
         isSavingConfig={isSavingConfig}
         isInstallingWorkshopSkill={isInstallingWorkshopSkill}
         updateStatus={updateStatus}
@@ -1752,6 +1837,7 @@ export default function App() {
         focusPulseVisible={focusPulseVisible}
         handleArrangeStickyWindows={() => void handleArrangeStickyWindows()}
         handleNewRecord={() => void handleNewRecord()}
+        handleLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
         handleProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "record")}
         handleStickyAlwaysOnTop={(enabled) => void handleStickyAlwaysOnTop(enabled)}
         hasRecordSearchQuery={hasRecordSearchQuery}
@@ -1802,7 +1888,7 @@ export default function App() {
     );
   }
 
-  if (!isLoggedIn(config)) {
+  if (!isLoggedIn(config) && surface !== "home" && surface !== "tray") {
     if (surface === "sticky") {
       return (
         <StickyLoginRequiredSurface
@@ -1831,6 +1917,60 @@ export default function App() {
         setLoginCode={setLoginCode}
         setLoginCodeType={setLoginCodeType}
         setLoginTarget={setLoginTarget}
+      />
+    );
+  }
+
+  if (surface === "home") {
+    return (
+      <HomeSurface
+        codexRuns={codexRuns}
+        error={error}
+        hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
+        isLoading={isLoading}
+        isCreatingLocalProject={isCreatingLocalProject}
+        isRemoteConnected={isLoggedIn(config)}
+        isRemoteLoginOpen={isRemoteLoginOpen}
+        isLoggingIn={isLoggingIn}
+        isSendingCode={isSendingCode}
+        localProjectName={localProjectName}
+        localProjects={config.localProjects}
+        loginCode={loginCode}
+        loginCodeType={loginCodeType}
+        loginReady={loginReady}
+        loginTarget={loginTarget}
+        localProjectRecordCounts={localProjectRecordCounts}
+        projectRecordCounts={projectRecordCounts}
+        projectLocalDirectories={config.projectLocalDirectories}
+        projectTodoGroups={projectTodoGroups}
+        recentTasks={recentTasks}
+        sendCooldown={sendCooldown}
+        updateStatus={updateStatus}
+        loadData={() => void loadData()}
+        hideProjectTaskPreview={hideProjectTaskPreview}
+        onCreateLocalProject={() => void handleCreateLocalProject()}
+        onLogin={(event) => void handleLogin(event)}
+        onLocalProjectNameChange={setLocalProjectName}
+        onLogout={() => void handleLogout()}
+        onOpenManual={() => void window.workshopDesktop.openManual()}
+        onOpenPersonalRecords={() => void window.workshopDesktop.openPersonalRecord()}
+        onOpenRemoteLogin={() => {
+          setError("");
+          setIsRemoteLoginOpen(true);
+        }}
+        onOpenSettings={() => void window.workshopDesktop.openSettings()}
+        onOpenSticky={() => void window.workshopDesktop.openSticky()}
+        onCloseRemoteLogin={() => setIsRemoteLoginOpen(false)}
+        onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
+        onLocalProjectRecord={openLocalProjectRecord}
+        onProjectHover={showProjectTaskPreview}
+        onProjectRecord={openProjectRecord}
+        onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
+        onSendVerification={() => void handleSendVerification()}
+        setLoginCode={setLoginCode}
+        setLoginCodeType={setLoginCodeType}
+        setLoginTarget={setLoginTarget}
+        onTaskOpen={openTaskDetail}
       />
     );
   }
@@ -1900,16 +2040,22 @@ export default function App() {
       error={error}
       hoveredProjectId={hoveredProjectId}
       isLoading={isLoading}
+      localProjects={config.localProjects}
+      localProjectRecordCounts={localProjectRecordCounts}
       projectRecordCounts={projectRecordCounts}
+      projectLocalDirectories={config.projectLocalDirectories}
       projectTodoGroups={projectTodoGroups}
       updateStatus={updateStatus}
       hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
       hideProjectTaskPreview={hideProjectTaskPreview}
       loadData={() => void loadData()}
+      onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
+      onLocalProjectRecord={openLocalProjectRecord}
+      onOpenHome={() => void window.workshopDesktop.openHome()}
       onOpenManual={() => void window.workshopDesktop.openManual()}
       onOpenSettings={() => void window.workshopDesktop.openSettings()}
       onProjectHover={showProjectTaskPreview}
-      onProjectOpen={openProjectWorkspace}
+      onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
       onProjectRecord={openProjectRecord}
     />
   );

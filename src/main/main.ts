@@ -414,14 +414,6 @@ function registerGlobalShortcuts(config: AppConfig) {
   }
 }
 
-function hasValidLogin(config: AppConfig) {
-  if (config.authMode === "nebula" || config.authMode === "bearer") {
-    return Boolean(config.accessToken.trim());
-  }
-
-  return Boolean(config.userId.trim());
-}
-
 function createTrayIcon() {
   const image = loadBundledImage(process.platform === "darwin" ? "tray-iconTemplate.png" : "tray-icon.png");
   if (process.platform === "darwin") {
@@ -4179,9 +4171,7 @@ app.whenReady().then(async () => {
       console.warn(error instanceof Error ? error.message : "Workshop Codex skill prompt failed");
     });
   }, 1200);
-  if (!hasValidLogin(config)) {
-    setTimeout(() => showHomeWindow(), 400);
-  }
+  setTimeout(() => showHomeWindow(), 400);
 });
 
 app.on("window-all-closed", () => {

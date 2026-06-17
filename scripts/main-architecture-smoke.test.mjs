@@ -175,6 +175,13 @@ test("packaged app carries and auto-installs the Workshop CLI shim", async () =>
   );
 });
 
+test("app startup opens the workbench home regardless of login state", async () => {
+  const mainBundle = await readFile(path.join(process.cwd(), "dist/main/main.js"), "utf8");
+
+  assert.match(mainBundle, /setTimeout\(\(\) => showHomeWindow\(\), 400\)/);
+  assert.doesNotMatch(mainBundle, /if \(!hasValidLogin\(config\)\)/);
+});
+
 test("CodexAppServerClient handles streaming deltas and terminal statuses", () => {
   const client = createCodexClientForNotificationTest();
   const messages = [];

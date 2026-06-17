@@ -41,6 +41,11 @@ export interface CreateLocalProjectRequest {
   linkedWorkshopProjectName?: string;
 }
 
+export interface RenameLocalProjectRequest {
+  id: string;
+  name: string;
+}
+
 export interface ApiEnvelope<T> {
   code?: string;
   data?: T;
@@ -553,6 +558,8 @@ export interface DesktopBridge {
   openPersonalRecord: (target?: PersonalRecordTarget) => Promise<void>;
   listLocalProjects: () => Promise<LocalProject[]>;
   createLocalProject: (request: CreateLocalProjectRequest) => Promise<LocalProject>;
+  renameLocalProject: (request: RenameLocalProjectRequest) => Promise<LocalProject>;
+  chooseLocalProjectDirectory: () => Promise<string | null>;
   listPersonalRecords: () => Promise<PersonalRecordMeta[]>;
   getPersonalRecord: (id: string) => Promise<PersonalRecord | null>;
   savePersonalRecord: (record: SavePersonalRecordRequest) => Promise<PersonalRecord>;

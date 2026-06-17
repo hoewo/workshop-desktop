@@ -12,9 +12,11 @@ import {
   StickyNote,
   WifiOff
 } from "lucide-react";
+import { useState } from "react";
 import type { AppUpdateStatus, CodexRunMeta, LocalProject } from "../../../shared/types";
 import { summarizeCodexFailureForDisplay } from "../../../shared/codexErrors";
 import { codexRunStatusLabels, type ProjectTodoGroup } from "../../lib/tasks";
+import { LocalProjectContextMenu, type LocalProjectContextMenuState } from "../LocalProjectContextMenu";
 import { WorkshopMark } from "../WorkshopMark";
 
 const trayLoadedAt = Date.now();
@@ -52,6 +54,7 @@ export function TraySurface({
   onOpenManual,
   onOpenHome,
   onOpenSettings,
+  onRenameLocalProject,
   onProjectHover,
   onRemoteProjectDirectoryClick,
   onProjectRecord
@@ -74,10 +77,12 @@ export function TraySurface({
   onOpenManual: () => void;
   onOpenHome: () => void;
   onOpenSettings: () => void;
+  onRenameLocalProject: (project: LocalProject) => void;
   onProjectHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
   onRemoteProjectDirectoryClick: (projectId: number) => void;
   onProjectRecord: (group: ProjectTodoGroup) => void;
 }) {
+  const [localProjectMenu, setLocalProjectMenu] = useState<LocalProjectContextMenuState | null>(null);
   const linkedWorkshopProjectIds = new Set(
     localProjects.map((project) => project.linkedWorkshopProjectId).filter((projectId): projectId is number => Boolean(projectId))
   );
@@ -181,10 +186,19 @@ export function TraySurface({
                   onProjectHover(linkedGroup, event.currentTarget.getBoundingClientRect());
                 }
               }}
-              onClick={() => onLocalProjectRecord(project)}
+              onClick={() => {
+                setLocalProjectMenu(null);
+                onLocalProjectRecord(project);
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setLocalProjectMenu({ project, x: event.clientX, y: event.clientY });
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
+                  setLocalProjectMenu(null);
                   onLocalProjectRecord(project);
                 }
               }}
@@ -307,6 +321,12 @@ export function TraySurface({
           })}
         </section>
       ) : null}
+
+      <LocalProjectContextMenu
+        menu={localProjectMenu}
+        onClose={() => setLocalProjectMenu(null)}
+        onRename={onRenameLocalProject}
+      />
     </main>
   );
 }

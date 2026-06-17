@@ -64,6 +64,7 @@ import type {
   PersonalRecordTarget,
   Project,
   ProjectsPayload,
+  RenameLocalProjectRequest,
   SavePersonalRecordRequest,
   SendToCodexRequest,
   SendToCodexResponse,
@@ -1210,14 +1211,20 @@ function normalizeCreateLocalProjectRequest(request: CreateLocalProjectRequest):
     throw new Error("创建本地项目参数无效");
   }
 
-  const name = safeLocalProjectText(request.name, "", 80);
+  const localDirectory = safeLocalProjectText(request.localDirectory, "", 500);
+  if (!localDirectory) {
+    throw new Error("新建本地项目需要先选择本地目录");
+  }
+
+  const directoryName = localDirectory ? safeLocalProjectText(path.basename(localDirectory), "", 80) : "";
+  const name = safeLocalProjectText(request.name, "", 80) || directoryName;
   if (!name) {
     throw new Error("本地项目需要名称");
   }
 
   return {
     name,
-    ...(safeLocalProjectText(request.localDirectory, "", 500) ? { localDirectory: safeLocalProjectText(request.localDirectory, "", 500) } : {}),
+    ...(localDirectory ? { localDirectory } : {}),
     ...(safeLinkedWorkshopProjectId(request.linkedWorkshopProjectId)
       ? { linkedWorkshopProjectId: safeLinkedWorkshopProjectId(request.linkedWorkshopProjectId) }
       : {}),
@@ -1264,12 +1271,70 @@ async function createLocalProject(request: CreateLocalProjectRequest) {
   return project;
 }
 
+function normalizeRenameLocalProjectRequest(request: RenameLocalProjectRequest): RenameLocalProjectRequest {
+  if (!isPlainObject(request)) {
+    throw new Error("重命名本地项目参数无效");
+  }
+
+  const id = normalizeLocalProjectId(request.id);
+  const name = safeLocalProjectText(request.name, "", 80);
+  if (!name) {
+    throw new Error("本地项目需要名称");
+  }
+
+  return { id, name };
+}
+
+async function renameLocalProject(request: RenameLocalProjectRequest) {
+  const normalized = normalizeRenameLocalProjectRequest(request);
+  const config = await readConfig();
+  const currentProject = config.localProjects.find((project) => project.id === normalized.id);
+  if (!currentProject) {
+    throw new Error("本地项目不存在");
+  }
+
+  if (currentProject.name === normalized.name) {
+    return currentProject;
+  }
+
+  const now = new Date().toISOString();
+  const localProjects = config.localProjects.map((project) =>
+    project.id === normalized.id
+      ? {
+          ...project,
+          name: normalized.name,
+          updatedAt: now
+        }
+      : project
+  );
+  await saveConfig({ localProjects });
+  return localProjects.find((project) => project.id === normalized.id) as LocalProject;
+}
+
 function normalizeLocalProjectId(id: unknown) {
   const safeId = safeLocalProjectId(id);
   if (!safeId) {
     throw new Error("本地项目 ID 无效");
   }
   return safeId;
+}
+
+async function chooseLocalProjectDirectory(owner?: BrowserWindow | null) {
+  const result = owner
+    ? await dialog.showOpenDialog(owner, {
+        properties: ["openDirectory", "createDirectory"],
+        title: "选择项目目录"
+      })
+    : await dialog.showOpenDialog({
+        properties: ["openDirectory", "createDirectory"],
+        title: "选择项目目录"
+      });
+  const [directory] = result.filePaths;
+  if (result.canceled || !directory) {
+    return null;
+  }
+
+  return normalizeLocalDirectoryForStorage(directory);
 }
 
 async function bindLocalProjectDirectory(localProjectId: string, owner?: BrowserWindow | null) {
@@ -4041,6 +4106,8 @@ function registerIpc() {
   ipcMain.handle("record:open", (_event, target?: PersonalRecordTarget) => showPersonalRecordWindow(target));
   ipcMain.handle("localProject:list", () => listLocalProjects());
   ipcMain.handle("localProject:create", (_event, request: CreateLocalProjectRequest) => createLocalProject(request));
+  ipcMain.handle("localProject:rename", (_event, request: RenameLocalProjectRequest) => renameLocalProject(request));
+  ipcMain.handle("localProjectDirectory:choose", (event) => chooseLocalProjectDirectory(BrowserWindow.fromWebContents(event.sender)));
   ipcMain.handle("record:list", () => listPersonalRecords());
   ipcMain.handle("record:get", (_event, id: string) => getPersonalRecord(id));
   ipcMain.handle("record:save", async (event, record: SavePersonalRecordRequest) => {

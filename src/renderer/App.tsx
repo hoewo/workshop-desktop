@@ -101,8 +101,10 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [workshopSkillStatus, setWorkshopSkillStatus] = useState<WorkshopCodexSkillStatus | null>(null);
   const [isInstallingWorkshopSkill, setIsInstallingWorkshopSkill] = useState(false);
-  const [localProjectName, setLocalProjectName] = useState("");
   const [isCreatingLocalProject, setIsCreatingLocalProject] = useState(false);
+  const [renameLocalProjectTarget, setRenameLocalProjectTarget] = useState<LocalProject | null>(null);
+  const [renameLocalProjectName, setRenameLocalProjectName] = useState("");
+  const [isRenamingLocalProject, setIsRenamingLocalProject] = useState(false);
   const [isRemoteLoginOpen, setIsRemoteLoginOpen] = useState(false);
 
   useEffect(() => {
@@ -1746,16 +1748,29 @@ export default function App() {
     setDraftConfig(saved);
   }
 
-  async function handleCreateLocalProject() {
-    const name = localProjectName.trim();
-    if (!name) {
-      return;
-    }
+  function deriveProjectNameFromDirectory(directory: string) {
+    const normalized = directory.trim().replace(/[\\/]+$/, "");
+    const parts = normalized.split(/[\\/]/).filter(Boolean);
+    return parts.at(-1) || "";
+  }
 
+  async function handleCreateLocalProject() {
     try {
       setIsCreatingLocalProject(true);
-      await window.workshopDesktop.createLocalProject({ name });
-      setLocalProjectName("");
+      const directory = await window.workshopDesktop.chooseLocalProjectDirectory();
+      if (!directory) {
+        return;
+      }
+
+      const name = deriveProjectNameFromDirectory(directory);
+      if (!name) {
+        throw new Error("本地项目需要名称");
+      }
+
+      await window.workshopDesktop.createLocalProject({ name, localDirectory: directory });
+      const saved = await window.workshopDesktop.getConfig();
+      setConfig(saved);
+      setDraftConfig(saved);
       setError("");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "创建本地项目失败");
@@ -1764,11 +1779,94 @@ export default function App() {
     }
   }
 
+  function openRenameLocalProject(project: LocalProject) {
+    setError("");
+    setRenameLocalProjectTarget(project);
+    setRenameLocalProjectName(project.name);
+  }
+
+  function closeRenameLocalProject() {
+    if (isRenamingLocalProject) {
+      return;
+    }
+
+    setRenameLocalProjectTarget(null);
+    setRenameLocalProjectName("");
+  }
+
+  async function handleRenameLocalProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const target = renameLocalProjectTarget;
+    const name = renameLocalProjectName.trim();
+    if (!target || !name) {
+      return;
+    }
+
+    try {
+      setIsRenamingLocalProject(true);
+      await window.workshopDesktop.renameLocalProject({ id: target.id, name });
+      const saved = await window.workshopDesktop.getConfig();
+      setConfig(saved);
+      setDraftConfig(saved);
+      setRenameLocalProjectTarget(null);
+      setRenameLocalProjectName("");
+      setError("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "重命名本地项目失败");
+    } finally {
+      setIsRenamingLocalProject(false);
+    }
+  }
+
   async function handleArrangeStickyWindows() {
     await window.workshopDesktop.arrangeStickyWindows();
   }
 
   const loginReady = Boolean(draftConfig && loginTarget.trim() && loginCode.trim());
+  const renameLocalProjectNameTrimmed = renameLocalProjectName.trim();
+  const renameLocalProjectDialog = renameLocalProjectTarget ? (
+    <div className="project-rename-backdrop">
+      <section className="project-rename-sheet" role="dialog" aria-modal="true" aria-labelledby="project-rename-title">
+        <form className="project-rename-form" onSubmit={(event) => void handleRenameLocalProject(event)}>
+          <header>
+            <div>
+              <span className="eyebrow">Local Project</span>
+              <h2 id="project-rename-title">重命名项目</h2>
+            </div>
+          </header>
+          <label>
+            <span>项目名称</span>
+            <input
+              autoFocus
+              value={renameLocalProjectName}
+              onChange={(event) => setRenameLocalProjectName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeRenameLocalProject();
+                }
+              }}
+            />
+          </label>
+          <div className="project-rename-actions">
+            <button type="button" className="secondary-button" onClick={closeRenameLocalProject} disabled={isRenamingLocalProject}>
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={
+                isRenamingLocalProject ||
+                !renameLocalProjectNameTrimmed ||
+                renameLocalProjectNameTrimmed === renameLocalProjectTarget.name
+              }
+            >
+              {isRenamingLocalProject ? "保存中" : "保存"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  ) : null;
 
   if (!config || !draftConfig) {
     return (
@@ -1923,55 +2021,57 @@ export default function App() {
 
   if (surface === "home") {
     return (
-      <HomeSurface
-        codexRuns={codexRuns}
-        error={error}
-        hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
-        isLoading={isLoading}
-        isCreatingLocalProject={isCreatingLocalProject}
-        isRemoteConnected={isLoggedIn(config)}
-        isRemoteLoginOpen={isRemoteLoginOpen}
-        isLoggingIn={isLoggingIn}
-        isSendingCode={isSendingCode}
-        localProjectName={localProjectName}
-        localProjects={config.localProjects}
-        loginCode={loginCode}
-        loginCodeType={loginCodeType}
-        loginReady={loginReady}
-        loginTarget={loginTarget}
-        localProjectRecordCounts={localProjectRecordCounts}
-        projectRecordCounts={projectRecordCounts}
-        projectLocalDirectories={config.projectLocalDirectories}
-        projectTodoGroups={projectTodoGroups}
-        recentTasks={recentTasks}
-        sendCooldown={sendCooldown}
-        updateStatus={updateStatus}
-        loadData={() => void loadData()}
-        hideProjectTaskPreview={hideProjectTaskPreview}
-        onCreateLocalProject={() => void handleCreateLocalProject()}
-        onLogin={(event) => void handleLogin(event)}
-        onLocalProjectNameChange={setLocalProjectName}
-        onLogout={() => void handleLogout()}
-        onOpenManual={() => void window.workshopDesktop.openManual()}
-        onOpenPersonalRecords={() => void window.workshopDesktop.openPersonalRecord()}
-        onOpenRemoteLogin={() => {
-          setError("");
-          setIsRemoteLoginOpen(true);
-        }}
-        onOpenSettings={() => void window.workshopDesktop.openSettings()}
-        onOpenSticky={() => void window.workshopDesktop.openSticky()}
-        onCloseRemoteLogin={() => setIsRemoteLoginOpen(false)}
-        onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
-        onLocalProjectRecord={openLocalProjectRecord}
-        onProjectHover={showProjectTaskPreview}
-        onProjectRecord={openProjectRecord}
-        onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
-        onSendVerification={() => void handleSendVerification()}
-        setLoginCode={setLoginCode}
-        setLoginCodeType={setLoginCodeType}
-        setLoginTarget={setLoginTarget}
-        onTaskOpen={openTaskDetail}
-      />
+      <>
+        <HomeSurface
+          codexRuns={codexRuns}
+          error={error}
+          hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
+          isLoading={isLoading}
+          isRemoteConnected={isLoggedIn(config)}
+          isRemoteLoginOpen={isRemoteLoginOpen}
+          isLoggingIn={isLoggingIn}
+          isSendingCode={isSendingCode}
+          localProjects={config.localProjects}
+          loginCode={loginCode}
+          loginCodeType={loginCodeType}
+          loginReady={loginReady}
+          loginTarget={loginTarget}
+          localProjectRecordCounts={localProjectRecordCounts}
+          projectRecordCounts={projectRecordCounts}
+          projectLocalDirectories={config.projectLocalDirectories}
+          projectTodoGroups={projectTodoGroups}
+          recentTasks={recentTasks}
+          sendCooldown={sendCooldown}
+          updateStatus={updateStatus}
+          isCreatingLocalProject={isCreatingLocalProject}
+          loadData={() => void loadData()}
+          hideProjectTaskPreview={hideProjectTaskPreview}
+          onLogin={(event) => void handleLogin(event)}
+          onLogout={() => void handleLogout()}
+          onOpenManual={() => void window.workshopDesktop.openManual()}
+          onOpenCreateLocalProject={() => void handleCreateLocalProject()}
+          onOpenPersonalRecords={() => void window.workshopDesktop.openPersonalRecord()}
+          onOpenRemoteLogin={() => {
+            setError("");
+            setIsRemoteLoginOpen(true);
+          }}
+          onOpenSettings={() => void window.workshopDesktop.openSettings()}
+          onOpenSticky={() => void window.workshopDesktop.openSticky()}
+          onCloseRemoteLogin={() => setIsRemoteLoginOpen(false)}
+          onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
+          onLocalProjectRecord={openLocalProjectRecord}
+          onProjectHover={showProjectTaskPreview}
+          onProjectRecord={openProjectRecord}
+          onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
+          onRenameLocalProject={openRenameLocalProject}
+          onSendVerification={() => void handleSendVerification()}
+          setLoginCode={setLoginCode}
+          setLoginCodeType={setLoginCodeType}
+          setLoginTarget={setLoginTarget}
+          onTaskOpen={openTaskDetail}
+        />
+        {renameLocalProjectDialog}
+      </>
     );
   }
 
@@ -2035,28 +2135,32 @@ export default function App() {
   }
 
   return (
-    <TraySurface
-      codexRuns={codexRuns}
-      error={error}
-      hoveredProjectId={hoveredProjectId}
-      isLoading={isLoading}
-      localProjects={config.localProjects}
-      localProjectRecordCounts={localProjectRecordCounts}
-      projectRecordCounts={projectRecordCounts}
-      projectLocalDirectories={config.projectLocalDirectories}
-      projectTodoGroups={projectTodoGroups}
-      updateStatus={updateStatus}
-      hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
-      hideProjectTaskPreview={hideProjectTaskPreview}
-      loadData={() => void loadData()}
-      onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
-      onLocalProjectRecord={openLocalProjectRecord}
-      onOpenHome={() => void window.workshopDesktop.openHome()}
-      onOpenManual={() => void window.workshopDesktop.openManual()}
-      onOpenSettings={() => void window.workshopDesktop.openSettings()}
-      onProjectHover={showProjectTaskPreview}
-      onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
-      onProjectRecord={openProjectRecord}
-    />
+    <>
+      <TraySurface
+        codexRuns={codexRuns}
+        error={error}
+        hoveredProjectId={hoveredProjectId}
+        isLoading={isLoading}
+        localProjects={config.localProjects}
+        localProjectRecordCounts={localProjectRecordCounts}
+        projectRecordCounts={projectRecordCounts}
+        projectLocalDirectories={config.projectLocalDirectories}
+        projectTodoGroups={projectTodoGroups}
+        updateStatus={updateStatus}
+        hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
+        hideProjectTaskPreview={hideProjectTaskPreview}
+        loadData={() => void loadData()}
+        onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
+        onLocalProjectRecord={openLocalProjectRecord}
+        onOpenHome={() => void window.workshopDesktop.openHome()}
+        onOpenManual={() => void window.workshopDesktop.openManual()}
+        onOpenSettings={() => void window.workshopDesktop.openSettings()}
+        onProjectHover={showProjectTaskPreview}
+        onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
+        onProjectRecord={openProjectRecord}
+        onRenameLocalProject={openRenameLocalProject}
+      />
+      {renameLocalProjectDialog}
+    </>
   );
 }

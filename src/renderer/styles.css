@@ -214,36 +214,6 @@ button {
   padding: 0 10px;
 }
 
-.home-create-project {
-  flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(30, 36, 34, 0.08);
-}
-
-.home-create-project input {
-  height: 32px;
-  background: rgba(255, 255, 255, 0.84);
-}
-
-.home-create-project button {
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 8px;
-  background: #266954;
-  color: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 720;
-}
-
-.home-create-project button:disabled {
-  cursor: not-allowed;
-  opacity: 0.52;
-}
-
 .home-project-list,
 .home-task-list,
 .home-run-list {
@@ -575,6 +545,114 @@ button {
   padding: 0 8px;
   color: #6d716e;
   font-size: 12px;
+}
+
+.local-project-context-menu {
+  position: fixed;
+  z-index: 35;
+  min-width: 132px;
+  padding: 5px;
+  border: 1px solid rgba(30, 36, 34, 0.12);
+  border-radius: 8px;
+  background: #fffdf8;
+  box-shadow: 0 14px 34px rgba(26, 31, 29, 0.18);
+}
+
+.local-project-context-menu button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #28302c;
+  font-size: 13px;
+  text-align: left;
+}
+
+.local-project-context-menu button:hover,
+.local-project-context-menu button:focus-visible {
+  background: rgba(52, 96, 76, 0.1);
+}
+
+.project-rename-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: rgba(31, 38, 35, 0.28);
+}
+
+.project-rename-sheet {
+  width: min(380px, 100%);
+  border: 1px solid rgba(30, 36, 34, 0.12);
+  border-radius: 8px;
+  background: #f9f8f4;
+  box-shadow: 0 22px 60px rgba(26, 31, 29, 0.22);
+}
+
+.project-rename-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+
+.project-rename-form header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.project-rename-form h2 {
+  margin: 0;
+  color: #1f2623;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.project-rename-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #5f6762;
+  font-size: 12px;
+}
+
+.project-rename-form input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid rgba(35, 45, 39, 0.14);
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #1f2623;
+  font-size: 14px;
+  outline: none;
+}
+
+.project-rename-form input:focus {
+  border-color: rgba(49, 92, 72, 0.42);
+  box-shadow: 0 0 0 3px rgba(49, 92, 72, 0.12);
+}
+
+.project-rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.project-rename-actions button {
+  min-width: 72px;
 }
 
 .remote-login-backdrop {

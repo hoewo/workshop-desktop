@@ -14,7 +14,7 @@ import {
   WifiOff,
   X
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import type { AppUpdateStatus, CodexRunMeta, LocalProject, VerificationCodeType } from "../../../shared/types";
 import { summarizeCodexFailureForDisplay } from "../../../shared/codexErrors";
@@ -25,6 +25,7 @@ import {
   type EnrichedTask,
   type ProjectTodoGroup
 } from "../../lib/tasks";
+import { LocalProjectContextMenu, type LocalProjectContextMenuState } from "../LocalProjectContextMenu";
 import { WorkshopMark } from "../WorkshopMark";
 
 function handleKeyboardAction(event: KeyboardEvent<HTMLElement>, action: () => void) {
@@ -46,7 +47,6 @@ export function HomeSurface({
   isRemoteLoginOpen,
   isLoggingIn,
   isSendingCode,
-  localProjectName,
   localProjects,
   localProjectRecordCounts,
   loginCode,
@@ -61,11 +61,10 @@ export function HomeSurface({
   updateStatus,
   loadData,
   hideProjectTaskPreview,
-  onCreateLocalProject,
   onLogin,
-  onLocalProjectNameChange,
   onLogout,
   onOpenManual,
+  onOpenCreateLocalProject,
   onOpenPersonalRecords,
   onOpenRemoteLogin,
   onOpenSettings,
@@ -73,6 +72,7 @@ export function HomeSurface({
   onCloseRemoteLogin,
   onLocalProjectDirectoryClick,
   onLocalProjectRecord,
+  onRenameLocalProject,
   onProjectHover,
   onProjectRecord,
   onRemoteProjectDirectoryClick,
@@ -91,7 +91,6 @@ export function HomeSurface({
   isRemoteLoginOpen: boolean;
   isLoggingIn: boolean;
   isSendingCode: boolean;
-  localProjectName: string;
   localProjects: LocalProject[];
   localProjectRecordCounts: Map<string, number>;
   loginCode: string;
@@ -106,11 +105,10 @@ export function HomeSurface({
   updateStatus: AppUpdateStatus | null;
   loadData: () => void;
   hideProjectTaskPreview: () => void;
-  onCreateLocalProject: () => void;
   onLogin: (event: FormEvent<HTMLFormElement>) => void;
-  onLocalProjectNameChange: (value: string) => void;
   onLogout: () => void;
   onOpenManual: () => void;
+  onOpenCreateLocalProject: () => void;
   onOpenPersonalRecords: () => void;
   onOpenRemoteLogin: () => void;
   onOpenSettings: () => void;
@@ -118,6 +116,7 @@ export function HomeSurface({
   onCloseRemoteLogin: () => void;
   onLocalProjectDirectoryClick: (localProjectId: string) => void;
   onLocalProjectRecord: (project: LocalProject) => void;
+  onRenameLocalProject: (project: LocalProject) => void;
   onProjectHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
   onProjectRecord: (group: ProjectTodoGroup) => void;
   onRemoteProjectDirectoryClick: (projectId: number) => void;
@@ -127,9 +126,7 @@ export function HomeSurface({
   setLoginTarget: (value: string) => void;
   onTaskOpen: (task: EnrichedTask) => void;
 }) {
-  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
-  const createProjectInputRef = useRef<HTMLInputElement | null>(null);
-  const wasCreatingProjectRef = useRef(false);
+  const [localProjectMenu, setLocalProjectMenu] = useState<LocalProjectContextMenuState | null>(null);
   const totalTasks = projectTodoGroups.reduce((sum, group) => sum + group.count, 0);
   const activeProjects = localProjects.length;
   const totalProjectRecords = [...projectRecordCounts.values()].reduce((sum, count) => sum + count, 0);
@@ -142,19 +139,6 @@ export function HomeSurface({
   const topRemoteProjects = projectTodoGroups.filter((group) => !linkedWorkshopProjectIds.has(group.project.id)).slice(0, 8);
   const topRuns = codexRuns.slice(0, 6);
   const hasProjects = topLocalProjects.length > 0 || topRemoteProjects.length > 0;
-
-  useEffect(() => {
-    if (isCreateProjectOpen) {
-      createProjectInputRef.current?.focus();
-    }
-  }, [isCreateProjectOpen]);
-
-  useEffect(() => {
-    if (wasCreatingProjectRef.current && !isCreatingLocalProject && !localProjectName.trim()) {
-      setIsCreateProjectOpen(false);
-    }
-    wasCreatingProjectRef.current = isCreatingLocalProject;
-  }, [isCreatingLocalProject, localProjectName]);
 
   return (
     <main className="app-shell home-shell" onMouseLeave={hideProjectTaskPreview}>
@@ -222,36 +206,13 @@ export function HomeSurface({
             <button
               type="button"
               className="secondary-button compact-command"
-              onClick={() => setIsCreateProjectOpen((open) => !open)}
-              aria-expanded={isCreateProjectOpen}
-              aria-controls="home-create-project"
+              onClick={onOpenCreateLocalProject}
+              disabled={isCreatingLocalProject}
             >
               <Plus size={15} />
-              <span>添加项目</span>
+              <span>{isCreatingLocalProject ? "选择中" : "添加项目"}</span>
             </button>
           </div>
-
-          {isCreateProjectOpen ? (
-            <form
-              id="home-create-project"
-              className="home-create-project"
-              onSubmit={(event) => {
-                event.preventDefault();
-                onCreateLocalProject();
-              }}
-            >
-              <input
-                ref={createProjectInputRef}
-                value={localProjectName}
-                onChange={(event) => onLocalProjectNameChange(event.target.value)}
-                placeholder="项目名称"
-                aria-label="新建本地项目名称"
-              />
-              <button type="submit" disabled={isCreatingLocalProject || !localProjectName.trim()}>
-                {isCreatingLocalProject ? "创建中" : "创建"}
-              </button>
-            </form>
-          ) : null}
 
           <div className="home-project-list">
             {isLoading && !hasProjects ? (
@@ -273,6 +234,7 @@ export function HomeSurface({
               const linkedGroup = project.linkedWorkshopProjectId ? remoteGroupsByProjectId.get(project.linkedWorkshopProjectId) : undefined;
               const recordCount = localProjectRecordCounts.get(project.id) ?? 0;
               const openLocalProject = () => {
+                setLocalProjectMenu(null);
                 onLocalProjectRecord(project);
               };
               return (
@@ -292,6 +254,11 @@ export function HomeSurface({
                     }
                   }}
                   onClick={openLocalProject}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setLocalProjectMenu({ project, x: event.clientX, y: event.clientY });
+                  }}
                   onKeyDown={(event) => handleKeyboardAction(event, openLocalProject)}
                 >
                   <div className="project-row-content">
@@ -487,6 +454,12 @@ export function HomeSurface({
           </section>
         </aside>
       </div>
+
+      <LocalProjectContextMenu
+        menu={localProjectMenu}
+        onClose={() => setLocalProjectMenu(null)}
+        onRename={onRenameLocalProject}
+      />
 
       {!isRemoteConnected && isRemoteLoginOpen ? (
         <div className="remote-login-backdrop">

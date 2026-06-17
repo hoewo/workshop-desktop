@@ -7,6 +7,7 @@ import type {
   DesktopBridge,
   PersonalRecordChangeNotice,
   PersonalRecordTarget,
+  RenameLocalProjectRequest,
   SavePersonalRecordRequest,
   SendToCodexRequest,
   StickyTarget,
@@ -41,6 +42,10 @@ function sanitizeCreateLocalProjectRequest(request?: CreateLocalProjectRequest) 
   return isPlainObject(request) ? (request as CreateLocalProjectRequest) : undefined;
 }
 
+function sanitizeRenameLocalProjectRequest(request?: RenameLocalProjectRequest) {
+  return isPlainObject(request) ? (request as RenameLocalProjectRequest) : undefined;
+}
+
 function sanitizeSendToCodexRequest(request?: SendToCodexRequest) {
   return isPlainObject(request) ? request : undefined;
 }
@@ -66,6 +71,9 @@ const bridge: DesktopBridge = {
   listLocalProjects: () => ipcRenderer.invoke("localProject:list"),
   createLocalProject: (request: CreateLocalProjectRequest) =>
     ipcRenderer.invoke("localProject:create", sanitizeCreateLocalProjectRequest(request)),
+  renameLocalProject: (request: RenameLocalProjectRequest) =>
+    ipcRenderer.invoke("localProject:rename", sanitizeRenameLocalProjectRequest(request)),
+  chooseLocalProjectDirectory: () => ipcRenderer.invoke("localProjectDirectory:choose"),
   listPersonalRecords: () => ipcRenderer.invoke("record:list"),
   getPersonalRecord: (id: string) => ipcRenderer.invoke("record:get", id),
   savePersonalRecord: (record: SavePersonalRecordRequest) => ipcRenderer.invoke("record:save", record),

@@ -6,7 +6,6 @@ import {
   LoaderCircle,
   NotebookPen,
   RefreshCw,
-  Settings,
   ShieldCheck,
   SquareTerminal,
   StickyNote,
@@ -51,10 +50,11 @@ export function TraySurface({
   loadData,
   onLocalProjectDirectoryClick,
   onLocalProjectRecord,
+  onLinkLocalProjectRemote,
   onOpenManual,
   onOpenHome,
-  onOpenSettings,
   onRenameLocalProject,
+  onUnlinkLocalProjectRemote,
   onProjectHover,
   onRemoteProjectDirectoryClick,
   onProjectRecord
@@ -74,10 +74,11 @@ export function TraySurface({
   loadData: () => void;
   onLocalProjectDirectoryClick: (localProjectId: string) => void;
   onLocalProjectRecord: (project: LocalProject) => void;
+  onLinkLocalProjectRemote: (project: LocalProject) => void;
   onOpenManual: () => void;
   onOpenHome: () => void;
-  onOpenSettings: () => void;
   onRenameLocalProject: (project: LocalProject) => void;
+  onUnlinkLocalProjectRemote: (project: LocalProject) => void;
   onProjectHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
   onRemoteProjectDirectoryClick: (projectId: number) => void;
   onProjectRecord: (group: ProjectTodoGroup) => void;
@@ -114,8 +115,8 @@ export function TraySurface({
             className="icon-button"
             type="button"
             onClick={() => void window.workshopDesktop.openSticky()}
-            title="任务便签"
-            data-tooltip="任务便签"
+            title="桌面便签"
+            data-tooltip="桌面便签"
           >
             <StickyNote size={17} />
           </button>
@@ -130,9 +131,6 @@ export function TraySurface({
             data-tooltip="使用手册"
           >
             <CircleHelp size={17} />
-          </button>
-          <button className="icon-button" type="button" onClick={onOpenSettings} title="设置" data-tooltip="设置">
-            <Settings size={17} />
           </button>
         </div>
       </header>
@@ -325,7 +323,9 @@ export function TraySurface({
       <LocalProjectContextMenu
         menu={localProjectMenu}
         onClose={() => setLocalProjectMenu(null)}
+        onLinkRemote={onLinkLocalProjectRemote}
         onRename={onRenameLocalProject}
+        onUnlinkRemote={onUnlinkLocalProjectRemote}
       />
     </main>
   );

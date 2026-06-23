@@ -50,6 +50,7 @@ import type {
   ConfirmationAction,
   CreateLocalProjectRequest,
   CreateTaskRequest,
+  LinkLocalProjectWorkshopProjectRequest,
   ListProjectsRequest,
   ListTasksRequest,
   LoginRequest,
@@ -96,8 +97,6 @@ const defaultConfig: AppConfig = {
   username: "",
   appId: "workshop-desktop",
   sessionId: "",
-  dailyRefreshEnabled: false,
-  dailyRefreshTime: "09:00",
   stickyAlwaysOnTop: true,
   showDockIcon: true,
   globalShortcutEnabled: true,
@@ -148,7 +147,6 @@ let manualWindowRef: BrowserWindow | null = null;
 let updateWindowRef: BrowserWindow | null = null;
 let taskPreviewWindowRef: BrowserWindow | null = null;
 let taskPreviewHideTimer: NodeJS.Timeout | null = null;
-let refreshTimer: NodeJS.Timeout | null = null;
 let isQuitting = false;
 let registeredPanelShortcut = false;
 let registeredNewPersonalRecordShortcut = false;
@@ -334,7 +332,6 @@ async function saveConfig(next: Partial<AppConfig>): Promise<AppConfig> {
   if (app.isReady()) {
     applyDockVisibility(merged);
     registerGlobalShortcuts(merged);
-    scheduleDailyRefresh(merged);
     sendConfigChanged(merged);
   }
   return merged;
@@ -1201,6 +1198,16 @@ function getDuplicateWorkshopProjectDirectoryError(projectId: number) {
   return `该目录已绑定到 Workshop 项目 ${projectId}，请先处理原绑定或选择其他目录。`;
 }
 
+function getDuplicateLinkedWorkshopProjectError(projectName: string) {
+  return `该远端任务源已关联到本地项目「${projectName}」，请先解除原关联。`;
+}
+
+function findLocalProjectByWorkshopProject(projects: LocalProject[], workshopProjectId: number, exceptProjectId?: string) {
+  return projects.find(
+    (project) => project.id !== exceptProjectId && project.linkedWorkshopProjectId === workshopProjectId
+  );
+}
+
 async function listLocalProjects() {
   const config = await readConfig();
   return config.localProjects;
@@ -1243,6 +1250,13 @@ async function createLocalProject(request: CreateLocalProjectRequest) {
     : undefined;
   let linkedWorkshopProjectId = normalized.linkedWorkshopProjectId;
 
+  if (linkedWorkshopProjectId) {
+    const duplicateLinkedProject = findLocalProjectByWorkshopProject(config.localProjects, linkedWorkshopProjectId);
+    if (duplicateLinkedProject) {
+      throw new Error(getDuplicateLinkedWorkshopProjectError(duplicateLinkedProject.name));
+    }
+  }
+
   if (localDirectory) {
     const duplicateLocalProject = findLocalProjectByDirectory(config.localProjects, localDirectory);
     if (duplicateLocalProject) {
@@ -1254,6 +1268,10 @@ async function createLocalProject(request: CreateLocalProjectRequest) {
       throw new Error(getDuplicateWorkshopProjectDirectoryError(legacyWorkshopProjectId));
     }
     if (legacyWorkshopProjectId && !linkedWorkshopProjectId) {
+      const duplicateLinkedProject = findLocalProjectByWorkshopProject(config.localProjects, legacyWorkshopProjectId);
+      if (duplicateLinkedProject) {
+        throw new Error(getDuplicateLinkedWorkshopProjectError(duplicateLinkedProject.name));
+      }
       linkedWorkshopProjectId = legacyWorkshopProjectId;
     }
   }
@@ -1309,6 +1327,84 @@ async function renameLocalProject(request: RenameLocalProjectRequest) {
   );
   await saveConfig({ localProjects });
   return localProjects.find((project) => project.id === normalized.id) as LocalProject;
+}
+
+function normalizeLinkLocalProjectWorkshopProjectRequest(
+  request: LinkLocalProjectWorkshopProjectRequest
+): LinkLocalProjectWorkshopProjectRequest {
+  if (!isPlainObject(request)) {
+    throw new Error("关联远端任务源参数无效");
+  }
+
+  const localProjectId = normalizeLocalProjectId(request.localProjectId);
+  const workshopProjectId = safeLinkedWorkshopProjectId(request.workshopProjectId);
+  if (!workshopProjectId) {
+    throw new Error("远端任务源 ID 无效");
+  }
+
+  const workshopProjectName = safeLocalProjectText(request.workshopProjectName, "", 120);
+  return {
+    localProjectId,
+    workshopProjectId,
+    ...(workshopProjectName ? { workshopProjectName } : {})
+  };
+}
+
+async function linkLocalProjectWorkshopProject(request: LinkLocalProjectWorkshopProjectRequest) {
+  const normalized = normalizeLinkLocalProjectWorkshopProjectRequest(request);
+  const config = await readConfig();
+  const currentProject = config.localProjects.find((project) => project.id === normalized.localProjectId);
+  if (!currentProject) {
+    throw new Error("本地项目不存在");
+  }
+
+  const duplicateLinkedProject = findLocalProjectByWorkshopProject(
+    config.localProjects,
+    normalized.workshopProjectId,
+    normalized.localProjectId
+  );
+  if (duplicateLinkedProject) {
+    throw new Error(getDuplicateLinkedWorkshopProjectError(duplicateLinkedProject.name));
+  }
+
+  const now = new Date().toISOString();
+  const localProjects = config.localProjects.map((project) =>
+    project.id === normalized.localProjectId
+      ? {
+          ...project,
+          linkedWorkshopProjectId: normalized.workshopProjectId,
+          ...(normalized.workshopProjectName ? { linkedWorkshopProjectName: normalized.workshopProjectName } : {}),
+          updatedAt: now
+        }
+      : project
+  );
+
+  return saveConfig({ localProjects });
+}
+
+async function unlinkLocalProjectWorkshopProject(localProjectId: string) {
+  const safeId = normalizeLocalProjectId(localProjectId);
+  const config = await readConfig();
+  const currentProject = config.localProjects.find((project) => project.id === safeId);
+  if (!currentProject) {
+    throw new Error("本地项目不存在");
+  }
+
+  const now = new Date().toISOString();
+  const localProjects = config.localProjects.map((project) => {
+    if (project.id !== safeId) {
+      return project;
+    }
+    const rest: LocalProject = { ...project };
+    delete rest.linkedWorkshopProjectId;
+    delete rest.linkedWorkshopProjectName;
+    return {
+      ...rest,
+      updatedAt: now
+    };
+  });
+
+  return saveConfig({ localProjects });
 }
 
 function normalizeLocalProjectId(id: unknown) {
@@ -1372,6 +1468,12 @@ async function bindLocalProjectDirectory(localProjectId: string, owner?: Browser
     currentProject.linkedWorkshopProjectId !== legacyWorkshopProjectId
   ) {
     throw new Error(getDuplicateWorkshopProjectDirectoryError(legacyWorkshopProjectId));
+  }
+  if (legacyWorkshopProjectId && !currentProject.linkedWorkshopProjectId) {
+    const duplicateLinkedProject = findLocalProjectByWorkshopProject(config.localProjects, legacyWorkshopProjectId, safeId);
+    if (duplicateLinkedProject) {
+      throw new Error(getDuplicateLinkedWorkshopProjectError(duplicateLinkedProject.name));
+    }
   }
 
   const now = new Date().toISOString();
@@ -2243,7 +2345,7 @@ async function createStickyWindow(target: NormalizedStickyTarget) {
     fullscreenable: false,
     skipTaskbar: false,
     alwaysOnTop: config.stickyAlwaysOnTop,
-    title: "Workshop Todo Note",
+    title: "Workshop Desktop Note",
     backgroundColor: "#00000000",
     ...windowIconOption(),
     webPreferences: {
@@ -2433,14 +2535,28 @@ function pulseWindowFocus(win: BrowserWindow) {
   }
 }
 
+function hideTrayAfterNoteWindowShown(win: BrowserWindow) {
+  const trayWindow = windowRef;
+  if (!trayWindow || trayWindow.isDestroyed() || !trayWindow.isVisible()) {
+    return;
+  }
+
+  setTimeout(() => {
+    if (trayWindow.isDestroyed() || win.isDestroyed() || !trayWindow.isVisible()) {
+      return;
+    }
+    trayWindow.hide();
+  }, 120);
+}
+
 function focusExistingNoteWindow(win: BrowserWindow) {
   hideTaskPreviewWindow();
-  windowRef?.hide();
   if (win.isMinimized()) {
     win.restore();
   }
   showInCurrentWorkspace(win);
   pulseWindowFocus(win);
+  hideTrayAfterNoteWindowShown(win);
 }
 
 async function showStickyWindow(target?: StickyTarget | number) {
@@ -2474,9 +2590,9 @@ async function showStickyWindow(target?: StickyTarget | number) {
   }
 
   hideTaskPreviewWindow();
-  windowRef?.hide();
   showInCurrentWorkspace(win);
   markStickyWindowContext(win);
+  hideTrayAfterNoteWindowShown(win);
 }
 
 async function listPersonalRecords() {
@@ -2997,9 +3113,9 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
   }
 
   hideTaskPreviewWindow();
-  windowRef?.hide();
   showInCurrentWorkspace(win);
   markRecordWindowContext(win);
+  hideTrayAfterNoteWindowShown(win);
 }
 
 function syncRecordWindowTarget(sender: WebContents, record: PersonalRecord) {
@@ -3682,11 +3798,7 @@ function buildAppEntryMenu(source: WindowOpenSource): MenuItemConstructorOptions
       click: () => showManualWindow()
     },
     {
-      label: "设置",
-      click: () => showSettingsWindow()
-    },
-    {
-      label: "任务便签",
+      label: "桌面便签",
       click: () => void showStickyWindow()
     },
     {
@@ -3820,30 +3932,6 @@ function configureDockMenu() {
   app.dock?.setMenu(Menu.buildFromTemplate(buildAppEntryMenu("screen")));
 }
 
-function parseRefreshTime(value: string) {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (!match) {
-    return { hours: 9, minutes: 0 };
-  }
-
-  const hours = clamp(Number(match[1]), 0, 23);
-  const minutes = clamp(Number(match[2]), 0, 59);
-  return { hours, minutes };
-}
-
-function millisecondsUntilNextDailyRun(time: string) {
-  const { hours, minutes } = parseRefreshTime(time);
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(hours, minutes, 0, 0);
-
-  if (next.getTime() <= now.getTime()) {
-    next.setDate(next.getDate() + 1);
-  }
-
-  return next.getTime() - now.getTime();
-}
-
 function isTaskState(value: unknown): value is TaskState {
   return (
     value === "pending" ||
@@ -3925,29 +4013,13 @@ function sendAppUpdateStatus(status: AppUpdateStatus) {
   }
 }
 
-function notifyRefresh(reason: "manual" | "schedule") {
+function notifyRefresh(reason: "manual") {
   sendWorkshopRefresh({ reason });
 }
 
 function notifyTaskChanged(notice: TaskStateChangeNotice, sender?: WebContents) {
   hideTaskPreviewWindow();
   sendWorkshopRefresh({ reason: "task-state", task: notice }, sender);
-}
-
-function scheduleDailyRefresh(config: AppConfig) {
-  if (refreshTimer) {
-    clearTimeout(refreshTimer);
-    refreshTimer = null;
-  }
-
-  if (!config.dailyRefreshEnabled) {
-    return;
-  }
-
-  refreshTimer = setTimeout(async () => {
-    notifyRefresh("schedule");
-    scheduleDailyRefresh(await readConfig());
-  }, millisecondsUntilNextDailyRun(config.dailyRefreshTime));
 }
 
 async function bindProjectLocalDirectory(projectId: number, owner?: BrowserWindow | null) {
@@ -3977,6 +4049,15 @@ async function bindProjectLocalDirectory(projectId: number, owner?: BrowserWindo
   }
 
   const linkedLocalProject = findLocalProjectByDirectory(config.localProjects, localDirectory);
+  const duplicateLinkedProject = findLocalProjectByWorkshopProject(
+    config.localProjects,
+    projectId,
+    linkedLocalProject?.id
+  );
+  if (duplicateLinkedProject) {
+    throw new Error(getDuplicateLinkedWorkshopProjectError(duplicateLinkedProject.name));
+  }
+
   let localProjects = config.localProjects;
   if (linkedLocalProject) {
     if (linkedLocalProject.linkedWorkshopProjectId && linkedLocalProject.linkedWorkshopProjectId !== projectId) {
@@ -4107,6 +4188,12 @@ function registerIpc() {
   ipcMain.handle("localProject:list", () => listLocalProjects());
   ipcMain.handle("localProject:create", (_event, request: CreateLocalProjectRequest) => createLocalProject(request));
   ipcMain.handle("localProject:rename", (_event, request: RenameLocalProjectRequest) => renameLocalProject(request));
+  ipcMain.handle("localProject:linkWorkshopProject", (_event, request: LinkLocalProjectWorkshopProjectRequest) =>
+    linkLocalProjectWorkshopProject(request)
+  );
+  ipcMain.handle("localProject:unlinkWorkshopProject", (_event, localProjectId: string) =>
+    unlinkLocalProjectWorkshopProject(localProjectId)
+  );
   ipcMain.handle("localProjectDirectory:choose", (event) => chooseLocalProjectDirectory(BrowserWindow.fromWebContents(event.sender)));
   ipcMain.handle("record:list", () => listPersonalRecords());
   ipcMain.handle("record:get", (_event, id: string) => getPersonalRecord(id));
@@ -4228,7 +4315,6 @@ app.whenReady().then(async () => {
     tray?.popUpContextMenu(menu);
   });
 
-  scheduleDailyRefresh(config);
   await getAppUpdateService().initialize();
   setTimeout(() => {
     void getAppUpdateService().checkForUpdates();

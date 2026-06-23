@@ -1,39 +1,63 @@
-import { AlertTriangle, Bot, BookOpenText, CalendarClock, CheckCircle2, Download, LoaderCircle, LogOut, X } from "lucide-react";
+import { AlertTriangle, Bot, BookOpenText, CalendarClock, CheckCircle2, Download, LoaderCircle, LogIn, LogOut, X } from "lucide-react";
 import type { FormEvent } from "react";
-import type { AppConfig, AppUpdateStatus, WorkshopCodexSkillStatus } from "../../../shared/types";
+import type { AppConfig, AppUpdateStatus, VerificationCodeType, WorkshopCodexSkillStatus } from "../../../shared/types";
 import { UpdateStatusPanel } from "../UpdateStatusPanel";
 
 export function SettingsSurface({
   draftConfig,
   error,
   isRemoteConnected,
+  isLoggingIn,
   isSavingConfig,
+  isSendingCode,
   isInstallingWorkshopSkill,
+  loginCode,
+  loginCodeType,
+  loginReady,
+  loginTarget,
+  sendCooldown,
   updateStatus,
   workshopSkillStatus,
   onCheckForUpdates,
   onCloseWindow,
   onInstallUpdate,
   onInstallWorkshopSkill,
+  onLogin,
   onOpenManual,
   onLogout,
   onSaveConfig,
+  onSendVerification,
+  setLoginCode,
+  setLoginCodeType,
+  setLoginTarget,
   setDraftConfig
 }: {
   draftConfig: AppConfig;
   error: string;
   isRemoteConnected: boolean;
+  isLoggingIn: boolean;
   isSavingConfig: boolean;
+  isSendingCode: boolean;
   isInstallingWorkshopSkill: boolean;
+  loginCode: string;
+  loginCodeType: VerificationCodeType;
+  loginReady: boolean;
+  loginTarget: string;
+  sendCooldown: number;
   updateStatus: AppUpdateStatus | null;
   workshopSkillStatus: WorkshopCodexSkillStatus | null;
   onCheckForUpdates: () => void;
   onCloseWindow: () => void;
   onInstallUpdate: () => void;
   onInstallWorkshopSkill: () => void;
+  onLogin: (event: FormEvent<HTMLFormElement>) => void;
   onOpenManual: () => void;
   onLogout: () => void;
   onSaveConfig: (event: FormEvent<HTMLFormElement>) => void;
+  onSendVerification: () => void;
+  setLoginCode: (value: string) => void;
+  setLoginCodeType: (value: VerificationCodeType) => void;
+  setLoginTarget: (value: string) => void;
   setDraftConfig: (config: AppConfig) => void;
 }) {
   return (
@@ -56,27 +80,76 @@ export function SettingsSurface({
           </div>
         ) : null}
 
-        <form onSubmit={onSaveConfig}>
-          <div className="settings-block">
-            <label className="toggle-line">
-              <input
-                type="checkbox"
-                checked={draftConfig.dailyRefreshEnabled}
-                onChange={(event) => setDraftConfig({ ...draftConfig, dailyRefreshEnabled: event.target.checked })}
-              />
-              <span>每日定时更新</span>
-            </label>
-            <label>
-              <span>更新时间</span>
-              <input
-                type="time"
-                value={draftConfig.dailyRefreshTime}
-                disabled={!draftConfig.dailyRefreshEnabled}
-                onChange={(event) => setDraftConfig({ ...draftConfig, dailyRefreshTime: event.target.value })}
-              />
-            </label>
+        <section className={`settings-account-block ${isRemoteConnected ? "connected" : "disconnected"}`} aria-label="Workshop 账号">
+          <div className="settings-account-copy">
+            <span>Workshop 账号</span>
+            <strong>{isRemoteConnected ? draftConfig.username || draftConfig.userId || "已登录" : "未登录"}</strong>
+            <small>{isRemoteConnected ? "登录状态只影响远端任务同步，本地项目和记录可继续离线使用。" : "登录后可以同步远端任务源。"}</small>
           </div>
+          {isRemoteConnected ? (
+            <button className="logout-button settings-account-action" type="button" onClick={onLogout}>
+              <LogOut size={16} />
+              <span>退出登录</span>
+            </button>
+          ) : null}
+        </section>
 
+        {!isRemoteConnected ? (
+          <form className="settings-account-login login-form" onSubmit={onLogin}>
+            <div className="nebula-login-fields">
+              <div className="segmented code-type-switch" aria-label="验证码类型">
+                <button
+                  type="button"
+                  className={loginCodeType === "email" ? "active" : ""}
+                  onClick={() => setLoginCodeType("email")}
+                >
+                  邮箱
+                </button>
+                <button type="button" className={loginCodeType === "sms" ? "active" : ""} onClick={() => setLoginCodeType("sms")}>
+                  手机号
+                </button>
+              </div>
+              <label>
+                <span>{loginCodeType === "email" ? "邮箱" : "手机号"}</span>
+                <input
+                  value={loginTarget}
+                  onChange={(event) => setLoginTarget(event.target.value)}
+                  type={loginCodeType === "email" ? "email" : "tel"}
+                  autoComplete={loginCodeType === "email" ? "email" : "tel"}
+                  placeholder={loginCodeType === "email" ? "your-email@example.com" : "13800138000"}
+                />
+              </label>
+              <div className="verification-row">
+                <label>
+                  <span>验证码</span>
+                  <input
+                    value={loginCode}
+                    onChange={(event) => setLoginCode(event.target.value)}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="6 位验证码"
+                  />
+                </label>
+                <button
+                  className="secondary-button code-button"
+                  type="button"
+                  onClick={onSendVerification}
+                  disabled={isSavingConfig || isSendingCode || isLoggingIn || sendCooldown > 0 || !loginTarget.trim()}
+                >
+                  {isSendingCode ? <LoaderCircle className="spin" size={16} /> : null}
+                  <span>{sendCooldown > 0 ? `${sendCooldown}s` : "发送验证码"}</span>
+                </button>
+              </div>
+            </div>
+
+            <button className="save-button" type="submit" disabled={isSavingConfig || isLoggingIn || !loginReady}>
+              {isLoggingIn ? <LoaderCircle className="spin" size={16} /> : <LogIn size={16} />}
+              <span>登录账号</span>
+            </button>
+          </form>
+        ) : null}
+
+        <form className="settings-config-form" onSubmit={onSaveConfig}>
           <label className="toggle-line">
             <input
               type="checkbox"
@@ -141,12 +214,6 @@ export function SettingsSurface({
             {isSavingConfig ? <LoaderCircle className="spin" size={16} /> : <CalendarClock size={16} />}
             <span>保存设置</span>
           </button>
-          {isRemoteConnected ? (
-            <button className="logout-button" type="button" onClick={onLogout}>
-              <LogOut size={16} />
-              <span>退出登录</span>
-            </button>
-          ) : null}
         </form>
       </section>
     </main>

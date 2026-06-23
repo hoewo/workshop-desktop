@@ -32,7 +32,7 @@ export function StickyLoginRequiredSurface({
           <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">
             <GripVertical size={15} />
           </button>
-          <h1>待办便签</h1>
+          <h1>桌面便签</h1>
         </div>
         <button className="icon-button" type="button" onClick={closeStickyWindow} title="关闭">
           <X size={16} />

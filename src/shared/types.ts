@@ -13,8 +13,6 @@ export interface AppConfig {
   username: string;
   appId: string;
   sessionId: string;
-  dailyRefreshEnabled: boolean;
-  dailyRefreshTime: string;
   stickyAlwaysOnTop: boolean;
   showDockIcon: boolean;
   globalShortcutEnabled: boolean;
@@ -44,6 +42,12 @@ export interface CreateLocalProjectRequest {
 export interface RenameLocalProjectRequest {
   id: string;
   name: string;
+}
+
+export interface LinkLocalProjectWorkshopProjectRequest {
+  localProjectId: string;
+  workshopProjectId: number;
+  workshopProjectName?: string;
 }
 
 export interface ApiEnvelope<T> {
@@ -236,7 +240,7 @@ export interface TaskStateChangeNotice {
 }
 
 export interface WorkshopRefreshEvent {
-  reason: "manual" | "schedule" | "task-state";
+  reason: "manual" | "task-state";
   task?: TaskStateChangeNotice;
 }
 
@@ -559,6 +563,8 @@ export interface DesktopBridge {
   listLocalProjects: () => Promise<LocalProject[]>;
   createLocalProject: (request: CreateLocalProjectRequest) => Promise<LocalProject>;
   renameLocalProject: (request: RenameLocalProjectRequest) => Promise<LocalProject>;
+  linkLocalProjectWorkshopProject: (request: LinkLocalProjectWorkshopProjectRequest) => Promise<AppConfig>;
+  unlinkLocalProjectWorkshopProject: (localProjectId: string) => Promise<AppConfig>;
   chooseLocalProjectDirectory: () => Promise<string | null>;
   listPersonalRecords: () => Promise<PersonalRecordMeta[]>;
   getPersonalRecord: (id: string) => Promise<PersonalRecord | null>;

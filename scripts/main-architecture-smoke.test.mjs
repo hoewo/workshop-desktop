@@ -30,8 +30,6 @@ function baseConfig(overrides = {}) {
     username: "",
     appId: "workshop-desktop",
     sessionId: "",
-    dailyRefreshEnabled: false,
-    dailyRefreshTime: "09:00",
     stickyAlwaysOnTop: true,
     showDockIcon: true,
     globalShortcutEnabled: true,

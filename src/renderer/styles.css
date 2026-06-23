@@ -474,32 +474,10 @@ button {
   line-height: 1.15;
 }
 
-.home-account button {
-  min-width: 0;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border-radius: 8px;
-  background: #266954;
-  color: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 720;
-}
-
-.home-account.connected button {
-  background: rgba(30, 36, 34, 0.08);
-  color: #405049;
-}
-
-.home-account.connected button:hover {
-  background: rgba(30, 36, 34, 0.12);
-}
-
-.home-account.disconnected button:hover {
-  background: #1f5f4b;
+.home-account-copy small {
+  color: #65706b;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .home-quick-actions {
@@ -550,7 +528,7 @@ button {
 .local-project-context-menu {
   position: fixed;
   z-index: 35;
-  min-width: 132px;
+  min-width: 188px;
   padding: 5px;
   border: 1px solid rgba(30, 36, 34, 0.12);
   border-radius: 8px;
@@ -655,45 +633,147 @@ button {
   min-width: 72px;
 }
 
-.remote-login-backdrop {
+.project-link-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 30;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 22px;
   background: rgba(31, 38, 35, 0.28);
 }
 
-.remote-login-sheet {
-  width: min(420px, 100%);
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
+.project-link-sheet {
+  width: min(460px, 100%);
+  max-height: calc(100vh - 44px);
+  display: flex;
+  flex-direction: column;
   border: 1px solid rgba(30, 36, 34, 0.12);
   border-radius: 8px;
   background: #f9f8f4;
   box-shadow: 0 22px 60px rgba(26, 31, 29, 0.22);
 }
 
-.remote-login-sheet header {
+.project-link-sheet header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   padding: 16px;
   border-bottom: 1px solid rgba(30, 36, 34, 0.08);
 }
 
-.remote-login-sheet h2 {
+.project-link-sheet h2 {
   margin: 0;
   color: #1f2623;
   font-size: 18px;
   line-height: 1.15;
 }
 
-.remote-login-form {
-  padding: 16px;
+.project-link-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px 10px;
+}
+
+.project-link-summary strong {
+  color: #1f2623;
+  font-size: 14px;
+}
+
+.project-link-summary span {
+  color: #68726b;
+  font-size: 12px;
+}
+
+.project-link-list {
+  min-height: 90px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0 12px 12px;
+}
+
+.project-link-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 54px;
+  padding: 9px 11px;
+  border: 1px solid rgba(30, 36, 34, 0.1);
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #28302c;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-link-option:hover,
+.project-link-option:focus-visible {
+  border-color: rgba(49, 92, 72, 0.28);
+  background: rgba(38, 105, 84, 0.08);
+}
+
+.project-link-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.project-link-option.current {
+  border-color: rgba(49, 92, 72, 0.28);
+  background: rgba(38, 105, 84, 0.09);
+}
+
+.project-link-option-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.project-link-option-main strong {
+  overflow: hidden;
+  color: #1f2623;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-link-option-main span,
+.project-link-option-meta,
+.project-link-empty {
+  color: #68726b;
+  font-size: 12px;
+}
+
+.project-link-option-meta {
+  flex: 0 0 auto;
+}
+
+.project-link-empty {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.project-link-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid rgba(30, 36, 34, 0.08);
+}
+
+.project-link-actions .secondary-button {
+  width: auto;
+  min-width: 82px;
 }
 
 @media (max-width: 860px) {
@@ -2117,6 +2197,7 @@ textarea:focus {
 }
 
 .settings-panel form,
+.settings-account-block,
 .debug-fields,
 .nebula-login-fields {
   display: flex;
@@ -2124,21 +2205,82 @@ textarea:focus {
   gap: 11px;
 }
 
-.settings-panel form {
+.settings-config-form,
+.settings-account-login {
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
 }
 
-.settings-panel form::-webkit-scrollbar {
+.settings-config-form {
+  flex: 1 1 auto;
+}
+
+.settings-account-login {
+  flex: 0 0 auto;
+}
+
+.settings-config-form::-webkit-scrollbar,
+.settings-account-login::-webkit-scrollbar {
   width: 8px;
 }
 
-.settings-panel form::-webkit-scrollbar-thumb {
+.settings-config-form::-webkit-scrollbar-thumb,
+.settings-account-login::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
   background: rgba(30, 36, 34, 0.22);
   background-clip: content-box;
+}
+
+.settings-account-block {
+  flex: 0 0 auto;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(30, 36, 34, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.settings-account-block.connected {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.settings-account-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-account-copy span {
+  color: #5f6863;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-account-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #1e2422;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-account-copy small {
+  color: #66716b;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.settings-account-action {
+  width: auto;
+  min-width: 92px;
+  padding: 0 11px;
 }
 
 .settings-panel label {

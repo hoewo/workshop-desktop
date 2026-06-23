@@ -5,6 +5,7 @@ import type {
   CodexRunMeta,
   CreateLocalProjectRequest,
   DesktopBridge,
+  LinkLocalProjectWorkshopProjectRequest,
   PersonalRecordChangeNotice,
   PersonalRecordTarget,
   RenameLocalProjectRequest,
@@ -46,6 +47,10 @@ function sanitizeRenameLocalProjectRequest(request?: RenameLocalProjectRequest) 
   return isPlainObject(request) ? (request as RenameLocalProjectRequest) : undefined;
 }
 
+function sanitizeLinkLocalProjectWorkshopProjectRequest(request?: LinkLocalProjectWorkshopProjectRequest) {
+  return isPlainObject(request) ? (request as LinkLocalProjectWorkshopProjectRequest) : undefined;
+}
+
 function sanitizeSendToCodexRequest(request?: SendToCodexRequest) {
   return isPlainObject(request) ? request : undefined;
 }
@@ -73,6 +78,10 @@ const bridge: DesktopBridge = {
     ipcRenderer.invoke("localProject:create", sanitizeCreateLocalProjectRequest(request)),
   renameLocalProject: (request: RenameLocalProjectRequest) =>
     ipcRenderer.invoke("localProject:rename", sanitizeRenameLocalProjectRequest(request)),
+  linkLocalProjectWorkshopProject: (request: LinkLocalProjectWorkshopProjectRequest) =>
+    ipcRenderer.invoke("localProject:linkWorkshopProject", sanitizeLinkLocalProjectWorkshopProjectRequest(request)),
+  unlinkLocalProjectWorkshopProject: (localProjectId: string) =>
+    ipcRenderer.invoke("localProject:unlinkWorkshopProject", localProjectId),
   chooseLocalProjectDirectory: () => ipcRenderer.invoke("localProjectDirectory:choose"),
   listPersonalRecords: () => ipcRenderer.invoke("record:list"),
   getPersonalRecord: (id: string) => ipcRenderer.invoke("record:get", id),

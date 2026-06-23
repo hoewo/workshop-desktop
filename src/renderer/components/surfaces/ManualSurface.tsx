@@ -7,11 +7,9 @@ import { WorkshopMark } from "../WorkshopMark";
 const manualCategories: ManualCategory[] = ["software", "collaboration"];
 
 export function ManualSurface({
-  onCloseWindow,
-  onOpenSettings
+  onCloseWindow
 }: {
   onCloseWindow: () => void;
-  onOpenSettings: () => void;
 }) {
   const [activeSectionId, setActiveSectionId] = useState(manualSections[0]?.id ?? "");
   const activeSection = manualSections.find((section) => section.id === activeSectionId) ?? manualSections[0];
@@ -36,9 +34,6 @@ export function ManualSurface({
           </div>
         </div>
         <div className="manual-actions">
-          <button className="secondary-button" type="button" onClick={onOpenSettings}>
-            设置
-          </button>
           <button className="icon-button" type="button" onClick={onCloseWindow} title="关闭">
             <X size={17} />
           </button>

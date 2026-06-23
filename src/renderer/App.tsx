@@ -75,6 +75,26 @@ import {
 } from "./lib/tasks";
 import { readShellContentHeight, readTextareaHeightForFit } from "./lib/windowFit";
 
+// 同步数据时按项目/组织扇出的远程请求并发上限，避免一次性打满后端触发限流（RATE_LIMIT_EXCEEDED）
+const LOAD_DATA_CONCURRENCY = 3;
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await task(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 export default function App() {
   const surface = useMemo(getSurface, []);
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -105,7 +125,8 @@ export default function App() {
   const [renameLocalProjectTarget, setRenameLocalProjectTarget] = useState<LocalProject | null>(null);
   const [renameLocalProjectName, setRenameLocalProjectName] = useState("");
   const [isRenamingLocalProject, setIsRenamingLocalProject] = useState(false);
-  const [isRemoteLoginOpen, setIsRemoteLoginOpen] = useState(false);
+  const [linkLocalProjectTarget, setLinkLocalProjectTarget] = useState<LocalProject | null>(null);
+  const [isLinkingLocalProject, setIsLinkingLocalProject] = useState(false);
 
   useEffect(() => {
     if (surface !== "tray" && surface !== "home") {
@@ -330,40 +351,36 @@ export default function App() {
       const standaloneProjects = extractList<Project>(standaloneProjectPayload, "projects");
       const organizationsPayload = await apiData<OrganizationsPayload | Organization[]>(window.workshopDesktop.listOrganizations());
       const organizations = extractList<Organization>(organizationsPayload, "organizations");
-      const organizationProjectGroups = await Promise.all(
-        organizations.map(async (organization) => {
-          const payload = await apiData<ProjectsPayload | Project[]>(
-            window.workshopDesktop.listProjects({
-              organizationId: organization.id,
-              pageSize: 200
-            })
-          );
-          return extractList<Project>(payload, "projects").map((project) => withOrganization(project, organization));
-        })
-      );
+      const organizationProjectGroups = await mapWithConcurrency(organizations, LOAD_DATA_CONCURRENCY, async (organization) => {
+        const payload = await apiData<ProjectsPayload | Project[]>(
+          window.workshopDesktop.listProjects({
+            organizationId: organization.id,
+            pageSize: 200
+          })
+        );
+        return extractList<Project>(payload, "projects").map((project) => withOrganization(project, organization));
+      });
       const nextProjects = mergeProjects([standaloneProjects, ...organizationProjectGroups]);
       setProjects(nextProjects);
 
-      const taskGroups = await Promise.all(
-        nextProjects.map(async (project) => {
-          const payload = await apiData<TasksPayload | Task[]>(
-            window.workshopDesktop.listTasks({
-              projectId: project.id,
-              states: taskListStates,
-              pageSize: 200
-            })
-          );
+      const taskGroups = await mapWithConcurrency(nextProjects, LOAD_DATA_CONCURRENCY, async (project) => {
+        const payload = await apiData<TasksPayload | Task[]>(
+          window.workshopDesktop.listTasks({
+            projectId: project.id,
+            states: taskListStates,
+            pageSize: 200
+          })
+        );
 
-          const meId = getMeId(project, currentUser?.username || config.username);
-          const projectLabel = getProjectDisplayName(project);
-          return extractList<Task>(payload, "tasks").map<EnrichedTask>((task) => ({
-            ...task,
-            projectName: projectLabel,
-            meId,
-            isMine: task.creator_id === meId || task.executor_id === meId
-          }));
-        })
-      );
+        const meId = getMeId(project, currentUser?.username || config.username);
+        const projectLabel = getProjectDisplayName(project);
+        return extractList<Task>(payload, "tasks").map<EnrichedTask>((task) => ({
+          ...task,
+          projectName: projectLabel,
+          meId,
+          isMine: task.creator_id === meId || task.executor_id === meId
+        }));
+      });
 
       setTasks(taskGroups.flat().sort(compareTasks));
     } catch (nextError) {
@@ -374,7 +391,7 @@ export default function App() {
   }, [config]);
 
   const applyTaskStateChange = useCallback(
-    (notice: TaskStateChangeNotice, options?: { refreshAfterComplete?: boolean }) => {
+    (notice: TaskStateChangeNotice) => {
       const now = new Date().toISOString();
       setTasks((currentTasks) =>
         currentTasks
@@ -392,13 +409,13 @@ export default function App() {
       );
 
       if (notice.state === "completed") {
-        markTaskCompletionFeedback(notice.id, options?.refreshAfterComplete ? () => void loadData() : undefined);
+        markTaskCompletionFeedback(notice.id);
         return;
       }
 
       clearTaskCompletionFeedback(notice.id);
     },
-    [clearTaskCompletionFeedback, loadData, markTaskCompletionFeedback]
+    [clearTaskCompletionFeedback, markTaskCompletionFeedback]
   );
 
   const loadRecords = useCallback(async () => {
@@ -687,15 +704,16 @@ export default function App() {
   useEffect(
     () =>
       window.workshopDesktop.onRefresh((event) => {
+        // 任务状态变更只做本地乐观更新（多窗口同步），不触发全量网络刷新
         if (event?.task) {
-          applyTaskStateChange(event.task, { refreshAfterComplete: event.task.state === "completed" });
-          if (event.task.state !== "completed") {
-            void loadData();
-          }
+          applyTaskStateChange(event.task);
           return;
         }
 
-        void loadData();
+        // 仅手动刷新（托盘菜单/刷新按钮）才重新拉取远程数据
+        if (event?.reason === "manual") {
+          void loadData();
+        }
       }),
     [applyTaskStateChange, loadData]
   );
@@ -865,6 +883,50 @@ export default function App() {
         return a.projectName.localeCompare(b.projectName, "zh-CN");
       });
   }, [completingTaskIds, projects, tasks]);
+  const remoteProjectLinkOptions = useMemo(() => {
+    if (!config || !linkLocalProjectTarget) {
+      return [];
+    }
+
+    const taskCounts = new Map<number, number>();
+    for (const task of tasks) {
+      if (task.isMine && isVisibleTask(task)) {
+        taskCounts.set(task.project_id, (taskCounts.get(task.project_id) ?? 0) + 1);
+      }
+    }
+
+    return projects
+      .map((project) => {
+        const linkedLocalProject = config.localProjects.find((item) => item.linkedWorkshopProjectId === project.id);
+        const projectName = getProjectDisplayName(project);
+        const isCurrent = linkLocalProjectTarget.linkedWorkshopProjectId === project.id;
+        const isNameMatch = projectName.trim().toLowerCase() === linkLocalProjectTarget.name.trim().toLowerCase();
+        return {
+          project,
+          projectName,
+          taskCount: taskCounts.get(project.id) ?? 0,
+          linkedLocalProject,
+          isCurrent,
+          isLinkedToOther: Boolean(linkedLocalProject && linkedLocalProject.id !== linkLocalProjectTarget.id),
+          isNameMatch
+        };
+      })
+      .sort((a, b) => {
+        if (a.isCurrent !== b.isCurrent) {
+          return a.isCurrent ? -1 : 1;
+        }
+        if (a.isNameMatch !== b.isNameMatch) {
+          return a.isNameMatch ? -1 : 1;
+        }
+        if (a.isLinkedToOther !== b.isLinkedToOther) {
+          return a.isLinkedToOther ? 1 : -1;
+        }
+        if (a.taskCount !== b.taskCount) {
+          return b.taskCount - a.taskCount;
+        }
+        return a.projectName.localeCompare(b.projectName, "zh-CN");
+      });
+  }, [config, linkLocalProjectTarget, projects, tasks]);
   const recentTasks = useMemo(
     () => tasks.filter((task) => task.isMine && (isVisibleTask(task) || completingTaskIds.has(task.id))).sort(compareTasks),
     [completingTaskIds, tasks]
@@ -1593,7 +1655,6 @@ export default function App() {
       setConfig(loggedInConfig);
       setDraftConfig(loggedInConfig);
       setLoginCode("");
-      setIsRemoteLoginOpen(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "登录失败");
     } finally {
@@ -1650,12 +1711,8 @@ export default function App() {
         completionAt: (updatedTask?.state ?? state) === "completed" ? updatedTask?.completion_at ?? task.completion_at ?? now : task.completion_at ?? null
       };
 
-      applyTaskStateChange(notice, { refreshAfterComplete: notice.state === "completed" });
+      applyTaskStateChange(notice);
       await window.workshopDesktop.notifyTaskChanged(notice);
-
-      if (notice.state !== "completed") {
-        await loadData();
-      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "更新失败");
     } finally {
@@ -1702,10 +1759,6 @@ export default function App() {
     setDraftConfig(saved);
     setProjects([]);
     setTasks([]);
-    setIsRemoteLoginOpen(false);
-    if (surface === "settings") {
-      await window.workshopDesktop.closeWindow();
-    }
   }
 
   async function handleCheckForUpdates() {
@@ -1794,6 +1847,70 @@ export default function App() {
     setRenameLocalProjectName("");
   }
 
+  async function openLinkLocalProjectRemote(project: LocalProject) {
+    setError("");
+    setLinkLocalProjectTarget(project);
+
+    if (!config || !isLoggedIn(config)) {
+      setLinkLocalProjectTarget(null);
+      setError("");
+      await window.workshopDesktop.openSettings();
+      return;
+    }
+
+    if (projects.length === 0 && !isLoading) {
+      await loadData();
+    }
+  }
+
+  function closeLinkLocalProjectRemote() {
+    if (isLinkingLocalProject) {
+      return;
+    }
+    setLinkLocalProjectTarget(null);
+  }
+
+  async function handleLinkLocalProjectRemote(project: Project) {
+    const target = linkLocalProjectTarget;
+    if (!target) {
+      return;
+    }
+
+    try {
+      setIsLinkingLocalProject(true);
+      const saved = await window.workshopDesktop.linkLocalProjectWorkshopProject({
+        localProjectId: target.id,
+        workshopProjectId: project.id,
+        workshopProjectName: getProjectDisplayName(project)
+      });
+      setConfig(saved);
+      setDraftConfig(saved);
+      setLinkLocalProjectTarget(null);
+      setError("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "关联远端任务源失败");
+    } finally {
+      setIsLinkingLocalProject(false);
+    }
+  }
+
+  async function handleUnlinkLocalProjectRemote(project: LocalProject) {
+    try {
+      setIsLinkingLocalProject(true);
+      const saved = await window.workshopDesktop.unlinkLocalProjectWorkshopProject(project.id);
+      setConfig(saved);
+      setDraftConfig(saved);
+      if (linkLocalProjectTarget?.id === project.id) {
+        setLinkLocalProjectTarget(null);
+      }
+      setError("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "解除远端关联失败");
+    } finally {
+      setIsLinkingLocalProject(false);
+    }
+  }
+
   async function handleRenameLocalProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const target = renameLocalProjectTarget;
@@ -1824,6 +1941,10 @@ export default function App() {
 
   const loginReady = Boolean(draftConfig && loginTarget.trim() && loginCode.trim());
   const renameLocalProjectNameTrimmed = renameLocalProjectName.trim();
+  const activeLinkLocalProjectTarget =
+    linkLocalProjectTarget && config
+      ? config.localProjects.find((project) => project.id === linkLocalProjectTarget.id) ?? linkLocalProjectTarget
+      : linkLocalProjectTarget;
   const renameLocalProjectDialog = renameLocalProjectTarget ? (
     <div className="project-rename-backdrop">
       <section className="project-rename-sheet" role="dialog" aria-modal="true" aria-labelledby="project-rename-title">
@@ -1867,6 +1988,103 @@ export default function App() {
       </section>
     </div>
   ) : null;
+  const linkLocalProjectDialog =
+    activeLinkLocalProjectTarget && config && isLoggedIn(config) ? (
+      <div className="project-link-backdrop">
+        <section
+          className="project-link-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="project-link-title"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closeLinkLocalProjectRemote();
+            }
+          }}
+        >
+          <header>
+            <div>
+              <span className="eyebrow">Remote Task Source</span>
+              <h2 id="project-link-title">关联远端任务源</h2>
+            </div>
+            <button
+              type="button"
+              className="secondary-button compact-command"
+              onClick={() => void loadData()}
+              disabled={isLoading || isLinkingLocalProject}
+            >
+              {isLoading ? "同步中" : "刷新远端"}
+            </button>
+          </header>
+          <div className="project-link-summary">
+            <strong>{activeLinkLocalProjectTarget.name}</strong>
+            <span>本地项目显示名不会被远端项目名覆盖。</span>
+          </div>
+          <div className="project-link-list">
+            {remoteProjectLinkOptions.map((option) => {
+              const disabled = option.isLinkedToOther || option.isCurrent || isLinkingLocalProject;
+              return (
+                <button
+                  key={option.project.id}
+                  type="button"
+                  className={`project-link-option ${option.isCurrent ? "current" : ""} ${
+                    option.isLinkedToOther ? "disabled" : ""
+                  }`}
+                  disabled={disabled}
+                  onClick={() => void handleLinkLocalProjectRemote(option.project)}
+                >
+                  <span className="project-link-option-main">
+                    <strong>{option.projectName}</strong>
+                    <span>{option.taskCount} 个当前任务</span>
+                  </span>
+                  <span className="project-link-option-meta">
+                    {option.isCurrent
+                      ? "当前关联"
+                      : option.isLinkedToOther
+                        ? `已关联到「${option.linkedLocalProject?.name ?? "本地项目"}」`
+                        : option.isNameMatch
+                          ? "名称相近"
+                          : "可关联"}
+                  </span>
+                </button>
+              );
+            })}
+            {isLoading && remoteProjectLinkOptions.length === 0 ? (
+              <div className="project-link-empty">
+                <LoaderCircle className="spin" size={18} />
+                <span>正在拉取远端项目</span>
+              </div>
+            ) : null}
+            {!isLoading && remoteProjectLinkOptions.length === 0 ? (
+              <div className="project-link-empty">
+                <span>没有可关联的远端项目</span>
+              </div>
+            ) : null}
+          </div>
+          <div className="project-link-actions">
+            {activeLinkLocalProjectTarget.linkedWorkshopProjectId ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void handleUnlinkLocalProjectRemote(activeLinkLocalProjectTarget)}
+                disabled={isLinkingLocalProject}
+              >
+                解除关联
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={closeLinkLocalProjectRemote}
+              disabled={isLinkingLocalProject}
+            >
+              关闭
+            </button>
+          </div>
+        </section>
+      </div>
+    ) : null;
 
   if (!config || !draftConfig) {
     return (
@@ -1890,17 +2108,29 @@ export default function App() {
         draftConfig={draftConfig}
         error={error}
         isRemoteConnected={isLoggedIn(config)}
+        isLoggingIn={isLoggingIn}
         isSavingConfig={isSavingConfig}
+        isSendingCode={isSendingCode}
         isInstallingWorkshopSkill={isInstallingWorkshopSkill}
+        loginCode={loginCode}
+        loginCodeType={loginCodeType}
+        loginReady={loginReady}
+        loginTarget={loginTarget}
+        sendCooldown={sendCooldown}
         updateStatus={updateStatus}
         workshopSkillStatus={workshopSkillStatus}
         onCheckForUpdates={() => void handleCheckForUpdates()}
         onCloseWindow={() => void window.workshopDesktop.closeWindow()}
         onInstallUpdate={() => void handleInstallUpdate()}
         onInstallWorkshopSkill={() => void handleInstallWorkshopSkill()}
+        onLogin={(event) => void handleLogin(event)}
         onOpenManual={() => void window.workshopDesktop.openManual()}
         onLogout={() => void handleLogout()}
         onSaveConfig={(event) => void handleSaveConfig(event)}
+        onSendVerification={() => void handleSendVerification()}
+        setLoginCode={setLoginCode}
+        setLoginCodeType={setLoginCodeType}
+        setLoginTarget={setLoginTarget}
         setDraftConfig={setDraftConfig}
       />
     );
@@ -1908,10 +2138,7 @@ export default function App() {
 
   if (surface === "manual") {
     return (
-      <ManualSurface
-        onCloseWindow={() => void window.workshopDesktop.closeWindow()}
-        onOpenSettings={() => void window.workshopDesktop.openSettings()}
-      />
+      <ManualSurface onCloseWindow={() => void window.workshopDesktop.closeWindow()} />
     );
   }
 
@@ -2028,49 +2255,33 @@ export default function App() {
           hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
           isLoading={isLoading}
           isRemoteConnected={isLoggedIn(config)}
-          isRemoteLoginOpen={isRemoteLoginOpen}
-          isLoggingIn={isLoggingIn}
-          isSendingCode={isSendingCode}
           localProjects={config.localProjects}
-          loginCode={loginCode}
-          loginCodeType={loginCodeType}
-          loginReady={loginReady}
-          loginTarget={loginTarget}
           localProjectRecordCounts={localProjectRecordCounts}
           projectRecordCounts={projectRecordCounts}
           projectLocalDirectories={config.projectLocalDirectories}
           projectTodoGroups={projectTodoGroups}
           recentTasks={recentTasks}
-          sendCooldown={sendCooldown}
           updateStatus={updateStatus}
           isCreatingLocalProject={isCreatingLocalProject}
           loadData={() => void loadData()}
           hideProjectTaskPreview={hideProjectTaskPreview}
-          onLogin={(event) => void handleLogin(event)}
-          onLogout={() => void handleLogout()}
           onOpenManual={() => void window.workshopDesktop.openManual()}
           onOpenCreateLocalProject={() => void handleCreateLocalProject()}
           onOpenPersonalRecords={() => void window.workshopDesktop.openPersonalRecord()}
-          onOpenRemoteLogin={() => {
-            setError("");
-            setIsRemoteLoginOpen(true);
-          }}
           onOpenSettings={() => void window.workshopDesktop.openSettings()}
           onOpenSticky={() => void window.workshopDesktop.openSticky()}
-          onCloseRemoteLogin={() => setIsRemoteLoginOpen(false)}
           onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
           onLocalProjectRecord={openLocalProjectRecord}
+          onLinkLocalProjectRemote={(project) => void openLinkLocalProjectRemote(project)}
           onProjectHover={showProjectTaskPreview}
           onProjectRecord={openProjectRecord}
           onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
           onRenameLocalProject={openRenameLocalProject}
-          onSendVerification={() => void handleSendVerification()}
-          setLoginCode={setLoginCode}
-          setLoginCodeType={setLoginCodeType}
-          setLoginTarget={setLoginTarget}
+          onUnlinkLocalProjectRemote={(project) => void handleUnlinkLocalProjectRemote(project)}
           onTaskOpen={openTaskDetail}
         />
         {renameLocalProjectDialog}
+        {linkLocalProjectDialog}
       </>
     );
   }
@@ -2152,15 +2363,17 @@ export default function App() {
         loadData={() => void loadData()}
         onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
         onLocalProjectRecord={openLocalProjectRecord}
+        onLinkLocalProjectRemote={(project) => void openLinkLocalProjectRemote(project)}
         onOpenHome={() => void window.workshopDesktop.openHome()}
         onOpenManual={() => void window.workshopDesktop.openManual()}
-        onOpenSettings={() => void window.workshopDesktop.openSettings()}
         onProjectHover={showProjectTaskPreview}
         onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
         onProjectRecord={openProjectRecord}
         onRenameLocalProject={openRenameLocalProject}
+        onUnlinkLocalProjectRemote={(project) => void handleUnlinkLocalProjectRemote(project)}
       />
       {renameLocalProjectDialog}
+      {linkLocalProjectDialog}
     </>
   );
 }

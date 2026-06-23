@@ -130,7 +130,6 @@ export function normalizeConfig(config: AppConfig): AppConfig {
     sessionId: config.sessionId.trim(),
     lastSeenManualRevision: config.lastSeenManualRevision || "",
     lastSeenSkillInstallPromptVersion: config.lastSeenSkillInstallPromptVersion || "",
-    dailyRefreshTime: config.dailyRefreshTime || "09:00",
     localProjects: normalizeLocalProjects(config.localProjects)
   };
 }

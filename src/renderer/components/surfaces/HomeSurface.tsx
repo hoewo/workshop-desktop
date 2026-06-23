@@ -1,8 +1,6 @@
 import {
   CircleHelp,
   Download,
-  LogIn,
-  LogOut,
   LoaderCircle,
   NotebookPen,
   Plus,
@@ -11,12 +9,11 @@ import {
   ShieldCheck,
   SquareTerminal,
   StickyNote,
-  WifiOff,
-  X
+  WifiOff
 } from "lucide-react";
 import { useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
-import type { AppUpdateStatus, CodexRunMeta, LocalProject, VerificationCodeType } from "../../../shared/types";
+import type { KeyboardEvent } from "react";
+import type { AppUpdateStatus, CodexRunMeta, LocalProject } from "../../../shared/types";
 import { summarizeCodexFailureForDisplay } from "../../../shared/codexErrors";
 import {
   codexRunStatusLabels,
@@ -44,42 +41,28 @@ export function HomeSurface({
   isLoading,
   isCreatingLocalProject,
   isRemoteConnected,
-  isRemoteLoginOpen,
-  isLoggingIn,
-  isSendingCode,
   localProjects,
   localProjectRecordCounts,
-  loginCode,
-  loginCodeType,
-  loginReady,
-  loginTarget,
   projectRecordCounts,
   projectLocalDirectories,
   projectTodoGroups,
   recentTasks,
-  sendCooldown,
   updateStatus,
   loadData,
   hideProjectTaskPreview,
-  onLogin,
-  onLogout,
   onOpenManual,
   onOpenCreateLocalProject,
   onOpenPersonalRecords,
-  onOpenRemoteLogin,
   onOpenSettings,
   onOpenSticky,
-  onCloseRemoteLogin,
   onLocalProjectDirectoryClick,
   onLocalProjectRecord,
+  onLinkLocalProjectRemote,
   onRenameLocalProject,
+  onUnlinkLocalProjectRemote,
   onProjectHover,
   onProjectRecord,
   onRemoteProjectDirectoryClick,
-  onSendVerification,
-  setLoginCode,
-  setLoginCodeType,
-  setLoginTarget,
   onTaskOpen
 }: {
   codexRuns: CodexRunMeta[];
@@ -88,42 +71,28 @@ export function HomeSurface({
   isLoading: boolean;
   isCreatingLocalProject: boolean;
   isRemoteConnected: boolean;
-  isRemoteLoginOpen: boolean;
-  isLoggingIn: boolean;
-  isSendingCode: boolean;
   localProjects: LocalProject[];
   localProjectRecordCounts: Map<string, number>;
-  loginCode: string;
-  loginCodeType: VerificationCodeType;
-  loginReady: boolean;
-  loginTarget: string;
   projectRecordCounts: Map<number, number>;
   projectLocalDirectories: Record<string, string>;
   projectTodoGroups: ProjectTodoGroup[];
   recentTasks: EnrichedTask[];
-  sendCooldown: number;
   updateStatus: AppUpdateStatus | null;
   loadData: () => void;
   hideProjectTaskPreview: () => void;
-  onLogin: (event: FormEvent<HTMLFormElement>) => void;
-  onLogout: () => void;
   onOpenManual: () => void;
   onOpenCreateLocalProject: () => void;
   onOpenPersonalRecords: () => void;
-  onOpenRemoteLogin: () => void;
   onOpenSettings: () => void;
   onOpenSticky: () => void;
-  onCloseRemoteLogin: () => void;
   onLocalProjectDirectoryClick: (localProjectId: string) => void;
   onLocalProjectRecord: (project: LocalProject) => void;
+  onLinkLocalProjectRemote: (project: LocalProject) => void;
   onRenameLocalProject: (project: LocalProject) => void;
+  onUnlinkLocalProjectRemote: (project: LocalProject) => void;
   onProjectHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
   onProjectRecord: (group: ProjectTodoGroup) => void;
   onRemoteProjectDirectoryClick: (projectId: number) => void;
-  onSendVerification: () => void;
-  setLoginCode: (value: string) => void;
-  setLoginCodeType: (value: VerificationCodeType) => void;
-  setLoginTarget: (value: string) => void;
   onTaskOpen: (task: EnrichedTask) => void;
 }) {
   const [localProjectMenu, setLocalProjectMenu] = useState<LocalProjectContextMenuState | null>(null);
@@ -397,13 +366,10 @@ export function HomeSurface({
         <aside className="home-side" aria-label="快捷入口">
           <section className={`home-panel home-account ${isRemoteConnected ? "connected" : "disconnected"}`}>
             <div className="home-account-copy">
-              <span>远端</span>
-              <strong>{isRemoteConnected ? "已连接" : "未连接"}</strong>
+              <span>远端任务源</span>
+              <strong>{isRemoteConnected ? "可同步" : "未登录"}</strong>
+              <small>{isRemoteConnected ? "使用刷新同步任务" : "在设置中登录账号"}</small>
             </div>
-            <button type="button" onClick={isRemoteConnected ? onLogout : onOpenRemoteLogin}>
-              {isRemoteConnected ? <LogOut size={16} /> : <LogIn size={16} />}
-              <span>{isRemoteConnected ? "退出登录" : "连接远端"}</span>
-            </button>
           </section>
 
           <section className="home-panel home-quick-actions">
@@ -413,11 +379,7 @@ export function HomeSurface({
             </button>
             <button type="button" onClick={onOpenSticky}>
               <StickyNote size={17} />
-              <span>任务便签</span>
-            </button>
-            <button type="button" onClick={onOpenSettings}>
-              <Settings size={17} />
-              <span>设置</span>
+              <span>桌面便签</span>
             </button>
           </section>
 
@@ -458,88 +420,10 @@ export function HomeSurface({
       <LocalProjectContextMenu
         menu={localProjectMenu}
         onClose={() => setLocalProjectMenu(null)}
+        onLinkRemote={onLinkLocalProjectRemote}
         onRename={onRenameLocalProject}
+        onUnlinkRemote={onUnlinkLocalProjectRemote}
       />
-
-      {!isRemoteConnected && isRemoteLoginOpen ? (
-        <div className="remote-login-backdrop">
-          <section className="remote-login-sheet" role="dialog" aria-modal="true" aria-labelledby="remote-login-title">
-            <header>
-              <div>
-                <span className="eyebrow">Remote</span>
-                <h2 id="remote-login-title">连接远端</h2>
-              </div>
-              <button className="icon-button" type="button" onClick={onCloseRemoteLogin} title="关闭">
-                <X size={17} />
-              </button>
-            </header>
-
-            <form className="login-form remote-login-form" onSubmit={onLogin}>
-              <div className="nebula-login-fields">
-                <div className="segmented code-type-switch" aria-label="验证码类型">
-                  <button
-                    type="button"
-                    className={loginCodeType === "email" ? "active" : ""}
-                    onClick={() => setLoginCodeType("email")}
-                  >
-                    邮箱
-                  </button>
-                  <button
-                    type="button"
-                    className={loginCodeType === "sms" ? "active" : ""}
-                    onClick={() => setLoginCodeType("sms")}
-                  >
-                    手机号
-                  </button>
-                </div>
-                <label>
-                  <span>{loginCodeType === "email" ? "邮箱" : "手机号"}</span>
-                  <input
-                    value={loginTarget}
-                    onChange={(event) => setLoginTarget(event.target.value)}
-                    type={loginCodeType === "email" ? "email" : "tel"}
-                    autoComplete={loginCodeType === "email" ? "email" : "tel"}
-                    placeholder={loginCodeType === "email" ? "your-email@example.com" : "13800138000"}
-                  />
-                </label>
-                <div className="verification-row">
-                  <label>
-                    <span>验证码</span>
-                    <input
-                      value={loginCode}
-                      onChange={(event) => setLoginCode(event.target.value)}
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="6 位验证码"
-                    />
-                  </label>
-                  <button
-                    className="secondary-button code-button"
-                    type="button"
-                    onClick={onSendVerification}
-                    disabled={isSendingCode || isLoggingIn || sendCooldown > 0 || !loginTarget.trim()}
-                  >
-                    {isSendingCode ? <LoaderCircle className="spin" size={16} /> : null}
-                    <span>{sendCooldown > 0 ? `${sendCooldown}s` : "发送验证码"}</span>
-                  </button>
-                </div>
-              </div>
-
-              {error ? (
-                <div className="notice" role="alert">
-                  <WifiOff size={16} />
-                  <span>{error}</span>
-                </div>
-              ) : null}
-
-              <button className="save-button" type="submit" disabled={isLoggingIn || !loginReady}>
-                {isLoggingIn ? <LoaderCircle className="spin" size={16} /> : <LogIn size={16} />}
-                <span>登录并拉取远端</span>
-              </button>
-            </form>
-          </section>
-        </div>
-      ) : null}
     </main>
   );
 }

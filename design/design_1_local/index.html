@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workshop · 人本地基</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app-shell">
+  <!-- 顶栏：omnipresent 快记是主位 -->
+  <div class="topbar">
+    <div class="title-block">
+      <div class="mark">W</div>
+      <div>
+        <h1>工作台</h1>
+        <div class="sub" id="current-proj-sub">记录 · workshop-desktop</div>
+      </div>
+    </div>
+    <!-- omnipresent 快记：回车即记到当前活跃项目，零选择 -->
+    <div class="quick-capture">
+      <input id="quick-input" placeholder="记一笔…回车即记到当前项目（⌘↵ 多行 / ⇧↵ 切换归属）" />
+      <span class="qc-target" id="qc-target" onclick="cycleQuickProject()" title="点击切换归属项目">workshop-desktop</span>
+      <kbd class="qc-hint">⏎</kbd>
+    </div>
+    <div class="actions">
+      <button class="icon-btn" title="搜索 (⌘K)" onclick="focusSearch()">🔍</button>
+      <button class="icon-btn" title="新建记录 (⌘N)" onclick="openNew()">＋</button>
+      <button class="icon-btn" title="设置" onclick="openSettings()">⚙</button>
+    </div>
+  </div>
+
+  <!-- 双栏：左 项目切片 + 右 记录池 -->
+  <div class="workspace">
+    <!-- 左：项目切片导航 -->
+    <aside class="project-nav">
+      <div class="eyebrow">项目</div>
+      <div id="project-nav-list"></div>
+      <button class="project-nav-new" onclick="openNewProject()">+ 绑定目录</button>
+    </aside>
+
+    <!-- 右：记录池（首屏主位，占满） -->
+    <section class="records-panel">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">Records</div>
+          <h2 id="records-title">记录池</h2>
+        </div>
+        <div class="head-actions">
+          <button class="btn sm ghost" onclick="openExport()">导出</button>
+        </div>
+      </div>
+
+      <!-- 搜索 + 筛选：单一控制源 -->
+      <div class="filter-bar">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input id="search-input" placeholder="搜索标题、正文、标签…（⌘K）" oninput="onSearch(this.value)" />
+          <button class="search-clear" id="search-clear" style="display:none" onclick="clearSearch()">✕</button>
+        </div>
+        <div class="filter-group">
+          <span class="fl-label">来源</span>
+          <button class="chip active" data-origin="all" onclick="setOriginFilter('all', this)">全部</button>
+          <button class="chip" data-origin="human" onclick="setOriginFilter('human', this)">人记</button>
+          <button class="chip agent-chip" data-origin="agent" onclick="setOriginFilter('agent', this)">机器记</button>
+        </div>
+        <div class="filter-group">
+          <span class="fl-label">只看</span>
+          <button class="chip inject-chip" data-used="used" onclick="toggleUsedFilter(this)">AI 用过</button>
+        </div>
+        <div class="filter-group">
+          <span class="fl-label">含过时</span>
+          <button class="switch-mini" id="show-stale-btn" onclick="toggleStale(this)">关</button>
+        </div>
+        <button class="clear-filters" onclick="clearFilters()">清除</button>
+      </div>
+
+      <div id="records-list"></div>
+      <div class="list-foot">
+        <span id="list-count">显示 0 / 0 条</span>
+        <button class="load-more" id="load-more-btn" onclick="loadMore()" style="display:none">继续加载 ›</button>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- AI 活动：收进右下角悬浮（默认收起，有新取用时红点提示）-->
+<div class="ai-activity" id="ai-activity">
+  <button class="ai-activity-toggle" id="ai-activity-toggle" onclick="toggleAiActivity()">
+    <span class="ai-activity-dot" id="ai-activity-dot"></span>
+    <span>AI 活动</span>
+    <span class="ai-activity-count" id="ai-activity-count">0</span>
+    <span class="chev" id="ai-activity-chev">▴</span>
+  </button>
+  <div class="ai-activity-body" id="ai-activity-body" style="display:none">
+    <div class="ai-activity-section">
+      <div class="aa-eyebrow">上次运行</div>
+      <div class="aa-run" id="aa-run"></div>
+    </div>
+    <div class="ai-activity-section">
+      <div class="aa-eyebrow">AI 用过你的记录（取用流）</div>
+      <div id="usage-timeline"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 高级快记展开态（替代原浮动便签的多行/切归属场景）-->
+<div class="modal-mask" id="quick-advanced" style="display:none" onclick="if(event.target===this)closeQuickAdvanced()">
+  <div class="modal quick-advanced-modal">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">Quick Capture · 多行 / 切归属</div>
+        <h2>记一笔</h2>
+      </div>
+      <button class="icon-btn" onclick="closeQuickAdvanced()">✕</button>
+    </div>
+    <div class="form-row">
+      <label>正文（首行作标题，回车换行）</label>
+      <textarea id="quick-advanced-text" placeholder="一句话结论&#10;影响&#10;下一步"></textarea>
+    </div>
+    <div class="form-row">
+      <label>归属</label>
+      <div class="form-chips" id="quick-advanced-scope"></div>
+    </div>
+    <div class="form-row">
+      <label>项目</label>
+      <select id="quick-advanced-project"></select>
+    </div>
+    <div class="modal-foot">
+      <span class="hint">⌘↵ 保存</span>
+      <div>
+        <button class="btn sm ghost" onclick="closeQuickAdvanced()">取消</button>
+        <button class="btn sm primary" onclick="saveQuickAdvanced()">记下</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 弹层：记录详情 ===== -->
+<div class="modal-mask" id="detail-modal" style="display:none" onclick="if(event.target===this)closeDetail()">
+  <div class="modal detail-modal">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow" id="detail-eyebrow">Record</div>
+        <h2 id="detail-title">记录详情</h2>
+      </div>
+      <button class="icon-btn" onclick="closeDetail()">✕</button>
+    </div>
+    <!-- 顶部一行叙事，替代原 8 格 meta -->
+    <div class="detail-narrative" id="detail-narrative"></div>
+    <div class="detail-writenote" id="detail-writenote" style="display:none"></div>
+    <div class="detail-body" id="detail-body"></div>
+    <div class="detail-actions">
+      <button class="btn sm" onclick="openEditBody()">改写正文</button>
+      <button class="btn sm ghost" id="detail-toggle-stale" onclick="toggleRecordStale()">标记过时</button>
+      <button class="btn sm ghost" style="margin-left:auto" onclick="closeDetail()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 弹层：新建记录 ===== -->
+<div class="modal-mask" id="new-modal" style="display:none" onclick="if(event.target===this)closeNew()">
+  <div class="modal new-modal">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">New Record · 成稿记录</div>
+        <h2>新建记录</h2>
+      </div>
+      <button class="icon-btn" onclick="closeNew()">✕</button>
+    </div>
+    <div class="form-row">
+      <label>标题</label>
+      <input id="new-title" placeholder="一句话结论" />
+    </div>
+    <div class="form-row">
+      <label>scope</label>
+      <div class="form-chips" id="new-scope-chips"></div>
+    </div>
+    <div class="form-row">
+      <label>归属项目</label>
+      <select id="new-project"></select>
+    </div>
+    <div class="form-row">
+      <label>正文（结论 / 影响 / 下一步）</label>
+      <textarea id="new-body" placeholder="结论&#10;影响&#10;下一步"></textarea>
+    </div>
+    <div class="modal-foot">
+      <span class="hint">结构化成稿 · 与顶栏快记（碎片）区分</span>
+      <div>
+        <button class="btn sm ghost" onclick="closeNew()">取消</button>
+        <button class="btn sm primary" onclick="createRecord()">创建</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 弹层：新建项目 ===== -->
+<div class="modal-mask" id="new-project-modal" style="display:none" onclick="if(event.target===this)closeNewProject()">
+  <div class="modal new-project-modal">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">New Project · 绑定目录</div>
+        <h2>新建项目</h2>
+      </div>
+      <button class="icon-btn" onclick="closeNewProject()">✕</button>
+    </div>
+    <div class="form-row">
+      <label>项目名</label>
+      <input id="new-project-name" placeholder="一句话项目名（绑定目录可留空取目录名）" />
+    </div>
+    <div class="form-row">
+      <label>工作区来源</label>
+      <div class="workspace-options">
+        <button class="workspace-option active" data-ws="temporary" onclick="setNewProjectWorkspace('temporary', this)">
+          <span class="ws-icon">⚡</span>
+          <span class="ws-text">
+            <span class="ws-title">临时项目</span>
+            <span class="ws-desc">自动创建临时记录区，之后可迁移到正式项目</span>
+          </span>
+        </button>
+        <button class="workspace-option" data-ws="local" onclick="setNewProjectWorkspace('local', this)">
+          <span class="ws-icon">📁</span>
+          <span class="ws-text">
+            <span class="ws-title">绑定本地目录</span>
+            <span class="ws-desc">选已有目录，记录按目录切片</span>
+          </span>
+        </button>
+        <button class="workspace-option" data-ws="github" onclick="setNewProjectWorkspace('github', this)">
+          <span class="ws-icon">⎇</span>
+          <span class="ws-text">
+            <span class="ws-title">从 GitHub 克隆</span>
+            <span class="ws-desc">输入仓库地址，克隆到本地作为 cwd 落点</span>
+          </span>
+        </button>
+      </div>
+    </div>
+    <div class="form-row" id="new-project-dir-row" style="display:none">
+      <label>本地目录（cwd · 注入落点）</label>
+      <div class="folder-picker">
+        <input type="file" id="new-project-dir-input" webkitdirectory directory multiple style="display:none" onchange="onFolderPicked(this)" />
+        <button class="btn sm" type="button" onclick="document.getElementById('new-project-dir-input').click()">选择文件夹…</button>
+        <span class="folder-picked empty" id="new-project-dir-label">未选择</span>
+      </div>
+      <span class="folder-hint">通过系统目录选择器选取（桌面应用中获取完整路径作为 cwd）</span>
+    </div>
+    <div class="form-row" id="new-project-repo-row" style="display:none">
+      <label>仓库地址</label>
+      <input id="new-project-repo" placeholder="https://github.com/owner/repo" />
+      <input id="new-project-token" type="password" placeholder="Personal Access Token（可选，私有仓库必填）" style="margin-top:6px" />
+      <span class="folder-hint">克隆到 ~/.workshop/workspaces/… 完成后作为注入落点 cwd；token 仅用于本次克隆</span>
+    </div>
+    <div class="modal-foot">
+      <span class="hint" id="new-project-hint">自动创建临时记录区（~/.workshop/workspaces/…），之后可迁移到正式项目</span>
+      <div>
+        <button class="btn sm ghost" onclick="closeNewProject()">取消</button>
+        <button class="btn sm primary" onclick="createProject()">创建</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 弹层：导出确认 ===== -->
+<div class="modal-mask" id="export-modal" style="display:none" onclick="if(event.target===this)closeExport()">
+  <div class="modal export-modal">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">Export</div>
+        <h2>导出当前切片</h2>
+      </div>
+      <button class="icon-btn" onclick="closeExport()">✕</button>
+    </div>
+    <div class="export-body" id="export-body"></div>
+    <div class="modal-foot">
+      <span class="hint">导出为 markdown · 仅当前筛选结果</span>
+      <div>
+        <button class="btn sm ghost" onclick="closeExport()">取消</button>
+        <button class="btn sm primary" onclick="doExport()">复制到剪贴板</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 弹层：改写正文 ===== -->
+<div class="modal-mask" id="edit-modal" style="display:none" onclick="if(event.target===this)closeEditBody()">
+  <div class="modal edit-modal">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">Edit Body · 人手动改写</div>
+        <h2>改写正文</h2>
+      </div>
+      <button class="icon-btn" onclick="closeEditBody()">✕</button>
+    </div>
+    <div class="edit-record-title" id="edit-record-title"></div>
+    <div class="form-row">
+      <label>正文（结论 / 影响 / 下一步）</label>
+      <textarea id="edit-body" placeholder="结论&#10;影响&#10;下一步"></textarea>
+    </div>
+    <div class="modal-foot">
+      <span class="hint">改写后直接生效</span>
+      <div>
+        <button class="btn sm ghost" onclick="closeEditBody()">取消</button>
+        <button class="btn sm primary" onclick="saveEditBody()">保存改写</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 弹层：设置 ===== -->
+<div class="modal-mask" id="settings-modal" style="display:none" onclick="if(event.target===this)closeSettings()">
+  <div class="modal settings-modal">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">Settings</div>
+        <h2>设置</h2>
+      </div>
+      <button class="icon-btn" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="settings-list">
+      <div class="setting-row account" id="settings-account"></div>
+      <div class="setting-row nav" onclick="openSanitizeRules()">
+        <div class="setting-label">脱敏规则<span class="setting-desc">配置 AI 取用时脱敏的实体类型与规则</span></div>
+        <span class="setting-nav-coming">本期预留 ›</span>
+      </div>
+      <div class="setting-row">
+        <div class="setting-label">默认记录 scope<span class="setting-desc">新建记录与快记的默认归属</span></div>
+        <div class="setting-control form-chips" id="settings-default-scope">
+          <button class="chip" data-ds="project" onclick="setSettingDefaultScope('project', this)">项目</button>
+          <button class="chip" data-ds="none" onclick="setSettingDefaultScope('none', this)">个人</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-label">含过时记录<span class="setting-desc">主列表是否显示已标记过时的记录</span></div>
+        <button class="switch" id="settings-show-stale" onclick="toggleSettingSwitch('settings-show-stale', this)">关</button>
+      </div>
+      <div class="setting-row about">
+        <div class="setting-label">关于<span class="setting-desc">Workshop · 人本地基 v0.1 · 记录是地基，人愿意记、找得到，AI 才有弹药</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- toast -->
+<div class="toast" id="toast" style="display:none"></div>
+
+<div class="draft-watermark">方向一 · 人本地基 · 记录是地基</div>
+<script src="app.js"></script>
+</body>
+</html>

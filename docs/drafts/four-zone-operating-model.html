@@ -1,0 +1,1673 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>四区研发工作法可视化草案</title>
+  <style>
+    :root {
+      --paper: #f7f8f4;
+      --ink: #151713;
+      --muted: #5f645c;
+      --line: #cfd5ca;
+      --panel: #ffffff;
+      --panel-strong: #eef4ef;
+      --green: #1f8f5f;
+      --blue: #3168c7;
+      --coral: #d6543c;
+      --amber: #c9901f;
+      --violet: #6f55c9;
+      --shadow: 0 26px 80px rgba(21, 23, 19, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(21, 23, 19, 0.045) 1px, transparent 1px) 0 0 / 36px 36px,
+        linear-gradient(180deg, rgba(21, 23, 19, 0.04) 1px, transparent 1px) 0 0 / 36px 36px,
+        var(--paper);
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.7;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .page {
+      width: min(1220px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      border-bottom: 1px solid rgba(21, 23, 19, 0.14);
+      background: rgba(247, 248, 244, 0.9);
+      backdrop-filter: blur(16px);
+    }
+
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 64px;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: var(--ink);
+      box-shadow: 5px 5px 0 var(--green);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    nav {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    nav a {
+      text-decoration: none;
+    }
+
+    nav a:hover {
+      color: var(--ink);
+    }
+
+    .hero {
+      min-height: 680px;
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(480px, 1.08fr);
+      gap: 54px;
+      align-items: center;
+      padding: 78px 0 66px;
+    }
+
+    .label {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .label::before {
+      content: "";
+      width: 34px;
+      height: 3px;
+      background: currentColor;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      max-width: 720px;
+      margin-top: 24px;
+      font-family: "Songti SC", STSong, Georgia, serif;
+      font-size: 66px;
+      line-height: 1.04;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 700px;
+      margin-top: 28px;
+      color: #30352e;
+      font-size: 21px;
+      line-height: 1.8;
+    }
+
+    .hero-points {
+      display: grid;
+      gap: 12px;
+      margin-top: 34px;
+      max-width: 650px;
+    }
+
+    .point {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 12px;
+      align-items: start;
+      color: #252923;
+      font-size: 15px;
+    }
+
+    .point::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      margin-top: 9px;
+      border: 2px solid var(--ink);
+      background: var(--amber);
+      box-shadow: 3px 3px 0 var(--ink);
+    }
+
+    .atlas {
+      position: relative;
+      min-height: 570px;
+      padding: 20px;
+    }
+
+    .flow-lines {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      color: rgba(21, 23, 19, 0.72);
+    }
+
+    .router-link {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.4;
+      stroke-dasharray: 6 8;
+    }
+
+    .router-link.core {
+      stroke-width: 3.4;
+      stroke-dasharray: none;
+    }
+
+    .loop-main {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 3.2;
+    }
+
+    .loop-accent {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 4;
+    }
+
+    .loop-accent.optional {
+      stroke-width: 3;
+      stroke-dasharray: 10 8;
+      opacity: 0.58;
+    }
+
+    .flow-label {
+      fill: var(--ink);
+      font-family: Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .zone-grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 108px 116px;
+      min-height: 530px;
+      align-items: stretch;
+    }
+
+    .zone {
+      position: relative;
+      min-height: 188px;
+      padding: 22px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      box-shadow: 10px 10px 0 rgba(21, 23, 19, 0.18);
+      overflow: hidden;
+    }
+
+    .zone::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 9px;
+      background: var(--accent);
+    }
+
+    .zone.personal {
+      --accent: var(--green);
+    }
+
+    .zone.product {
+      --accent: var(--violet);
+    }
+
+    .zone.project {
+      --accent: var(--amber);
+    }
+
+    .zone.code {
+      --accent: var(--blue);
+    }
+
+    .zone-kicker {
+      margin-top: 5px;
+      color: var(--muted);
+      font-family: Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .zone h2 {
+      margin-top: 12px;
+      font-family: "Songti SC", STSong, Georgia, serif;
+      font-size: 28px;
+      line-height: 1.18;
+    }
+
+    .zone p {
+      margin-top: 12px;
+      color: #41463f;
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .tool-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .tool {
+      padding: 5px 8px;
+      border: 1px solid var(--line);
+      background: #f8faf7;
+      color: #343932;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .router {
+      position: absolute;
+      z-index: 2;
+      top: 50%;
+      left: 50%;
+      width: 214px;
+      min-height: 214px;
+      transform: translate(-50%, -50%) rotate(-2deg);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      border: 3px solid var(--ink);
+      background: #fbff5c;
+      box-shadow: 14px 14px 0 var(--ink);
+      text-align: center;
+    }
+
+    .router strong {
+      display: block;
+      font-family: "Songti SC", STSong, Georgia, serif;
+      font-size: 28px;
+      line-height: 1.14;
+    }
+
+    .router span {
+      display: block;
+      margin-top: 12px;
+      color: #4a4e22;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.55;
+    }
+
+    section {
+      padding: 76px 0;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(280px, 0.55fr);
+      gap: 34px;
+      align-items: end;
+      margin-bottom: 34px;
+    }
+
+    .section-head h2 {
+      font-family: "Songti SC", STSong, Georgia, serif;
+      font-size: 48px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .section-head p {
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .source-map {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .source-card {
+      min-height: 310px;
+      padding: 22px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      box-shadow: 8px 8px 0 rgba(21, 23, 19, 0.14);
+    }
+
+    .source-card h3 {
+      font-size: 23px;
+      line-height: 1.24;
+    }
+
+    .source-card .owner {
+      margin-top: 10px;
+      color: var(--muted);
+      font-family: Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .source-card ul {
+      display: grid;
+      gap: 8px;
+      margin: 20px 0 0;
+      padding: 0;
+      list-style: none;
+      color: #353a33;
+      font-size: 14px;
+    }
+
+    .source-card li {
+      display: grid;
+      grid-template-columns: 12px 1fr;
+      gap: 9px;
+      align-items: start;
+    }
+
+    .source-card li::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      margin-top: 9px;
+      background: var(--accent);
+    }
+
+    .source-card.personal {
+      --accent: var(--green);
+    }
+
+    .source-card.product {
+      --accent: var(--violet);
+    }
+
+    .source-card.project {
+      --accent: var(--amber);
+    }
+
+    .source-card.code {
+      --accent: var(--blue);
+    }
+
+    .pipeline {
+      position: relative;
+      padding: 30px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .pipeline::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 10px;
+      background: linear-gradient(90deg, var(--green), var(--violet), var(--amber), var(--blue));
+    }
+
+    .rail {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .station {
+      position: relative;
+      min-height: 180px;
+      padding: 20px 18px;
+      border: 1px solid var(--line);
+      background: #fbfcfa;
+    }
+
+    .station:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -18px;
+      width: 19px;
+      height: 2px;
+      background: var(--ink);
+    }
+
+    .station-number {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border: 2px solid var(--ink);
+      background: var(--accent);
+      color: #fff;
+      font-family: Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .station h3 {
+      margin-top: 18px;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .station p {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    .station.s1 {
+      --accent: var(--green);
+    }
+
+    .station.s2 {
+      --accent: var(--violet);
+    }
+
+    .station.s3 {
+      --accent: var(--amber);
+    }
+
+    .station.s4 {
+      --accent: var(--coral);
+    }
+
+    .station.s5 {
+      --accent: var(--blue);
+    }
+
+    .loop-board {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.65fr);
+      gap: 26px;
+      align-items: center;
+      margin-top: 32px;
+      padding-top: 30px;
+      border-top: 2px solid var(--ink);
+    }
+
+    .loop-diagram {
+      min-height: 360px;
+      position: relative;
+    }
+
+    .loop-diagram svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 360px;
+    }
+
+    .loop-node {
+      fill: var(--panel);
+      stroke: var(--ink);
+      stroke-width: 2;
+    }
+
+    .loop-node.active {
+      fill: var(--node-fill);
+    }
+
+    .loop-node-title {
+      fill: var(--ink);
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .loop-node-sub {
+      fill: #3d433b;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .loop-arrow {
+      fill: none;
+      stroke: var(--ink);
+      stroke-width: 3;
+    }
+
+    .loop-arrow.feedback {
+      stroke: var(--coral);
+      stroke-dasharray: 8 8;
+    }
+
+    .loop-copy h3 {
+      font-family: "Songti SC", STSong, Georgia, serif;
+      font-size: 32px;
+      line-height: 1.16;
+    }
+
+    .loop-copy p {
+      margin-top: 14px;
+      color: #343932;
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    .loop-list {
+      display: grid;
+      gap: 10px;
+      margin: 22px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .loop-list li {
+      display: grid;
+      grid-template-columns: 14px 1fr;
+      gap: 10px;
+      color: #333832;
+      font-size: 14px;
+    }
+
+    .loop-list li::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      margin-top: 8px;
+      background: var(--dot);
+      border: 1px solid var(--ink);
+    }
+
+    .modes {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 20px;
+      align-items: stretch;
+    }
+
+    .mode-tabs {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .mode-tab {
+      width: 100%;
+      padding: 16px 18px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      color: var(--ink);
+      font: inherit;
+      font-size: 15px;
+      font-weight: 900;
+      text-align: left;
+      cursor: pointer;
+      box-shadow: 5px 5px 0 rgba(21, 23, 19, 0.14);
+      transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    }
+
+    .mode-tab:hover,
+    .mode-tab:focus-visible {
+      transform: translate(-2px, -2px);
+      box-shadow: 7px 7px 0 rgba(21, 23, 19, 0.18);
+      outline: none;
+    }
+
+    .mode-tab.active {
+      background: var(--ink);
+      color: #fff;
+      box-shadow: 7px 7px 0 var(--green);
+    }
+
+    .mode-panel {
+      min-height: 430px;
+      padding: 30px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .mode-panel h3 {
+      font-family: "Songti SC", STSong, Georgia, serif;
+      font-size: 38px;
+      line-height: 1.14;
+    }
+
+    .mode-panel .mode-summary {
+      max-width: 760px;
+      margin-top: 16px;
+      color: #343932;
+      font-size: 18px;
+    }
+
+    .mode-loop-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(230px, 0.36fr);
+      gap: 18px;
+      align-items: stretch;
+      margin-top: 26px;
+      padding: 16px;
+      border: 2px solid var(--ink);
+      background: #fbfcfa;
+    }
+
+    .mode-loop-visual {
+      min-height: 330px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(21, 23, 19, 0.035) 1px, transparent 1px) 0 0 / 24px 24px,
+        linear-gradient(180deg, rgba(21, 23, 19, 0.03) 1px, transparent 1px) 0 0 / 24px 24px,
+        #ffffff;
+    }
+
+    .mode-loop-visual svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 330px;
+    }
+
+    .mode-loop-path {
+      fill: none;
+      stroke: var(--ink);
+      stroke-width: 3.4;
+    }
+
+    .mode-loop-path.soft {
+      stroke-width: 2.4;
+      stroke-dasharray: 8 8;
+      opacity: 0.76;
+    }
+
+    .mode-loop-path.return {
+      stroke: var(--coral);
+      stroke-width: 3;
+      stroke-dasharray: 7 7;
+    }
+
+    .mode-loop-label {
+      fill: var(--ink);
+      font-family: Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .mode-loop-node {
+      fill: var(--fill);
+      stroke: var(--ink);
+      stroke-width: 2;
+    }
+
+    .mode-loop-node.dim {
+      fill: #f4f6f2;
+      stroke: #9aa295;
+    }
+
+    .mode-loop-title {
+      fill: var(--ink);
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 17px;
+      font-weight: 900;
+    }
+
+    .mode-loop-sub {
+      fill: #3f453c;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .mode-loop-center {
+      fill: #fbff5c;
+      stroke: var(--ink);
+      stroke-width: 2.5;
+    }
+
+    .mode-loop-side {
+      display: grid;
+      align-content: start;
+      gap: 12px;
+      padding: 8px 2px;
+    }
+
+    .mode-loop-side h4 {
+      margin: 0;
+      font-family: "Songti SC", STSong, Georgia, serif;
+      font-size: 25px;
+      line-height: 1.15;
+    }
+
+    .mode-loop-side p {
+      margin: 0;
+      color: #3d433b;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    .mode-loop-legend {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .mode-loop-legend li {
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      gap: 8px;
+      align-items: center;
+      color: #353a33;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .legend-line {
+      width: 22px;
+      height: 3px;
+      background: var(--ink);
+    }
+
+    .legend-line.soft {
+      background: repeating-linear-gradient(90deg, var(--ink), var(--ink) 5px, transparent 5px, transparent 9px);
+    }
+
+    .legend-line.return {
+      background: repeating-linear-gradient(90deg, var(--coral), var(--coral) 5px, transparent 5px, transparent 9px);
+    }
+
+    .activation {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .switch {
+      min-height: 116px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      background: #f8faf7;
+    }
+
+    .switch strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .switch span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .switch.on {
+      border-color: var(--ink);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .switch.on span {
+      color: rgba(255, 255, 255, 0.84);
+    }
+
+    .mode-steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .mode-step {
+      min-height: 132px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: #fbfcfa;
+      color: #343932;
+      font-size: 13px;
+    }
+
+    .mode-step b {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .rules-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .rule {
+      min-height: 250px;
+      padding: 24px;
+      border: 2px solid var(--ink);
+      background: var(--panel);
+      box-shadow: 8px 8px 0 rgba(21, 23, 19, 0.14);
+    }
+
+    .rule-id {
+      width: fit-content;
+      padding: 5px 8px;
+      color: #fff;
+      background: var(--ink);
+      font-family: Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .rule h3 {
+      margin-top: 18px;
+      font-size: 21px;
+      line-height: 1.24;
+    }
+
+    .rule p {
+      margin-top: 12px;
+      color: #3c413a;
+      font-size: 14px;
+    }
+
+    .footer-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 0.85fr) minmax(320px, 0.65fr);
+      gap: 28px;
+      align-items: center;
+      margin: 44px 0 80px;
+      padding: 34px;
+      border: 3px solid var(--ink);
+      background: var(--ink);
+      color: #fff;
+      box-shadow: 14px 14px 0 var(--green);
+    }
+
+    .footer-panel h2 {
+      font-family: "Songti SC", STSong, Georgia, serif;
+      font-size: 44px;
+      line-height: 1.1;
+    }
+
+    .footer-panel p {
+      margin-top: 16px;
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 16px;
+    }
+
+    .mini-ledger {
+      display: grid;
+      gap: 10px;
+    }
+
+    .ledger-row {
+      display: grid;
+      grid-template-columns: 94px 1fr;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 13px;
+    }
+
+    .ledger-row b {
+      color: #fbff5c;
+    }
+
+    @media (max-width: 1080px) {
+      .hero,
+      .section-head,
+      .modes,
+      .footer-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        min-height: 0;
+      }
+
+      .atlas {
+        min-height: 620px;
+      }
+
+      .source-map,
+      .rules-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .rail {
+        grid-template-columns: 1fr;
+      }
+
+      .station:not(:last-child)::after {
+        top: auto;
+        right: auto;
+        bottom: -18px;
+        left: 29px;
+        width: 2px;
+        height: 19px;
+      }
+
+      .loop-board {
+        grid-template-columns: 1fr;
+      }
+
+      .mode-loop-shell {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100% - 24px, 1220px);
+      }
+
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      nav {
+        width: 100%;
+        overflow-x: auto;
+        padding-bottom: 3px;
+      }
+
+      h1 {
+        font-size: 42px;
+      }
+
+      .lead {
+        font-size: 18px;
+      }
+
+      .hero {
+        padding-top: 50px;
+      }
+
+      .atlas {
+        padding: 0;
+        min-height: 0;
+      }
+
+      .flow-lines {
+        display: none;
+      }
+
+      .zone-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+        min-height: 0;
+      }
+
+      .router {
+        position: relative;
+        top: auto;
+        left: auto;
+        width: auto;
+        min-height: 150px;
+        transform: none;
+        margin: 18px 0;
+      }
+
+      .source-map,
+      .activation,
+      .mode-steps,
+      .rules-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .mode-loop-shell {
+        padding: 10px;
+      }
+
+      .mode-loop-visual,
+      .mode-loop-visual svg {
+        min-height: 300px;
+      }
+
+      .mode-panel {
+        padding: 22px;
+      }
+
+      .mode-panel h3,
+      .section-head h2,
+      .footer-panel h2 {
+        font-size: 34px;
+      }
+
+      section {
+        padding: 54px 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="page topbar-inner">
+      <div class="brand">
+        <div class="brand-mark">4</div>
+        <span>四区研发工作法</span>
+      </div>
+      <nav aria-label="页面导航">
+        <a href="#atlas">总览</a>
+        <a href="#sources">事实源</a>
+        <a href="#pipeline">晋升流</a>
+        <a href="#modes">项目类型</a>
+        <a href="#rules">规则</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="page hero" id="atlas">
+      <div>
+        <div class="label">不是一个工具包办全部，而是一套跨工作区协议</div>
+        <h1>最小闭环是个人区和代码区，其他区按需启用。</h1>
+        <p class="lead">四区模型把研发活动拆成个人区、产品工作区、项目管理区和代码工作区。默认先跑通个人思考到代码事实的闭环；当出现协作、承诺、交付或长期产品判断时，再打开产品工作区和项目管理区。</p>
+        <div class="hero-points" aria-label="核心观点">
+          <div class="point">个人区负责捕捉和判断，不直接变成需求、任务或 repo fact。</div>
+          <div class="point">代码工作区负责实现、测试和发布，让事实从运行结果中回流。</div>
+          <div class="point">产品工作区和项目管理区是外部协作层，只有需要产品沉淀或执行承诺时才启用。</div>
+        </div>
+      </div>
+
+      <div class="atlas" aria-label="四区模型图">
+        <svg class="flow-lines" viewBox="0 0 640 570" aria-hidden="true">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"></path>
+            </marker>
+            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="#1f8f5f"></path>
+            </marker>
+            <marker id="arrow-violet" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="#6f55c9"></path>
+            </marker>
+            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="#c9901f"></path>
+            </marker>
+            <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="#3168c7"></path>
+            </marker>
+          </defs>
+          <path class="router-link core" d="M170 145 C245 180, 282 222, 318 277" marker-end="url(#arrow)"></path>
+          <path class="router-link" d="M470 145 C398 188, 360 225, 330 278" marker-end="url(#arrow)"></path>
+          <path class="router-link" d="M172 425 C245 384, 284 348, 318 294" marker-end="url(#arrow)"></path>
+          <path class="router-link core" d="M470 425 C398 385, 360 348, 330 294" marker-end="url(#arrow)"></path>
+
+          <path class="loop-accent optional" style="--accent:#1f8f5f" d="M168 90 C260 36, 380 36, 472 90" marker-end="url(#arrow-green)"></path>
+          <text class="flow-label" x="268" y="48">按需：产品沉淀</text>
+
+          <path class="loop-accent optional" style="--accent:#6f55c9" d="M552 166 C612 238, 608 329, 536 402" marker-end="url(#arrow-violet)"></path>
+          <text class="flow-label" x="544" y="286" transform="rotate(88 544 286)">按需：执行承诺</text>
+
+          <path class="loop-accent" style="--accent:#3168c7" d="M471 488 C376 532, 263 532, 168 488" marker-end="url(#arrow-blue)"></path>
+          <text class="flow-label" x="276" y="541">运行事实回流</text>
+
+          <path class="loop-accent" style="--accent:#c9901f" d="M88 402 C18 316, 25 229, 102 156" marker-end="url(#arrow-amber)"></path>
+          <text class="flow-label" x="32" y="289" transform="rotate(-88 32 289)">个人判断回流</text>
+        </svg>
+
+        <div class="zone-grid">
+          <article class="zone personal">
+            <div class="zone-kicker">personal zone</div>
+            <h2>个人区</h2>
+            <p>个人思考、待办、判断、未确认想法。允许粗糙，重在捕捉和下一步。</p>
+            <div class="tool-strip">
+              <span class="tool">Workshop</span>
+              <span class="tool">个人笔记</span>
+              <span class="tool">临时清单</span>
+            </div>
+          </article>
+
+          <article class="zone product">
+            <div class="zone-kicker">product workspace</div>
+            <h2>产品工作区</h2>
+            <p>按需启用。产品论证、用户证据、PRD、交互设计，只在需要长期产品沉淀时进入这里。</p>
+            <div class="tool-strip">
+              <span class="tool">Notion</span>
+              <span class="tool">飞书文档</span>
+              <span class="tool">Figma</span>
+            </div>
+          </article>
+
+          <article class="zone project">
+            <div class="zone-kicker">project management</div>
+            <h2>项目管理区</h2>
+            <p>按需启用。Goal、Iteration、Task、Review、Decision，用来管理承诺和协作状态。</p>
+            <div class="tool-strip">
+              <span class="tool">Jira</span>
+              <span class="tool">Linear</span>
+              <span class="tool">客户看板</span>
+            </div>
+          </article>
+
+          <article class="zone code">
+            <div class="zone-kicker">code workspace</div>
+            <h2>代码工作区</h2>
+            <p>源码、测试、发布、架构、长期技术事实。代码是当前运行时事实。</p>
+            <div class="tool-strip">
+              <span class="tool">Git repo</span>
+              <span class="tool">README</span>
+              <span class="tool">CI/CD</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="router" aria-label="晋升路由器">
+          <div>
+            <strong>AI</strong>
+            <span>理解个人材料，连接代码执行；需要协作时再路由到产品区和项目管理区</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="sources">
+      <div class="section-head">
+        <h2>每个区都有自己的实现方式和事实源。</h2>
+        <p>通用方案不替代专业工具，只避免事实源混乱。一个项目可以接入外部工具，也可以保持极简。</p>
+      </div>
+
+      <div class="source-map">
+        <article class="source-card personal">
+          <h3>个人区保存原始思考</h3>
+          <div class="owner">owner: individual</div>
+          <ul>
+            <li>可以不完整、不正式、不协作。</li>
+            <li>记录触发点、判断、下一步。</li>
+            <li>作为需求、任务、决策的候选材料。</li>
+          </ul>
+        </article>
+
+        <article class="source-card product">
+          <h3>产品区保存产品判断</h3>
+          <div class="owner">owner: product workspace</div>
+          <ul>
+            <li>用户问题、市场假设、PRD、交互稿。</li>
+            <li>面向协作和复用，而不是个人流水账。</li>
+            <li>可以由外部文档或设计平台承载。</li>
+          </ul>
+        </article>
+
+        <article class="source-card project">
+          <h3>管理区保存执行承诺</h3>
+          <div class="owner">owner: project system</div>
+          <ul>
+            <li>目标、迭代、任务、里程碑、验收。</li>
+            <li>外包项目尤其需要清晰变更和责任边界。</li>
+            <li>不应该替代产品论证或技术事实。</li>
+          </ul>
+        </article>
+
+        <article class="source-card code">
+          <h3>代码区保存长期工程事实</h3>
+          <div class="owner">owner: repository</div>
+          <ul>
+            <li>源码、测试、发布流程、架构边界。</li>
+            <li>只写稳态事实，不写个人脑暴和临时任务证据。</li>
+            <li>事实冲突时先核实现有运行行为。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="page" id="pipeline">
+      <div class="section-head">
+        <h2>真正通用的是晋升流水线。</h2>
+        <p>四区之间不复制全文，只传递被确认的结果、引用和元信息。这样项目可以轻，也可以重。</p>
+      </div>
+
+      <div class="pipeline">
+        <div class="rail">
+          <article class="station s1">
+            <div class="station-number">01</div>
+            <h3>个人捕捉</h3>
+            <p>写下想法、问题、风险、直觉和下一步。允许短、散、未定。</p>
+          </article>
+
+          <article class="station s2">
+            <div class="station-number">02</div>
+            <h3>AI 整理</h3>
+            <p>提取候选需求、任务、决策、知识点。保留来源，不伪装成事实。</p>
+          </article>
+
+          <article class="station s3">
+            <div class="station-number">03</div>
+            <h3>人工确认</h3>
+            <p>用户判断是否值得协作、承诺、长期维护，决定进入哪个区。</p>
+          </article>
+
+          <article class="station s4">
+            <div class="station-number">04</div>
+            <h3>外部工作区承接</h3>
+            <p>产品文档、项目任务、客户交付规范或 repo 文档分别接住自己的内容。</p>
+          </article>
+
+          <article class="station s5">
+            <div class="station-number">05</div>
+            <h3>生产事实回流</h3>
+            <p>代码、测试、发布和验收结果形成稳定事实，再作为后续判断的证据。</p>
+          </article>
+        </div>
+
+        <div class="loop-board" aria-label="闭环流转地图">
+          <div class="loop-diagram">
+            <svg viewBox="0 0 720 360" role="img" aria-label="个人区、产品工作区、项目管理区和代码工作区之间的闭环">
+              <defs>
+                <marker id="loopArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                  <path d="M0,0 L12,6 L0,12 Z" fill="#151713"></path>
+                </marker>
+                <marker id="feedbackArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                  <path d="M0,0 L12,6 L0,12 Z" fill="#d6543c"></path>
+                </marker>
+              </defs>
+
+              <path class="loop-arrow" d="M160 94 C260 24, 465 24, 560 94" marker-end="url(#loopArrow)"></path>
+              <path class="loop-arrow" d="M610 143 C680 210, 657 284, 568 300" marker-end="url(#loopArrow)"></path>
+              <path class="loop-arrow" d="M520 312 C415 350, 292 350, 190 312" marker-end="url(#loopArrow)"></path>
+              <path class="loop-arrow feedback" d="M112 274 C20 210, 34 122, 112 90" marker-end="url(#feedbackArrow)"></path>
+              <path class="loop-arrow feedback" d="M540 260 C470 224, 430 196, 365 178" marker-end="url(#feedbackArrow)"></path>
+              <path class="loop-arrow feedback" d="M186 262 C248 220, 285 198, 354 178" marker-end="url(#feedbackArrow)"></path>
+
+              <rect class="loop-node active" style="--node-fill:#dff3e8" x="72" y="64" width="152" height="76" rx="3"></rect>
+              <text class="loop-node-title" x="108" y="98">个人区</text>
+              <text class="loop-node-sub" x="98" y="122">想法 / 判断 / 待办</text>
+
+              <rect class="loop-node active" style="--node-fill:#e8e2ff" x="496" y="64" width="152" height="76" rx="3"></rect>
+              <text class="loop-node-title" x="520" y="98">产品工作区</text>
+              <text class="loop-node-sub" x="520" y="122">需求 / 交互 / 证据</text>
+
+              <rect class="loop-node active" style="--node-fill:#fff0c9" x="496" y="240" width="152" height="76" rx="3"></rect>
+              <text class="loop-node-title" x="520" y="274">项目管理区</text>
+              <text class="loop-node-sub" x="520" y="298">目标 / 任务 / 验收</text>
+
+              <rect class="loop-node active" style="--node-fill:#dfeaff" x="72" y="240" width="152" height="76" rx="3"></rect>
+              <text class="loop-node-title" x="104" y="274">代码工作区</text>
+              <text class="loop-node-sub" x="98" y="298">代码 / 测试 / 发布</text>
+
+              <rect class="loop-node" x="286" y="140" width="154" height="82" rx="3"></rect>
+              <text class="loop-node-title" x="308" y="174">确认 / 晋升</text>
+              <text class="loop-node-sub" x="308" y="198">引用、状态、证据</text>
+
+              <text class="flow-label" x="290" y="42">个人想法 -> 产品候选</text>
+              <text class="flow-label" x="598" y="207" transform="rotate(88 598 207)">产品范围 -> 执行计划</text>
+              <text class="flow-label" x="296" y="350">代码事实 -> 后续判断</text>
+              <text class="flow-label" x="24" y="190" transform="rotate(-87 24 190)">反馈回个人区</text>
+            </svg>
+          </div>
+
+          <div class="loop-copy">
+            <h3>闭环不是一条线，而是三种回流。</h3>
+            <p>线性晋升解决“往前推进”，回流关系解决“做完以后如何修正下一轮判断”。这也是四区模型比单一文档或单一看板更稳的地方。</p>
+            <ul class="loop-list">
+              <li style="--dot: var(--green)">个人反馈回流：使用、沟通和执行中的新判断回到个人区。</li>
+              <li style="--dot: var(--violet)">产品决策回流：评审结果修正需求、交互和范围。</li>
+              <li style="--dot: var(--blue)">代码事实回流：实现约束、测试和发布结果反过来约束产品与任务。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="modes">
+      <div class="section-head">
+        <h2>不同项目，是在最小闭环上打开不同外层。</h2>
+        <p>默认启用个人区和代码区。点击左侧项目类型，查看产品工作区和项目管理区在什么条件下被打开，以及各自的闭环如何回流。</p>
+      </div>
+
+      <div class="modes">
+        <div class="mode-tabs" role="tablist" aria-label="项目类型">
+          <button class="mode-tab active" type="button" role="tab" aria-selected="true" data-mode="toc">个人 ToC 产品</button>
+          <button class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="complex">复杂正向项目</button>
+          <button class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="outsourcing">外包交付项目</button>
+          <button class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="research">研究/内部工具</button>
+        </div>
+
+        <article class="mode-panel" aria-live="polite">
+          <h3 id="mode-title">个人 ToC 产品：从轻闭环开始</h3>
+          <p class="mode-summary" id="mode-summary">前期探索主要依赖个人区，MVP 连接代码工作区；只有进入正式立项或生产级，才逐步打开产品区和项目管理区。</p>
+
+          <div class="mode-loop-shell">
+            <div class="mode-loop-visual" id="mode-loop-visual" aria-label="当前项目类型闭环图"></div>
+            <div class="mode-loop-side">
+              <h4 id="mode-loop-caption">最小闭环</h4>
+              <p id="mode-loop-note">个人区和代码区先跑通，再按协作需要打开外层。</p>
+              <ul class="mode-loop-legend" id="mode-loop-legend"></ul>
+            </div>
+          </div>
+
+          <div class="activation" id="activation"></div>
+          <div class="mode-steps" id="mode-steps"></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="page" id="rules">
+      <div class="section-head">
+        <h2>让方案通用，需要守住三条规则。</h2>
+        <p>规则越清楚，工具越可以自由替换；规则不清楚，任何工具都会变成混合垃圾桶。</p>
+      </div>
+
+      <div class="rules-grid">
+        <article class="rule">
+          <div class="rule-id">RULE 01</div>
+          <h3>事实源不能互相冒充</h3>
+          <p>个人记录不是任务，任务不是产品判断，产品文档不是运行时事实，repo 文档不是会议纪要。</p>
+        </article>
+
+        <article class="rule">
+          <div class="rule-id">RULE 02</div>
+          <h3>跨区只传晋升结果</h3>
+          <p>跨区流转时传递结论、证据、引用和状态，不把全文复制到每个地方。</p>
+        </article>
+
+        <article class="rule">
+          <div class="rule-id">RULE 03</div>
+          <h3>协作强度决定流程强度</h3>
+          <p>不协作时个人区到代码区即可；协作、外包、生产级项目才启用更强产品和项目治理。</p>
+        </article>
+      </div>
+    </section>
+
+    <aside class="page footer-panel">
+      <div>
+        <h2>Workshop Desktop 的稳态位置：个人区与执行桥。</h2>
+        <p>它不需要实现完整产品工作区或项目管理区。更好的方向是管理当前注意力、记录个人材料、连接本地项目目录、把成熟内容送往外部工作区或代码执行。</p>
+      </div>
+      <div class="mini-ledger" aria-label="Workshop Desktop 边界">
+        <div class="ledger-row"><b>承载</b><span>个人记录、本地项目、当前上下文、Codex 执行入口</span></div>
+        <div class="ledger-row"><b>连接</b><span>产品文档、任务系统、repo、客户规范</span></div>
+        <div class="ledger-row"><b>不包办</b><span>完整知识库、完整项目管理系统、全部产品文档平台</span></div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const modeData = {
+      toc: {
+        title: "个人 ToC 产品：从轻闭环开始",
+        summary: "默认只启用个人区和代码工作区：个人区沉淀想法与验证假设，代码区负责 MVP、实验和运行事实。产品区、项目管理区等到正式立项、协作或生产级再打开。",
+        caption: "最小闭环：个人区 ↔ AI ↔ 代码工作区",
+        note: "ToC 早期最怕流程过重。先用个人记录驱动代码实验，再用运行结果修正产品判断。",
+        loopType: "minimal",
+        active: ["个人区", "代码工作区"],
+        switches: [
+          ["个人区", "on", "想法、竞品、用户反馈、验证假设"],
+          ["产品工作区", "partial", "立项后沉淀 thesis、用户路径、验证指标"],
+          ["项目管理区", "partial", "协作或生产级后再补目标、迭代和任务"],
+          ["代码工作区", "on", "原型、实验、测试和发布记录"]
+        ],
+        steps: [
+          ["探索", "记录用户痛点、替代方案、核心假设。"],
+          ["MVP", "用最短代码闭环验证一个高风险假设。"],
+          ["立项", "补产品文档、迭代节奏、指标和长期维护。"]
+        ]
+      },
+      complex: {
+        title: "复杂正向项目：最小闭环仍在，但外层更早打开",
+        summary: "复杂项目依然以个人区和代码区作为执行内核；但因为业务、权限、数据和协作成本高，产品工作区与项目管理区从第一天就以轻量方式接入。",
+        caption: "复杂闭环：四区同步打开，AI 做路由",
+        note: "这里不是放弃最小闭环，而是在最小闭环外增加产品口径和执行治理，避免复杂项目失控。",
+        loopType: "complex",
+        active: ["个人区", "产品工作区", "项目管理区", "代码工作区"],
+        switches: [
+          ["个人区", "on", "风险、未确认问题、个人判断"],
+          ["产品工作区", "on", "业务边界、产品口径、交互方案"],
+          ["项目管理区", "on", "Goal、Iteration、Task、Review"],
+          ["代码工作区", "on", "架构、接口、测试、发布"]
+        ],
+        steps: [
+          ["建模", "先澄清领域、权限、数据和流程边界。"],
+          ["切片", "用 Goal 和 Iteration 控制执行路径。"],
+          ["复盘", "用 Review 和 Decision 调整路线图。"]
+        ]
+      },
+      outsourcing: {
+        title: "外包交付项目：产品区和管理区是合同边界",
+        summary: "外包项目的内核仍是个人区和代码区，但客户需求、验收口径、里程碑、变更和责任必须进入产品工作区与项目管理区，不能只靠个人记录推进。",
+        caption: "外包闭环：客户口径 -> 执行承诺 -> 交付验收",
+        note: "外包的关键回流不是普通复盘，而是验收和变更反过来约束产品区、项目管理区和代码交付。",
+        loopType: "outsourcing",
+        active: ["个人区", "产品工作区", "项目管理区", "代码工作区"],
+        switches: [
+          ["个人区", "on", "内部风险、沟通准备、待确认点"],
+          ["产品工作区", "on", "客户需求、原型、验收口径"],
+          ["项目管理区", "on", "里程碑、变更、责任、验收状态"],
+          ["代码工作区", "on", "源码、部署、交付说明、维护文档"]
+        ],
+        steps: [
+          ["对齐", "把客户语言转成可验收的产品和交付口径。"],
+          ["执行", "任务承诺和变更必须进入管理区。"],
+          ["交付", "代码区沉淀部署、测试、维护和 release 证据。"]
+        ]
+      },
+      research: {
+        title: "研究/内部工具：证据和复现优先",
+        summary: "研究和内部工具通常长期保持个人区与代码区的最小闭环：记录问题、做实验、保留复现路径。只有结论需要被复用或多人依赖时，才打开产品区或项目管理区。",
+        caption: "证据闭环：记录假设 -> 代码复现 -> 结论回流",
+        note: "这类项目不急着产品化。先保证证据链和可复现，再决定是否晋升成产品文档或协作任务。",
+        loopType: "research",
+        active: ["个人区", "代码工作区"],
+        switches: [
+          ["个人区", "on", "问题、发现、实验记录、判断"],
+          ["产品工作区", "partial", "结论报告、方法说明、使用场景"],
+          ["项目管理区", "partial", "多人依赖后再补任务和节奏"],
+          ["代码工作区", "on", "实验脚本、数据口径、复现步骤"]
+        ],
+        steps: [
+          ["记录", "保留问题、假设、证据来源和判断变化。"],
+          ["复现", "代码区保存脚本、数据口径和运行方式。"],
+          ["扩展", "多人依赖后再引入产品化和任务治理。"]
+        ]
+      }
+    };
+
+    const activation = document.querySelector("#activation");
+    const steps = document.querySelector("#mode-steps");
+    const title = document.querySelector("#mode-title");
+    const summary = document.querySelector("#mode-summary");
+    const loopVisual = document.querySelector("#mode-loop-visual");
+    const loopCaption = document.querySelector("#mode-loop-caption");
+    const loopNote = document.querySelector("#mode-loop-note");
+    const loopLegend = document.querySelector("#mode-loop-legend");
+    const tabs = Array.from(document.querySelectorAll(".mode-tab"));
+
+    const loopLegends = {
+      minimal: [
+        ["solid", "最小启用：个人区、AI、代码工作区形成闭环"],
+        ["soft", "产品区与项目管理区只是候选外层"],
+        ["return", "代码运行事实回到个人判断"]
+      ],
+      complex: [
+        ["solid", "四区都启用，但仍围绕 AI 路由"],
+        ["soft", "产品口径与项目治理互相约束"],
+        ["return", "实现和评审结果回流修正范围"]
+      ],
+      outsourcing: [
+        ["solid", "客户口径推动产品区和项目管理区"],
+        ["soft", "内部个人判断不直接暴露为客户承诺"],
+        ["return", "验收、变更、交付结果反向约束"]
+      ],
+      research: [
+        ["solid", "个人记录与代码复现是主闭环"],
+        ["soft", "结论复用时才打开产品/管理外层"],
+        ["return", "实验结果回到假设和下一步"]
+      ]
+    };
+
+    function renderLoopSvg(type) {
+      const commonDefs = `
+        <defs>
+          <marker id="modeArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 Z" fill="#151713"></path>
+          </marker>
+          <marker id="modeReturnArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+            <path d="M0,0 L12,6 L0,12 Z" fill="#d6543c"></path>
+          </marker>
+        </defs>`;
+      const node = (x, y, titleText, subText, fill, dim = false) => `
+        <rect class="mode-loop-node${dim ? " dim" : ""}" style="--fill:${fill}" x="${x}" y="${y}" width="142" height="70" rx="4"></rect>
+        <text class="mode-loop-title" x="${x + 24}" y="${y + 30}">${titleText}</text>
+        <text class="mode-loop-sub" x="${x + 18}" y="${y + 52}">${subText}</text>`;
+      const ai = `
+        <rect class="mode-loop-center" x="300" y="134" width="120" height="76" rx="8"></rect>
+        <text class="mode-loop-title" x="342" y="178">AI</text>
+        <text class="mode-loop-sub" x="322" y="198">理解 / 路由</text>`;
+      const nodes = {
+        personal: node(74, 210, "个人区", "记录 / 判断", "#dff3e8"),
+        code: node(74, 54, "代码工作区", "code / docs", "#dfeaff"),
+        product: node(504, 54, "产品区", "需求 / 交互", "#e8e2ff"),
+        project: node(504, 210, "项目管理", "任务 / 验收", "#fff0c9"),
+        productDim: node(504, 54, "产品区", "按需启用", "#f4f6f2", true),
+        projectDim: node(504, 210, "项目管理", "按需启用", "#f4f6f2", true)
+      };
+
+      const templates = {
+        minimal: `
+          <path class="mode-loop-path" d="M216 244 C270 234, 284 202, 300 178" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path" d="M300 160 C270 126, 238 92, 216 88" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path return" d="M147 124 C126 150, 126 184, 147 210" marker-end="url(#modeReturnArrow)"></path>
+          <path class="mode-loop-path soft" d="M420 160 C460 128, 480 92, 504 88" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path soft" d="M420 184 C462 208, 482 240, 504 244" marker-end="url(#modeArrow)"></path>
+          <text class="mode-loop-label" x="224" y="236">个人材料</text>
+          <text class="mode-loop-label" x="188" y="72">代码实验</text>
+          <text class="mode-loop-label" x="22" y="172" transform="rotate(-90 22 172)">运行事实回流</text>
+          ${nodes.code}${nodes.personal}${nodes.productDim}${nodes.projectDim}${ai}`,
+        complex: `
+          <path class="mode-loop-path" d="M216 244 C272 228, 286 196, 300 178" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path" d="M420 160 C462 132, 480 96, 504 88" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path" d="M575 124 C598 154, 598 190, 575 210" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path" d="M504 268 C398 322, 260 322, 170 280" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path return" d="M216 88 C266 98, 286 132, 300 156" marker-end="url(#modeReturnArrow)"></path>
+          <path class="mode-loop-path soft" d="M420 184 C462 208, 482 240, 504 244" marker-end="url(#modeArrow)"></path>
+          <text class="mode-loop-label" x="232" y="232">风险/问题</text>
+          <text class="mode-loop-label" x="442" y="124">产品口径</text>
+          <text class="mode-loop-label" x="586" y="172" transform="rotate(90 586 172)">执行治理</text>
+          <text class="mode-loop-label" x="296" y="326">实现证据回流</text>
+          ${nodes.code}${nodes.personal}${nodes.product}${nodes.project}${ai}`,
+        outsourcing: `
+          <path class="mode-loop-path" d="M420 160 C462 132, 480 96, 504 88" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path" d="M575 124 C606 156, 606 190, 575 210" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path" d="M504 268 C398 322, 260 322, 170 280" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path soft" d="M216 244 C272 228, 286 196, 300 178" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path soft" d="M216 88 C266 98, 286 132, 300 156" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path return" d="M648 244 C682 194, 682 114, 648 88" marker-end="url(#modeReturnArrow)"></path>
+          <path class="mode-loop-path return" d="M504 88 C422 44, 294 44, 216 88" marker-end="url(#modeReturnArrow)"></path>
+          <text class="mode-loop-label" x="438" y="124">客户需求</text>
+          <text class="mode-loop-label" x="586" y="172" transform="rotate(90 586 172)">里程碑</text>
+          <text class="mode-loop-label" x="296" y="326">交付代码</text>
+          <text class="mode-loop-label" x="662" y="172" transform="rotate(90 662 172)">验收/变更</text>
+          ${nodes.code}${nodes.personal}${nodes.product}${nodes.project}${ai}`,
+        research: `
+          <path class="mode-loop-path" d="M216 244 C272 228, 286 196, 300 178" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path" d="M300 160 C270 126, 238 92, 216 88" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path return" d="M147 124 C126 150, 126 184, 147 210" marker-end="url(#modeReturnArrow)"></path>
+          <path class="mode-loop-path soft" d="M420 160 C458 130, 480 98, 504 88" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path soft" d="M420 184 C460 208, 482 240, 504 244" marker-end="url(#modeArrow)"></path>
+          <path class="mode-loop-path return" d="M216 88 C300 38, 432 38, 504 88" marker-end="url(#modeReturnArrow)"></path>
+          <text class="mode-loop-label" x="228" y="235">假设/证据</text>
+          <text class="mode-loop-label" x="190" y="72">实验复现</text>
+          <text class="mode-loop-label" x="300" y="42">可复用结论</text>
+          <text class="mode-loop-label" x="22" y="172" transform="rotate(-90 22 172)">结果修正假设</text>
+          ${nodes.code}${nodes.personal}${nodes.productDim}${nodes.projectDim}${ai}`
+      };
+
+      return `<svg viewBox="0 0 720 360" role="img" aria-label="项目类型闭环图">${commonDefs}${templates[type]}</svg>`;
+    }
+
+    function renderMode(key) {
+      const data = modeData[key];
+      title.textContent = data.title;
+      summary.textContent = data.summary;
+      loopCaption.textContent = data.caption;
+      loopNote.textContent = data.note;
+      loopVisual.innerHTML = renderLoopSvg(data.loopType);
+      loopLegend.innerHTML = loopLegends[data.loopType].map(([type, text]) => {
+        return `<li><span class="legend-line ${type}"></span><span>${text}</span></li>`;
+      }).join("");
+
+      activation.innerHTML = data.switches.map(([name, state, text]) => {
+        const className = state === "on" ? "switch on" : "switch";
+        const accent = name === "个人区" ? "var(--green)" :
+          name === "产品工作区" ? "var(--violet)" :
+          name === "项目管理区" ? "var(--amber)" : "var(--blue)";
+        const label = state === "on" ? "启用" : "按需";
+        return `<div class="${className}" style="--accent:${accent}"><strong>${name} · ${label}</strong><span>${text}</span></div>`;
+      }).join("");
+
+      steps.innerHTML = data.steps.map(([name, text]) => {
+        return `<div class="mode-step"><b>${name}</b>${text}</div>`;
+      }).join("");
+    }
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        tabs.forEach((item) => {
+          item.classList.remove("active");
+          item.setAttribute("aria-selected", "false");
+        });
+        tab.classList.add("active");
+        tab.setAttribute("aria-selected", "true");
+        renderMode(tab.dataset.mode);
+      });
+    });
+
+    renderMode("toc");
+  </script>
+</body>
+</html>

@@ -65,6 +65,7 @@ import type {
   PersonalRecordTarget,
   Project,
   ProjectsPayload,
+  RecordSearchLogEntry,
   RenameLocalProjectRequest,
   SavePersonalRecordRequest,
   SendToCodexRequest,
@@ -1592,6 +1593,40 @@ function updateCodexRun(runId: string, patch: Partial<CodexRunMeta>) {
   return mutateCodexRuns((runs) => runs.map((run) => (run.runId === runId ? { ...run, ...patch } : run)));
 }
 
+// ===== 取用日志（pull 路径遥测：编程工具主动检索记录池）=====
+// 独立于 codex-runs 运行表；D-009 约束运行表只记 Codex turn，取用是 Agent 主动 search 的行为。
+const RECORD_SEARCHES_LIMIT = 100;
+let recordSearchesQueue: Promise<unknown> = Promise.resolve();
+
+const recordSearchesDirPath = () => path.join(app.getPath("userData"), "record-searches");
+const recordSearchesIndexPath = () => path.join(recordSearchesDirPath(), "index.json");
+
+async function readRecordSearches(): Promise<RecordSearchLogEntry[]> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(recordSearchesIndexPath(), "utf8"));
+    return Array.isArray(parsed) ? (parsed as RecordSearchLogEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function mutateRecordSearches(mutate: (entries: RecordSearchLogEntry[]) => RecordSearchLogEntry[]): Promise<RecordSearchLogEntry[]> {
+  const next = recordSearchesQueue.then(async () => {
+    const entries = mutate(await readRecordSearches()).slice(0, RECORD_SEARCHES_LIMIT);
+    await fs.mkdir(recordSearchesDirPath(), { recursive: true });
+    const tempPath = `${recordSearchesIndexPath()}.tmp`;
+    await fs.writeFile(tempPath, JSON.stringify(entries, null, 2), "utf8");
+    await fs.rename(tempPath, recordSearchesIndexPath());
+    return entries;
+  });
+  recordSearchesQueue = next.catch(() => undefined);
+  return next;
+}
+
+function appendRecordSearch(entry: RecordSearchLogEntry) {
+  return mutateRecordSearches((entries) => [entry, ...entries]);
+}
+
 async function readConfirmationRequests(): Promise<AsyncConfirmationMeta[]> {
   try {
     const parsed = JSON.parse(await fs.readFile(confirmationRequestsIndexPath(), "utf8"));
@@ -2009,6 +2044,12 @@ async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
       throw new Error("当前 token 只允许 record.create，不能调用 record.annotate");
     }
     return annotateRecordsForAppServer(rpc.params);
+  }
+
+  if (rpc.method === "record.search") {
+    // 读开放：受限 token（agent）也可以调用 record.search
+    // 这是 pull 路径：编程工具执行任务前主动检索记录池
+    return searchRecordsForAppServer(rpc.params, scope);
   }
 
   if (rpc.method === "project.list") {
@@ -2636,6 +2677,61 @@ async function listRecordsForAppServer(params: unknown) {
 
   const recordsWithBody = await Promise.all(limitedRecords.map((record) => getPersonalRecord(record.id)));
   return { records: recordsWithBody.filter((record): record is PersonalRecord => Boolean(record)), total: records.length };
+}
+
+// record.search：搜 title + body 正文（pull 路径，编程工具主动检索记录池）
+// 与 record.list 的区别：list 只搜 meta 字段；search 读 body 正文做关键词匹配。
+// 读开放：agent token 也可以调用（scope 参数用于记遥测日志，不限制访问）。
+async function searchRecordsForAppServer(params: unknown, scope: AppServerScope) {
+  const value = isPlainObject(params) ? params : {};
+  const query = safeWindowText(value.query, 200);
+  if (!query) {
+    throw new Error("record.search 需要 query 参数");
+  }
+  const localProjectId = safeLocalProjectId(value.localProjectId) || undefined;
+  const scopeType = normalizeRecordScope(value.scopeType ?? value.scope);
+  const rawLimit = typeof value.limit === "number" && Number.isFinite(value.limit) ? Math.trunc(value.limit) : undefined;
+  const limit = rawLimit ? clamp(rawLimit, 1, 50) : 20;
+  const includeBody = value.includeBody === true;
+  const caller = safeWindowText(value.caller, 80) ?? "unknown";
+  const protocol: "rpc" | "mcp" = value.protocol === "mcp" ? "mcp" : "rpc";
+
+  const lowerQuery = query.toLowerCase();
+  let metas: PersonalRecordMeta[] = await listPersonalRecords();
+  if (scopeType) {
+    metas = metas.filter((r) => r.scopeType === scopeType);
+  }
+  if (localProjectId) {
+    metas = metas.filter((r) => r.localProjectId === localProjectId);
+  }
+
+  // 读 body 正文做关键词匹配
+  const matched: PersonalRecord[] = [];
+  for (const meta of metas) {
+    const full = await getPersonalRecord(meta.id);
+    if (!full) continue;
+    const haystack = [full.title, full.bodyMarkdown, full.projectName, full.taskTitle]
+      .filter(Boolean)
+      .join("\n")
+      .toLowerCase();
+    if (haystack.includes(lowerQuery)) {
+      matched.push(full);
+    }
+    if (matched.length >= limit) break;
+  }
+
+  // 记取用日志（遥测，独立于 codex-runs）
+  await appendRecordSearch({
+    at: new Date().toISOString(),
+    caller,
+    protocol,
+    query,
+    matchedRecordIds: matched.map((r) => r.id),
+    scope
+  });
+
+  const results = includeBody ? matched : matched.map(({ bodyMarkdown, ...meta }) => meta as PersonalRecordMeta);
+  return { records: results, total: matched.length, query };
 }
 
 async function getRecordForAppServer(params: unknown) {

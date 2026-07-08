@@ -20,12 +20,11 @@
     <div class="actions">
       <button class="usage-entry" id="usage-entry-btn" onclick="toggleUsagePanel()">
         <span class="usage-dot"></span>
-        <span class="usage-entry-text" id="usage-entry-text">取用 · 加载中</span>
+        <span class="usage-entry-text" id="usage-entry-text">遥测 · 加载中</span>
         <span class="chev">▾</span>
       </button>
-      <button class="icon-btn" title="刷新" onclick="refreshRecords()" id="refresh-btn">⟳</button>
       <button class="icon-btn" title="设置" onclick="openSettings()">⚙</button>
-      <button class="icon-btn primary" title="打开便签" onclick="toggleSticky()">✎</button>
+      <button class="icon-btn primary" id="sticky-toggle-btn" title="打开便签" onclick="toggleSticky()">✎</button>
     </div>
   </div>
 
@@ -33,14 +32,29 @@
   <div class="usage-panel" id="usage-panel" style="display:none">
     <div class="usage-panel-head">
       <div>
-        <div class="eyebrow">Agent Usage · 全局取用流</div>
-        <h2>取用日志</h2>
+        <div class="eyebrow">Agent Telemetry · 遥测面板</div>
+        <h2>注入命中与取用</h2>
       </div>
       <button class="btn sm ghost" onclick="toggleUsagePanel()">收起</button>
     </div>
-    <div class="usage-panel-note">全局取用流：跨所有项目的 Agent 取用，每条标注所属项目，始终全局不变。点取用记录标题可查看该记录详情。</div>
+    <div class="usage-tabs">
+      <button class="usage-tab active" data-tab="inject" onclick="switchUsageTab('inject')">
+        <span class="tab-dot inject"></span>注入命中 <span class="tab-count" id="tab-inject-count">0</span>
+      </button>
+      <button class="usage-tab" data-tab="fetch" onclick="switchUsageTab('fetch')">
+        <span class="tab-dot fetch"></span>取用 <span class="tab-count" id="tab-fetch-count">0</span>
+        <span class="tab-coming">RPC</span>
+      </button>
+    </div>
+    <div class="usage-panel-note">
+      <b>注入（push · 客户端→编程工具）</b>：用户点"发送"时，<code>buildCodexUserInput</code> 把当前记录结论片段塞进 Codex prompt，一次性组装。数据源 <code>codex-runs/index.json</code>（D-009）。<br>
+      <b>取用（pull · 编程工具→记录池）</b>：编程工具执行任务前主动检索记录池，查是否有相关历史、决策、上下文。通过 <code>record.search</code> RPC 实现（搜 title + body 正文）。MCP 适配外部 Agent（Claude Code 等）为后续扩展。数据源：取用日志 <code>record-searches/index.json</code>（独立于 codex-runs）。
+    </div>
     <div id="usage-timeline"></div>
-    <div class="safety-note">读开放（双路径）：CLI 直调（Codex）走 buildCodexUserInput 注入结论片段（push）；MCP 对接（外部 Agent）走 record.search 取用（pull）。Agent→记录回写 origin:agent。脱敏边界由 app server 取用出口实现（客户端规则配置预留中），不返 raw body。写收紧：agent 受限 token 只能 record.create，agent 改写走 D-011 确认页（人手动改写直接进入编辑页）。客户端不派发执行动作（D-008）。</div>
+    <div class="safety-note">
+      <b>安全模型</b>：读开放——注入路径已接（数据源 codex-runs）；取用路径通过 <code>record.search</code> 实现（agent token 可调用，搜 title + body 正文）。写收紧：agent 受限 token 只能 <code>record.create</code>，改写正文走 D-011 确认页。客户端不派发执行动作（D-008）。
+      <br><b>遥测边界</b>：注入/取用次数是派生展示，不存进记录本体（守 D-014/D-016/D-009），不升级记录类型系统。
+    </div>
   </div>
 
   <!-- metrics：纯指标展示（筛选收敛到 filter-bar chips，单一控制源）-->
@@ -65,8 +79,6 @@
     <b>Codex · 空闲</b>
     <span class="sep">|</span>
     <span>最后运行 turn #42 · 今天 09:50 · 注入命中 2 条</span>
-    <span class="sep">|</span>
-    <span>记录池对 Agent 开放（拉模型 · Agent 自取用，客户端不派发）</span>
   </div>
 
   <!-- 双栏：左 项目切片导航 + 右 记录池 -->
@@ -86,7 +98,6 @@
           <h2 id="records-title">记录池</h2>
         </div>
         <div class="head-actions">
-          <button class="btn sm ghost" onclick="openExport()">导出</button>
           <button class="btn sm primary" onclick="openNew()">+ 新建</button>
         </div>
       </div>
@@ -113,10 +124,6 @@
       </div>
 
       <div id="records-list"></div>
-      <div class="list-foot">
-        <span id="list-count">显示 6 / 6 条</span>
-        <button class="load-more" id="load-more-btn" onclick="loadMore()">加载更多 ›</button>
-      </div>
     </section>
   </div>
 
@@ -124,11 +131,10 @@
 
 <!-- 记录便签 -->
 <div class="sticky" id="sticky">
-  <div class="sticky-titlebar" id="sticky-drag">
-    <div class="sticky-title"><span class="pin-dot"></span><span>记录便签</span></div>
+  <div class="sticky-titlebar" id="sticky-titlebar">
+    <div class="sticky-title"><span>记录便签</span></div>
     <div class="sticky-actions">
-      <button class="icon-btn" title="置顶" id="pin-btn" onclick="togglePin()">📌</button>
-      <button class="icon-btn" title="折叠" onclick="toggleStickyCollapse()">—</button>
+      <button class="icon-btn" id="sticky-collapse-btn" title="折叠" onclick="toggleStickyCollapse()">▾</button>
       <button class="icon-btn" title="关闭" onclick="toggleSticky()">✕</button>
     </div>
   </div>
@@ -144,7 +150,7 @@
     <div class="sticky-input">
       <textarea id="sticky-textarea" placeholder="随手记一笔…（落 recordStore，origin=human）"></textarea>
       <div class="sticky-input-foot">
-        <span class="hint">⌘↵ 保存 · 默认短记录</span>
+        <span class="hint">默认短记录 · origin=human</span>
         <button class="btn sm primary" onclick="saveStickyNote()">记下</button>
       </div>
     </div>
@@ -166,7 +172,6 @@
     <div class="detail-writenote" id="detail-writenote" style="display:none"></div>
     <div class="detail-body" id="detail-body"></div>
     <div class="detail-actions">
-      <button class="btn sm" onclick="openEditBody()">改写正文</button>
       <button class="btn sm ghost" style="margin-left:auto" onclick="closeDetail()">关闭</button>
     </div>
   </div>
@@ -207,63 +212,31 @@
   </div>
 </div>
 
-<!-- ===== 弹层：新建项目（工作区来源：临时 / 本地）===== -->
+<!-- ===== 弹层：新建项目（绑定本地目录作为注入落点 cwd）===== -->
 <div class="modal-mask" id="new-project-modal" style="display:none" onclick="if(event.target===this)closeNewProject()">
   <div class="modal new-project-modal">
     <div class="modal-head">
       <div>
-        <div class="eyebrow">New Project · 工作区来源</div>
+        <div class="eyebrow">New Project · 绑定本地目录</div>
         <h2>新建项目</h2>
       </div>
       <button class="icon-btn" onclick="closeNewProject()">✕</button>
     </div>
     <div class="form-row">
       <label>项目名</label>
-      <input id="new-project-name" placeholder="一句话项目名（临时项目必填，绑定目录可留空取目录名）" />
+      <input id="new-project-name" placeholder="留空则取目录名" />
     </div>
     <div class="form-row">
-      <label>工作区来源</label>
-      <div class="workspace-options">
-        <button class="workspace-option active" data-ws="temporary" onclick="setNewProjectWorkspace('temporary', this)">
-          <span class="ws-icon">⚡</span>
-          <span class="ws-text">
-            <span class="ws-title">临时项目</span>
-            <span class="ws-desc">自动创建临时记录区，之后可迁移到正式项目</span>
-          </span>
-        </button>
-        <button class="workspace-option" data-ws="local" onclick="setNewProjectWorkspace('local', this)">
-          <span class="ws-icon">📁</span>
-          <span class="ws-text">
-            <span class="ws-title">绑定本地目录</span>
-            <span class="ws-desc">选已有目录作为注入落点 cwd，记录按目录切片</span>
-          </span>
-        </button>
-        <button class="workspace-option" data-ws="github" onclick="setNewProjectWorkspace('github', this)">
-          <span class="ws-icon">⎇</span>
-          <span class="ws-text">
-            <span class="ws-title">从 GitHub 克隆</span>
-            <span class="ws-desc">输入仓库地址，克隆到本地作为 cwd 落点</span>
-          </span>
-        </button>
-      </div>
-    </div>
-    <div class="form-row" id="new-project-dir-row" style="display:none">
       <label>本地目录（cwd · 注入落点）</label>
       <div class="folder-picker">
         <input type="file" id="new-project-dir-input" webkitdirectory directory multiple style="display:none" onchange="onFolderPicked(this)" />
         <button class="btn sm" type="button" onclick="document.getElementById('new-project-dir-input').click()">选择文件夹…</button>
         <span class="folder-picked empty" id="new-project-dir-label">未选择</span>
       </div>
-      <span class="folder-hint">通过系统目录选择器选取（桌面应用中获取完整路径作为 cwd）</span>
-    </div>
-    <div class="form-row" id="new-project-repo-row" style="display:none">
-      <label>仓库地址</label>
-      <input id="new-project-repo" placeholder="https://github.com/owner/repo" />
-      <input id="new-project-token" type="password" placeholder="Personal Access Token（可选，私有仓库必填）" style="margin-top:6px" />
-      <span class="folder-hint">克隆到 ~/.workshop/workspaces/… 完成后作为注入落点 cwd；token 仅用于本次克隆</span>
+      <span class="folder-hint">通过系统目录选择器选取（桌面应用中获取完整路径作为 cwd，记录按目录切片）</span>
     </div>
     <div class="modal-foot">
-      <span class="hint" id="new-project-hint">自动创建临时记录区（~/.workshop/workspaces/…），之后可迁移到正式项目</span>
+      <span class="hint" id="new-project-hint">绑定后作为注入落点（localProjectId + cwd），记录按项目切片</span>
       <div>
         <button class="btn sm ghost" onclick="closeNewProject()">取消</button>
         <button class="btn sm primary" onclick="createProject()">创建</button>
@@ -272,53 +245,8 @@
   </div>
 </div>
 
-<!-- ===== 弹层：导出确认 ===== -->
-<div class="modal-mask" id="export-modal" style="display:none" onclick="if(event.target===this)closeExport()">
-  <div class="modal export-modal">
-    <div class="modal-head">
-      <div>
-        <div class="eyebrow">Export</div>
-        <h2>导出当前切片</h2>
-      </div>
-      <button class="icon-btn" onclick="closeExport()">✕</button>
-    </div>
-    <div class="export-body" id="export-body"></div>
-    <div class="modal-foot">
-      <span class="hint">导出为 markdown · 仅当前筛选结果</span>
-      <div>
-        <button class="btn sm ghost" onclick="closeExport()">取消</button>
-        <button class="btn sm primary" onclick="doExport()">复制到剪贴板</button>
-      </div>
-    </div>
-  </div>
-</div>
 
-<!-- ===== 弹层：改写正文（人手动改写直接编辑；agent 写才走 D-011 确认页）===== -->
-<div class="modal-mask" id="edit-modal" style="display:none" onclick="if(event.target===this)closeEditBody()">
-  <div class="modal edit-modal">
-    <div class="modal-head">
-      <div>
-        <div class="eyebrow">Edit Body · 人手动改写</div>
-        <h2>改写正文</h2>
-      </div>
-      <button class="icon-btn" onclick="closeEditBody()">✕</button>
-    </div>
-    <div class="edit-record-title" id="edit-record-title"></div>
-    <div class="form-row">
-      <label>正文（结论 / 影响 / 下一步）</label>
-      <textarea id="edit-body" placeholder="结论&#10;影响&#10;下一步"></textarea>
-    </div>
-    <div class="modal-foot">
-      <span class="hint">改写后直接生效</span>
-      <div>
-        <button class="btn sm ghost" onclick="closeEditBody()">取消</button>
-        <button class="btn sm primary" onclick="saveEditBody()">保存改写</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ===== 弹层：设置 ===== -->
+<!-- ===== 弹层：设置（MVP 仅脱敏规则预留入口）===== -->
 <div class="modal-mask" id="settings-modal" style="display:none" onclick="if(event.target===this)closeSettings()">
   <div class="modal settings-modal">
     <div class="modal-head">
@@ -329,28 +257,9 @@
       <button class="icon-btn" onclick="closeSettings()">✕</button>
     </div>
     <div class="settings-list">
-      <div class="setting-row account" id="settings-account"></div>
       <div class="setting-row nav" onclick="openSanitizeRules()">
-        <div class="setting-label">脱敏规则<span class="setting-desc">配置 Agent 取用时脱敏的实体类型与规则</span></div>
+        <div class="setting-label">脱敏规则<span class="setting-desc">配置 Agent 取用时脱敏的实体类型与规则（app server 取用出口实现）</span></div>
         <span class="setting-nav-coming">本期预留 ›</span>
-      </div>
-      <div class="setting-row">
-        <div class="setting-label">默认记录 scope<span class="setting-desc">新建记录与便签的默认归属</span></div>
-        <div class="setting-control form-chips" id="settings-default-scope">
-          <button class="chip" data-ds="project" onclick="setSettingDefaultScope('project', this)">项目</button>
-          <button class="chip" data-ds="none" onclick="setSettingDefaultScope('none', this)">个人</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-label">取用流默认展开<span class="setting-desc">打开工作台时自动展开全局取用流</span></div>
-        <button class="switch" id="settings-usage-expand" onclick="toggleSettingSwitch('settings-usage-expand', this)">关</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-label">便签默认置顶<span class="setting-desc">打开便签时常驻置顶</span></div>
-        <button class="switch" id="settings-sticky-pin" onclick="toggleSettingSwitch('settings-sticky-pin', this)">关</button>
-      </div>
-      <div class="setting-row about">
-        <div class="setting-label">关于<span class="setting-desc">Workshop Desktop · 聚焦收敛设计稿 v0.1 · 记录为单焦点，MVP 已裁减任务源</span></div>
       </div>
     </div>
   </div>

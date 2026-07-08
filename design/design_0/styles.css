@@ -189,7 +189,34 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .run-statusbar b { color: var(--color-text); }
 .run-statusbar .sep { opacity: .4; }
 
-/* 注入命中折叠区块 */
+/* 注入命中 badge（绿色）*/
+.used-mark.inject { color: var(--color-accent-strong); background: var(--color-accent-soft); }
+.used-mark.inject .pulse { background: var(--color-accent); }
+/* 取用 badge（蓝色，预留阶段）*/
+.used-mark.fetch { color: var(--color-inject); background: var(--color-inject-soft); }
+.used-mark.fetch .pulse { background: var(--color-inject); }
+.used-marks { flex-shrink: 0; display: inline-flex; flex-direction: column; gap: 3px; align-items: flex-end; margin-top: 2px; }
+
+/* ===== 遥测面板 tab ===== */
+.usage-tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-subtle); margin-bottom: var(--space-4); }
+.usage-tab {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4); font-size: 12px; font-weight: 500;
+  color: var(--color-text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.usage-tab:hover { color: var(--color-text); }
+.usage-tab.active { color: var(--color-text-strong); border-bottom-color: var(--color-accent); }
+.usage-tab .tab-dot { width: 7px; height: 7px; border-radius: 50%; }
+.usage-tab .tab-dot.inject { background: var(--color-accent); }
+.usage-tab .tab-dot.fetch { background: var(--color-inject); opacity: .4; }
+.usage-tab .tab-count { font-size: 10px; color: var(--color-text-muted); background: var(--color-bg); padding: 1px 6px; border-radius: 99px; }
+.usage-tab.active .tab-count { background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.usage-tab .tab-coming { font-size: 9px; color: var(--color-agent); background: var(--color-agent-soft); padding: 1px 5px; border-radius: var(--radius-sm); font-weight: 600; }
+
+/* 协议标签（RPC 先行 / MCP 后续）*/
+.proto-tag { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: var(--radius-sm); margin-right: 4px; letter-spacing: .03em; }
+.proto-tag.rpc { background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.proto-tag.mcp { background: var(--color-inject-soft); color: var(--color-inject); }
 .panel { background: var(--color-surface-strong); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: var(--space-6); margin-bottom: var(--space-5); box-shadow: var(--shadow-sm); }
 .inject-line { display: flex; gap: var(--space-5); padding: var(--space-4) var(--space-3); border-bottom: 1px solid var(--border-subtle); }
 .inject-line:last-child { border-bottom: none; }
@@ -228,6 +255,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .sticky-item .si-snippet { font-size: 10px; color: var(--color-text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sticky-item .si-meta { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-2); font-size: 9px; color: var(--color-text-muted); }
 .sticky-body.collapsed { display: none; }
+#sticky-collapse-btn { transition: transform .15s; }
 
 .empty { text-align: center; padding: var(--space-8); color: var(--color-text-muted); font-size: 12px; }
 .draft-watermark { position: fixed; bottom: var(--space-4); left: var(--space-5); font-size: 10px; color: var(--color-text-muted); opacity: .6; background: var(--color-surface-strong); padding: 3px 8px; border-radius: 99px; border: 1px solid var(--border-subtle); }

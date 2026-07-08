@@ -486,6 +486,21 @@ export interface CodexRunMeta {
   completedAt?: string;
 }
 
+export interface RecordSearchLogEntry {
+  /** ISO timestamp */
+  at: string;
+  /** 调用方标识：Codex / Claude / CLI 等 */
+  caller: string;
+  /** 协议来源：rpc（app server JSON-RPC）或 mcp（Model Context Protocol） */
+  protocol: "rpc" | "mcp";
+  /** 检索查询词 */
+  query: string;
+  /** 命中的记录 ID 列表 */
+  matchedRecordIds: string[];
+  /** token scope：full（完整 token）或 agent（受限 token） */
+  scope: "full" | "agent";
+}
+
 export interface WindowFitRequest {
   width?: number;
   height: number;

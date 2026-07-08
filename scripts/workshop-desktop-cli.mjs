@@ -18,6 +18,7 @@ function usage(command = commandName()) {
   ${command} record create --title "Title" [--body "Markdown"] [--open]
   ${command} record create --title "Title" --body-file ./note.md --project-id 98 --project-name workshop-desktop --open
   ${command} record list [--scope project] [--project-id 98] [--query "keyword"]
+  ${command} record search "搜索词" [--scope project] [--local-project-id workshop-desktop] [--limit 20]
   ${command} record get --id <record-id>
   ${command} record open --id <record-id>
   ${command} record annotate --annotations-file ./annotations.json
@@ -472,6 +473,29 @@ async function listRecords(options) {
   printRecords(result.records || [], result.total);
 }
 
+async function searchRecords(options) {
+  const query = options.query || options._[0];
+  if (!query) {
+    throw new Error("record search 需要 --query 或位置参数作为搜索词");
+  }
+  const result = await rpc("record.search", {
+    query,
+    scopeType: options.scope,
+    localProjectId: options["local-project-id"],
+    limit: numberOption(options.limit, "--limit"),
+    includeBody: options["include-body"] === true,
+    caller: options.caller || "CLI",
+    protocol: "rpc"
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  printRecords(result.records || [], result.total);
+}
+
 async function getRecord(options) {
   const result = await rpc("record.get", {
     id: stringOption(options.id, "--id")
@@ -721,6 +745,11 @@ async function main() {
 
   if (resource === "record" && action === "list") {
     await listRecords(options);
+    return;
+  }
+
+  if (resource === "record" && action === "search") {
+    await searchRecords(options);
     return;
   }
 

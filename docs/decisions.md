@@ -109,14 +109,14 @@ Consequences:
 
 Status: accepted
 
-Decision: `codex.send` 只能由用户手势（桌面端 UI 的发送入口）或持有完整 token 的本机调用方触发。桌面端派发 Codex 执行时，注入给被执行 agent 的是受限 token，只允许 `record.create`。
+Decision: `codex.send` 只能由用户手势（桌面端 UI 的发送入口）或持有完整 token 的本机调用方触发。桌面端派发 Codex 执行时，注入给被执行 agent 的是受限 token，只允许 `record.create`（回写）和 `record.search`（取用，只读检索记录池）。
 
-Rationale: 任务和记录正文会被原样嵌入 Codex prompt，而任务正文来自远端 Workshop API，存在提示注入风险。执行能力必须停留在用户一侧；被派发的 agent 只应获得 append-only 的记录回写能力，避免 agent 用注入内容递归派发新的执行。
+Rationale: 任务和记录正文会被原样嵌入 Codex prompt，而任务正文来自远端 Workshop API，存在提示注入风险。执行能力必须停留在用户一侧；被派发的 agent 只应获得 append-only 的记录回写能力和只读的记录检索能力（pull 路径），避免 agent 用注入内容递归派发新的执行。
 
 Consequences:
 
 - app server 维护两级 token：完整 token 写入 `userData/app-server.json`；受限 token 仅通过环境变量 `WORKSHOP_DESKTOP_SERVER_PORT` / `WORKSHOP_DESKTOP_SERVER_TOKEN` 注入被派发的 Codex 进程。
-- 受限 token 调用 `record.create` 以外的方法会被拒绝。
+- 受限 token 调用 `record.create` 和 `record.search` 以外的方法会被拒绝。
 - 通过 bridge 创建的记录带 `origin: agent`，与人工记录区分；origin 跟随创建者，编辑不改变来源。
 - 后续若实现"任务自动派发"，必须先重新评审本决策，不得默认绕过用户手势。
 
@@ -297,6 +297,35 @@ Consequences:
 - 退出登录只清远端身份和远端任务数据，不删除本地项目、本地目录绑定或本地记录。
 
 ## 开放问题
+
+### MVP 边界审查（2026-07-08）
+
+基于真实代码审查的 MVP 边界结论。
+
+**已实现且边界清晰（MVP 可用）：**
+
+- 记录 CRUD + scope(project/none/task) 筛选：完整
+- 注入路径（push）：`buildCodexUserInput` 刻意精简，只塞 body/title，不查历史。是设计意图，不是缺陷
+- 取用路径（pull）：`record.search` 搜 title + body 正文，agent token 可调用，写取用日志
+- Codex 运行遥测：codex-runs 记每次 turn，Tray/Home 展示
+- 异步确认页：confirmation.request/status 完整
+- 便签窗口：独立 BrowserWindow，多实例浮动
+- token 权限隔离：full/agent 两级，agent 只能 record.create + record.search
+
+**已实现但边界不完整（需补齐才构成 MVP 闭环）：**
+
+1. origin 的 UI 展示缺失：数据层完整（agent 创建即标 agent，不可被人类编辑覆盖），但记录列表/详情中用户看不到 origin 标识。manual.ts:66 承诺了"标记为 agent 来源"但 UI 未兑现。MVP 要求用户能识别哪些是 AI 写的，这是缺口。
+2. 取用日志无 UI 入口：`record-searches/index.json` 忠实写入，但没有任何地方读取展示。codex-runs 有 UI，record-searches 没有。MVP 要求用户能看到 agent 查了什么，这是缺口。
+
+**注入断环（MVP 前提）：**
+
+`buildCodexUserInput` 当前零注入——只塞当前记录的 body/title，不收 localProjectId，不查历史相关记录。注入路径的能力存在但没接好，这是闭环的断点。补注入逻辑是 MVP 范围内的工作，不是后续阶段。
+
+**MCP 适配（非 MVP）：**
+
+取用路径通过 app server RPC 已实现。MCP 协议适配外部 Agent（Claude Code 等）是后续扩展，不阻塞 MVP 闭环。
+
+---
 
 - NebulaAuth token 是否继续保存在 Electron `userData/config.json`，还是在更广泛使用前迁移到系统钥匙串？
 - 任务可见性是否继续限定为当前用户创建或执行的任务？

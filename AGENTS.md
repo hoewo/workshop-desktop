@@ -86,7 +86,7 @@ workshop record get --id <record-id> --json
 当环境变量 `WORKSHOP_DESKTOP_SERVER_PORT` 和 `WORKSHOP_DESKTOP_SERVER_TOKEN` 存在时，本次执行由 Workshop Desktop 派发。派发不附带额外说明：执行内容就是用户消息本身，项目 ID 用上文声明的本 repo Workshop 项目 ID，运行与任务/记录的关联由 Workshop Desktop 的运行状态表持有。此时适用：
 
 - 回写遵循上文 AI 记录边界与密度规则，方式优先用上文 CLI（它会自动使用这两个环境变量）；无法使用 CLI 时，直接 `POST http://127.0.0.1:${WORKSHOP_DESKTOP_SERVER_PORT}/rpc`，请求头 `Authorization: Bearer ${WORKSHOP_DESKTOP_SERVER_TOKEN}`，请求体 `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<正文>","scopeType":"project","projectId":98}}`。
-- 派发注入的 token 仅允许 `record.create`，不要尝试其他方法。
+- 派发注入的 token 仅允许 `record.create`（回写）与 `record.search`（取用，只读），不要尝试其他方法。
 
 ## 发布与自动更新流程
 

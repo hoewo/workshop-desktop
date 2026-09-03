@@ -263,7 +263,10 @@ workshop context current --json
 workshop project list --json
 workshop record list --project-id <project-id> --json
 workshop record get --id <record-id> --json
+workshop project members --project-id <project-id> --json
+workshop project tags --project-id <project-id> --json
 workshop task list --project-id <project-id> --json
+workshop task get --project-id <project-id> --id <task-id> --json
 ```
 
 查询记录时优先走标题/元数据级检索：`record list` 默认只返回 id、标题、状态、范围、项目/任务归属、时间戳和标注等元数据，不要为了找候选记录就加 `--include-body`。需要判断某条记录正文时，再对少量候选记录调用 `record get --id <record-id> --json`。只有已知结果集很小且用户明确需要批量正文时，才使用 `record list --include-body`。
@@ -278,8 +281,9 @@ workshop task list --project-id <project-id> --json
 
 - 用户消息就是任务输入，不要假设还有隐藏说明。
 - Workshop 已在运行状态表里持有关联关系，prompt 里不需要再写来源包装。
-- 注入 token 是受限 token，只允许 `record.create`。
-- 不要用受限 token 调用 `context.current`、`record.get`、`confirmation.request` 或 `codex.send`。
+- 注入 token 是受限 token：允许 `record.create`、`record.search`，以及当前活跃运行项目范围内的 `task.list`、`task.get`、`task.creationContext` 和 `task.create.request`。
+- 任务能力的项目范围由 Desktop 根据当前派发运行建立并在运行结束时撤销；不要尝试读取其他项目。
+- 不要用受限 token 调用 `context.current`、`record.get`、通用 `confirmation.request` 或 `codex.send`，也不要尝试直接创建、修改或删除任务。
 - 项目 ID 优先来自目标 repo 的 `AGENTS.md` 或用户消息；没有项目上下文时，完成 repo 任务并说明回写需要项目 ID。
 
 ## 记录与任务边界
@@ -291,7 +295,7 @@ workshop task list --project-id <project-id> --json
 - 记录数量增长后，优先增强检索、标注、关联和确认流程，不要默认把记录升级成复杂固定类型系统。
 - AI 可以在任务完成、形成稳定结论、或用户要求记录时创建短记录。
 - AI 默认不编辑、删除、合并、重组用户已有记录。
-- AI 默认不创建 Workshop 任务；创建任务或改任务状态需要用户明确要求或确认。
+- AI 只有在用户明确要求时才提出创建 Workshop 任务；使用标准 `workshop task create` 提议并等待 Desktop 确认页，不直接写任务。改变任务状态同样需要明确要求和确认。
 - 归档记录或改变记录状态只有在目标项目 CLI / confirmation action 明确提供正式能力时才执行；不要通过直接改 `userData` 代替。
 - `codex.send` 是 Workshop UI/service layer 拥有的执行动作，不是 Codex 可随意递归触发的能力。
 
@@ -332,6 +336,17 @@ workshop task list --project-id <project-id> --json
 workshop record create --title "<短标题>" --body "<markdown>" --scope project --project-id <project-id> --project-name "<project-name>" --open
 ```
 
+用户明确要求创建任务时，先查询项目成员和标签，再提交标准创建提议：
+
+```bash
+workshop project members --project-id <project-id> --json
+workshop project tags --project-id <project-id> --json
+workshop task create "<任务内容>" --project-id <project-id> --assignee <成员ID|用户名|me> --json
+# 标签可选；需要分类时使用 --tags <标签名,...>，已知精确 ID 时也可使用 --tag-ids <标签ID,...>
+```
+
+任务创建必须包含项目、内容和负责人，项目标签可选，初始状态固定为 `pending`。`task create` 只返回待确认请求；Desktop 使用可信模板展示内容，用户确认后才写入远端任务系统。标签可多选且保持项目级扁平结构；Bug、技术方案评审、需求、想法等只是场景标签，不映射任务状态。
+
 追加或改写已有记录正文，必须走确认页：
 
 ```bash
@@ -339,7 +354,7 @@ workshop confirmation request --title "<确认标题>" --html-file ./confirm.htm
 workshop confirmation status --id <request-id> --json
 ```
 
-可以在确认动作中使用 `record.appendBody`、`record.updateBody`、`record.create`、`record.annotate`、`task.create`、`task.updateState`，但动作必须明确、范围清楚、可由用户理解。删除、合并和重组多条记录不属于默认动作。
+full CLI 可以在通用确认动作中使用 `record.appendBody`、`record.updateBody`、`record.create`、`record.annotate`、`task.create`、`task.updateState`，但动作必须明确、范围清楚、可由用户理解。被派发 agent 不得提交任意确认 HTML 或通用动作；任务创建只能走标准 `task.create.request`。删除、合并和重组多条记录不属于默认动作。
 
 ## 失败处理
 

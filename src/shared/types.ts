@@ -117,12 +117,23 @@ export interface ListProjectsRequest {
 export interface ListTasksRequest {
   projectId: number;
   states?: TaskState[];
+  query?: string;
+  executorIds?: number[];
+  tagIds?: number[];
+  pageSize?: number;
+}
+
+export interface ListProjectTagsRequest {
+  projectId: number;
   pageSize?: number;
 }
 
 export interface CreateTaskRequest {
   projectId: number;
   content: string;
+  executorId: number;
+  tagIds: number[];
+  state?: "pending";
 }
 
 export interface UpdateTaskRequest {
@@ -153,6 +164,21 @@ export interface Project {
   updated_at?: string;
   deleted_at?: string | null;
   members: ProjectMember[];
+}
+
+export interface ProjectTag {
+  id: number;
+  project_id: number;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+export interface TaskCreationContext {
+  project: Project;
+  currentUserId?: number;
+  tags: ProjectTag[];
 }
 
 export interface Organization {
@@ -240,7 +266,7 @@ export interface TaskStateChangeNotice {
 }
 
 export interface WorkshopRefreshEvent {
-  reason: "manual" | "task-state";
+  reason: "manual" | "task-created" | "task-state";
   task?: TaskStateChangeNotice;
 }
 
@@ -437,6 +463,9 @@ export type ConfirmationAction =
       type: "task.create";
       projectId: number;
       content: string;
+      executorId: number;
+      tagIds: number[];
+      state: "pending";
     }
   | {
       type: "task.updateState";
@@ -567,6 +596,7 @@ export interface DesktopBridge {
   listProjects: (request?: ListProjectsRequest) => Promise<ApiResponse<ProjectsPayload | Project[]>>;
   listOrganizations: () => Promise<ApiResponse<OrganizationsPayload | Organization[]>>;
   listTasks: (request: ListTasksRequest) => Promise<ApiResponse<TasksPayload | Task[]>>;
+  listProjectTags: (request: ListProjectTagsRequest) => Promise<ApiResponse<ProjectTag[]>>;
   createTask: (request: CreateTaskRequest) => Promise<ApiResponse<Task>>;
   updateTask: (request: UpdateTaskRequest) => Promise<ApiResponse<Task>>;
   openExternal: (url: string) => Promise<void>;

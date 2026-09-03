@@ -1,4 +1,4 @@
-import type { CodexRunStatus, Organization, Project, Task, TaskState } from "../../shared/types";
+import type { CodexRunStatus, Organization, Project, ProjectTag, Task, TaskState } from "../../shared/types";
 import type { HeaderTitleContent } from "./records";
 
 export const taskListStates: TaskState[] = [
@@ -44,6 +44,7 @@ export interface EnrichedTask extends Task {
   projectName: string;
   meId?: number;
   isMine: boolean;
+  resolvedTags: Array<{ id: number; name: string }>;
 }
 
 export interface ProjectTodoGroup {
@@ -161,4 +162,19 @@ export function splitTags(tags?: string | null) {
     .split(",")
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+export function getProjectTagDisplayName(name: string) {
+  const match = name.trim().match(/^\[([^\]]+)\]\(#[0-9a-fA-F]{6,8}\)$/);
+  return match?.[1]?.trim() || name.trim();
+}
+
+export function resolveTaskTags(tags: string | null | undefined, projectTags: ProjectTag[]) {
+  const tagsById = new Map(projectTags.map((tag) => [tag.id, tag]));
+  return splitTags(tags)
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+    .map((tagId) => tagsById.get(tagId))
+    .filter((tag): tag is ProjectTag => Boolean(tag))
+    .map((tag) => ({ id: tag.id, name: getProjectTagDisplayName(tag.name) }));
 }

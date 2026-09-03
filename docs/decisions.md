@@ -109,14 +109,16 @@ Consequences:
 
 Status: accepted
 
-Decision: `codex.send` 只能由用户手势（桌面端 UI 的发送入口）或持有完整 token 的本机调用方触发。桌面端派发 Codex 执行时，注入给被执行 agent 的是受限 token，只允许 `record.create`（回写）和 `record.search`（取用，只读检索记录池）。
+Decision: `codex.send` 只能由用户手势（桌面端 UI 的发送入口）或持有完整 token 的本机调用方触发。桌面端派发 Codex 执行时，注入给被执行 agent 的是受限 token；它允许 `record.create`、`record.search`，以及活跃运行关联项目内的任务只读和任务创建提议，但不允许直接写任务、调用通用确认页或递归触发 `codex.send`。
 
-Rationale: 任务和记录正文会被原样嵌入 Codex prompt，而任务正文来自远端 Workshop API，存在提示注入风险。执行能力必须停留在用户一侧；被派发的 agent 只应获得 append-only 的记录回写能力和只读的记录检索能力（pull 路径），避免 agent 用注入内容递归派发新的执行。
+Rationale: AI 需要结合当前项目待办判断重复工作、责任人和执行上下文，也需要把明确结论提出为待办；但任务和记录正文来自外部输入，存在提示注入风险。读取必须限定到用户主动派发的活跃项目，写入必须停留在用户确认一侧。
 
 Consequences:
 
 - app server 维护两级 token：完整 token 写入 `userData/app-server.json`；受限 token 仅通过环境变量 `WORKSHOP_DESKTOP_SERVER_PORT` / `WORKSHOP_DESKTOP_SERVER_TOKEN` 注入被派发的 Codex 进程。
-- 受限 token 调用 `record.create` 和 `record.search` 以外的方法会被拒绝。
+- 受限 token 的任务访问仅在对应项目存在活跃 Codex 运行期间有效；其他项目会被拒绝。
+- 受限 token 可以读取项目任务、成员和标签，并提交标准化任务创建提议；提议由 Desktop 生成可信确认页，确认后才执行。
+- 受限 token 不能直接创建、修改或删除任务，不能调用通用 `confirmation.request`，也不能调用 `context.current` 或 `codex.send`。
 - 通过 bridge 创建的记录带 `origin: agent`，与人工记录区分；origin 跟随创建者，编辑不改变来源。
 - 后续若实现"任务自动派发"，必须先重新评审本决策，不得默认绕过用户手势。
 
@@ -162,7 +164,7 @@ Consequences:
 - 当前上下文是运行时指针，不是记录、任务或 repo fact；长时间未切换焦点时可标记为 stale。
 - 临时确认页面只负责展示和收集确认；确认后的业务动作由 Workshop 服务层执行并刷新 UI。
 - 异步确认请求状态写入 `userData/confirmation-requests/index.json`，上限 100 条。
-- 受限 Codex token 仍只允许 `record.create`，不能读取上下文或发起确认请求。
+- 受限 Codex token 不能读取全局当前上下文或发起通用确认请求；它只能在活跃运行项目内通过专用任务创建提议入口发起可信确认。
 - 删除、合并和重组多条记录暂不作为默认自动动作，需要后续单独评审。
 
 ### D-012 开发模式和发布包共用本地记录数据
@@ -296,6 +298,40 @@ Consequences:
 - 高级认证模式可以保留为内部兼容能力，但不作为普通设置项暴露。
 - 退出登录只清远端身份和远端任务数据，不删除本地项目、本地目录绑定或本地记录。
 
+### D-020 Workshop Todo 按四仓库产品系统整体规划
+
+Status: accepted
+
+Decision: `workshop-todo`、`workshop-todo-website`、`workshop-todo-cli` 和 `workshop-desktop` 作为同一个 Workshop Todo 产品系统整体分析和规划，但继续保持清晰的职责边界与独立发布。后端拥有远端业务契约；网页端、独立 `todo` CLI 和 Desktop 是三个面向不同使用场景的消费者。
+
+Rationale: 四个仓库共享项目、任务、成员、认证和任务状态语义。单仓库升级如果不检查其他消费者，会造成状态集合、响应结构、分页或认证行为漂移；同时，把客户端合并或让客户端互相依赖又会破坏现有产品边界和发布灵活性。
+
+Consequences:
+
+- 共享业务契约变更必须同时评估四个仓库，并记录兼容窗口和消费者迁移顺序。
+- Desktop 开发任务启动时对主要依赖 `workshop-todo` 执行只读 `fetch` 和 ahead/behind 比较；发现新提交时先分析影响，不自动更新后端工作树。
+- `workshop-todo` 的实际路由、模型和响应实现是当前运行时事实；文档或客户端映射与其冲突时，先验证后端行为并修正漂移。
+- 后端优先通过向后兼容变更上线，三个客户端可按自身节奏升级；破坏性旧契约只能在消费者迁移完成后移除。
+- `workshop-todo-cli` 的 `todo` 与 Desktop 的 `workshop` / `workshop-desktop` CLI 保持独立，前者操作远端任务，后者操作本地 Desktop bridge。
+- Desktop 继续拥有本地项目和记录，不能因为整体规划而把这些事实迁入远端后端；网页端继续承担完整团队协作界面，Desktop 不扩展为其桌面复制品。
+
+### D-021 统一任务创建契约与受限 AI 提议
+
+Status: accepted
+
+Decision: Desktop 直接创建任务、记录转任务和 `workshop` CLI/AI 创建提议共用同一业务契约：必须提供项目、任务内容和负责人，项目标签可选，初始状态显式为 `pending`。Desktop 内用户提交创建面板即完成确认；CLI 与被派发 AI 只能调用专用任务创建提议，由 Desktop 生成可信确认页，用户确认后才创建任务。
+
+Rationale: “记录转任务”和“直接创建任务”只是任务内容来源不同，不应形成两套校验或状态语义。负责人保证任务有明确承接人，项目标签用于表达 Bug、技术方案评审、需求、想法等场景；场景分类与任务生命周期是两个维度，不能借 `pending_review` 等状态代替标签。AI 需要读取任务上下文并协助提出任务，但不应通过通用 HTML/动作或直接 API 绕过用户确认。
+
+Consequences:
+
+- 任务创建面板统一负责成员、已选项目标签、内容和初始状态校验；记录转任务成功后才更新记录关联，避免任务失败却提前标记已转化。
+- 标签保持项目级扁平结构并允许多选；客户端不在创建任务时隐式创建标签。
+- `workshop task create` 接受负责人和可选标签，返回异步确认请求而不是已创建任务；独立 `todo` CLI 仍是直接访问远端系统的客户端，不改变其职责。
+- 被派发 agent 在 Codex 运行期间只能读取当前关联项目的任务、成员和标签，并可提交专用创建提议；项目作用域随运行结束撤销。
+- 受限 agent 不能调用 `context.current`、通用 `confirmation.request`、`codex.send`，也不能直接修改任务状态或删除任务。
+- 共享远端任务契约保持向后兼容；本次能力使用后端既有负责人、标签和状态字段，网页端与独立 Todo CLI 无需同步改码，但必须纳入回归验证。
+
 ## 开放问题
 
 ### MVP 边界审查（2026-07-08）
@@ -310,7 +346,7 @@ Consequences:
 - Codex 运行遥测：codex-runs 记每次 turn，Tray/Home 展示
 - 异步确认页：confirmation.request/status 完整
 - 便签窗口：独立 BrowserWindow，多实例浮动
-- token 权限隔离：full/agent 两级，agent 只能 record.create + record.search
+- token 权限隔离：full/agent 两级。该历史快照当时仅开放 record.create + record.search；任务读取与创建提议能力已由 D-021 在活跃项目作用域内补充。
 
 **已实现但边界不完整（需补齐才构成 MVP 闭环）：**
 

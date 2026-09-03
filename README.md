@@ -23,6 +23,17 @@ Workshop Desktop 是一个轻量跨平台桌面端，用于快速查看和处理
 - 内置 `workshop-codex-collaboration` skill；首次启动轻提示安装，设置页可检查、安装或更新。
 - macOS 发布版支持从公开 GitHub Release 检查更新、自动下载，并由用户确认重启安装。
 
+## 关联仓库
+
+Workshop Todo 作为一个产品由四个独立发布的仓库共同组成：
+
+- [`workshop-todo`](https://github.com/hoewo/workshop-todo)：远端项目、任务、成员和任务状态的后端事实源。
+- [`workshop-todo-website`](https://github.com/hoewo/workshop-todo-website)：面向团队协作和完整任务管理的网页端。
+- [`workshop-todo-cli`](https://github.com/hoewo/workshop-todo-cli)：直接访问远端任务系统的独立 `todo` 命令行客户端。
+- [`workshop-desktop`](https://github.com/hoewo/workshop-desktop)：本 repo，面向个人当前注意力、本地记录和 Codex 执行入口。
+
+四个仓库共享后端业务契约，但保持各自的产品边界和发布节奏。独立 `todo` CLI 不等于本 repo 随应用分发的 `workshop` / `workshop-desktop` 本地 bridge CLI；详细调用关系见 [docs/architecture.md](docs/architecture.md)。
+
 ## 开发运行
 
 当前机器没有全局 `npm` 时，可以用 `npx` 临时调用 pnpm：
@@ -59,9 +70,15 @@ workshop record create --title "记录标题" --body "记录内容" --scope proj
 workshop record list --project-id 98 --json
 workshop record get --id <record-id> --json
 workshop task list --project-id 98 --json
+workshop project members --project-id 98 --json
+workshop project tags --project-id 98 --json
+workshop task create "修复登录偶发失效" --project-id 98 --assignee me --tags Bug,后端 --json
+# 标签可选；无标签时省略 --tags / --tag-ids
 workshop context current --json
 workshop confirmation request --title "确认标题" --html-file ./confirm.html --action-file ./action.json
 ```
+
+`workshop task create` 不直接写入任务系统：它提交标准化创建提议并打开 Desktop 确认页，用户确认后才会创建。Desktop 直接创建和记录转待办也使用同一套“内容 + 负责人 + 可选项目标签”契约。
 
 发布版在非 Windows 平台启动时会自动安装用户级 `workshop` 和 `workshop-desktop` shim 到 `~/.local/bin`。Windows 发布包当前尚未自动安装 CLI shim；Windows 用户先使用应用内能力，CLI 自动安装另行实现。
 

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 const require = createRequire(import.meta.url);
 const { CodexAppServerClient } = require("../dist/main/codexAppServer.js");
@@ -15,6 +18,7 @@ const {
 const { normalizeCodexFailureMessage, summarizeCodexFailureForDisplay } = require("../dist/shared/codexErrors.js");
 const { PersonalRecordStore } = require("../dist/main/recordStore.js");
 const { WorkshopApiService } = require("../dist/main/workshopApiService.js");
+const execFileAsync = promisify(execFile);
 
 function baseConfig(overrides = {}) {
   return {
@@ -119,15 +123,222 @@ test("temporary confirmation bridge stays on the app-server boundary", async () 
   assert.match(mainBundle, /record\.open/);
   assert.match(mainBundle, /record\.annotate/);
   assert.match(mainBundle, /record\.updateBody/);
+  assert.match(mainBundle, /task\.creationContext/);
+  assert.match(mainBundle, /task\.create\.request/);
+  assert.match(mainBundle, /task-created/);
+  assert.match(mainBundle, /assertAgentProjectScope/);
   assert.match(mainBundle, /confirmation-requests/);
   assert.match(mainBundle, /confirmation:confirm/);
-  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 confirmation\.open/);
-  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 confirmation\.request/);
-  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 context\.current/);
-  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 record\.open/);
-  assert.match(mainBundle, /当前 token 只允许 record\.create，不能调用 record\.annotate/);
+  assert.match(mainBundle, /当前受限 token 无权调用 confirmation\.open/);
+  assert.match(mainBundle, /当前受限 token 无权调用 confirmation\.request/);
+  assert.match(mainBundle, /当前受限 token 无权调用 context\.current/);
+  assert.match(mainBundle, /当前受限 token 无权调用 record\.open/);
+  assert.match(mainBundle, /当前受限 token 无权调用 record\.annotate/);
   assert.match(confirmationPreload, /workshopConfirmation/);
   assert.match(confirmationPreload, /confirmation:cancel/);
+});
+
+test("Workshop CLI lists tasks across projects without concurrent request bursts", async () => {
+  let activeTaskRequests = 0;
+  let maxActiveTaskRequests = 0;
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => {
+      const rpc = JSON.parse(body);
+      if (rpc.method === "project.list") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            ok: true,
+            result: {
+              projects: [
+                { id: 1, name: "First" },
+                { id: 2, name: "Second" },
+                { id: 3, name: "Third" }
+              ]
+            }
+          })
+        );
+        return;
+      }
+
+      activeTaskRequests += 1;
+      maxActiveTaskRequests = Math.max(maxActiveTaskRequests, activeTaskRequests);
+      setTimeout(() => {
+        activeTaskRequests -= 1;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            ok: true,
+            result: {
+              tasks: [
+                {
+                  id: rpc.params.projectId,
+                  project_id: rpc.params.projectId,
+                  state: "pending",
+                  content: `Task ${rpc.params.projectId}`,
+                  updated_at: "2026-09-03T00:00:00Z"
+                }
+              ],
+              total: 1
+            }
+          })
+        );
+      }, 15);
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const { stdout } = await execFileAsync(process.execPath, ["scripts/workshop-desktop-cli.mjs", "task", "list", "--json"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        WORKSHOP_DESKTOP_SERVER_PORT: String(address.port),
+        WORKSHOP_DESKTOP_SERVER_TOKEN: "test-token"
+      }
+    });
+    assert.equal(maxActiveTaskRequests, 1);
+    assert.deepEqual(
+      JSON.parse(stdout).tasks.map((task) => task.id),
+      [1, 2, 3]
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("Workshop CLI resolves task assignee and optional tags before requesting confirmation", async () => {
+  const calls = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => {
+      const rpc = JSON.parse(body);
+      calls.push({ authorization: request.headers.authorization, rpc });
+      const result =
+        rpc.method === "task.creationContext"
+          ? {
+              project: {
+                id: 98,
+                name: "workshop-desktop",
+                members: [{ user_id: 7, username: "Ada", role: "member", is_me: true }]
+              },
+              currentUserId: 7,
+              tags: [
+                { id: 3, project_id: 98, name: "Bug", created_at: "", updated_at: "" },
+                { id: 5, project_id: 98, name: "需求", created_at: "", updated_at: "" }
+              ]
+            }
+          : { request: { requestId: "request-1", status: "pending" }, proposal: rpc.params };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, result }));
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "scripts/workshop-desktop-cli.mjs",
+        "task",
+        "create",
+        "修复登录",
+        "--project-id",
+        "98",
+        "--assignee",
+        "me",
+        "--tags",
+        "Bug,需求",
+        "--json"
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          WORKSHOP_DESKTOP_SERVER_PORT: String(address.port),
+          WORKSHOP_DESKTOP_SERVER_TOKEN: "test-token"
+        }
+      }
+    );
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].authorization, "Bearer test-token");
+    assert.equal(calls[0].rpc.method, "task.creationContext");
+    assert.deepEqual(calls[1].rpc, {
+      method: "task.create.request",
+      params: {
+        projectId: 98,
+        content: "修复登录",
+        executorId: 7,
+        tagIds: [3, 5],
+        state: "pending"
+      }
+    });
+    assert.equal(JSON.parse(stdout).request.requestId, "request-1");
+
+    const { stdout: untaggedStdout } = await execFileAsync(
+      process.execPath,
+      [
+        "scripts/workshop-desktop-cli.mjs",
+        "task",
+        "create",
+        "整理验收反馈",
+        "--project-id",
+        "98",
+        "--assignee",
+        "me",
+        "--json"
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          WORKSHOP_DESKTOP_SERVER_PORT: String(address.port),
+          WORKSHOP_DESKTOP_SERVER_TOKEN: "test-token"
+        }
+      }
+    );
+    assert.equal(calls.length, 4);
+    assert.equal(calls[2].rpc.method, "task.creationContext");
+    assert.deepEqual(calls[3].rpc, {
+      method: "task.create.request",
+      params: {
+        projectId: 98,
+        content: "整理验收反馈",
+        executorId: 7,
+        tagIds: [],
+        state: "pending"
+      }
+    });
+    assert.equal(JSON.parse(untaggedStdout).request.requestId, "request-1");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("packaged app carries and auto-installs the Workshop CLI shim", async () => {
@@ -431,7 +642,7 @@ test("PersonalRecordStore keeps one visible record per task and preserves origin
   });
 });
 
-test("WorkshopApiService builds allowlisted task requests", async (t) => {
+test("WorkshopApiService builds allowlisted task and tag requests", async (t) => {
   const { calls, service } = mockWorkshopApi(t, () =>
     jsonResponse({
       success: true,
@@ -445,6 +656,9 @@ test("WorkshopApiService builds allowlisted task requests", async (t) => {
   const response = await service.listTasks({
     projectId: 42,
     states: ["pending", "completed"],
+    query: "login",
+    executorIds: [7],
+    tagIds: [3, 5],
     pageSize: 999
   });
 
@@ -454,9 +668,17 @@ test("WorkshopApiService builds allowlisted task requests", async (t) => {
   assert.equal(`${url.origin}${url.pathname}`, "https://api.example.test/workshop/v1/user/tasks");
   assert.equal(url.searchParams.get("project_id"), "42");
   assert.deepEqual(url.searchParams.getAll("state"), ["pending", "completed"]);
+  assert.equal(url.searchParams.get("search_key"), "login");
+  assert.deepEqual(url.searchParams.getAll("executor_id"), ["7"]);
+  assert.deepEqual(url.searchParams.getAll("tags"), ["3", "5"]);
   assert.equal(url.searchParams.get("page_size"), "500");
   assert.equal(calls[0].options.method, "GET");
   assert.equal(calls[0].options.headers.Authorization, "Bearer access-token");
+
+  await service.listProjectTags({ projectId: 42, pageSize: 120 });
+  const tagUrl = new URL(calls[1].url);
+  assert.equal(`${tagUrl.origin}${tagUrl.pathname}`, "https://api.example.test/workshop/v1/user/projects/42/tags");
+  assert.equal(tagUrl.searchParams.get("page_size"), "120");
 });
 
 test("WorkshopApiService refreshes Nebula token before user requests", async (t) => {
@@ -506,7 +728,7 @@ test("WorkshopApiService refreshes Nebula token before user requests", async (t)
   assert.equal(saves[0].refreshToken, "fresh-refresh");
 });
 
-test("WorkshopApiService validates task creation before network calls", (t) => {
+test("WorkshopApiService validates and serializes task creation", async (t) => {
   const { calls, service } = mockWorkshopApi(t, () =>
     jsonResponse({
       success: true,
@@ -515,5 +737,41 @@ test("WorkshopApiService validates task creation before network calls", (t) => {
   );
 
   assert.throws(() => service.createTask({ projectId: 42, content: "   " }), /任务内容不能为空/);
+  assert.throws(
+    () => service.createTask({ projectId: 42, content: "Fix login", executorId: 0, tagIds: [3] }),
+    /负责人 无效/
+  );
   assert.equal(calls.length, 0);
+
+  const untaggedResponse = await service.createTask({
+    projectId: 42,
+    content: " Fix login without tags ",
+    executorId: 7,
+    tagIds: []
+  });
+  assert.equal(untaggedResponse.ok, true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    project_id: 42,
+    content: "Fix login without tags",
+    executor_id: 7,
+    state: "pending"
+  });
+
+  const response = await service.createTask({
+    projectId: 42,
+    content: " Fix login ",
+    executorId: 7,
+    tagIds: [3, 5, 3],
+    state: "pending"
+  });
+  assert.equal(response.ok, true);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    project_id: 42,
+    content: "Fix login",
+    executor_id: 7,
+    tags: "3,5",
+    state: "pending"
+  });
 });

@@ -13,8 +13,11 @@
 - `docs/decisions.md`
 - 当任务涉及产品术语、记录、项目、任务或任务状态时，读取 `docs/domain.md`
 - 当任务涉及应用资产、打包、发布、GitHub Release、签名、公证或自动更新时，读取 `docs/release.md`
+- 当任务涉及 Workshop 后端 API、网页端、独立 Todo CLI 或跨客户端升级时，读取 `docs/architecture.md` 的关联系统边界，并检查同级 `../workshop-todo`、`../workshop-todo-website`、`../workshop-todo-cli` 仓库（存在时）的当前代码和各自 `AGENTS.md`
 
 然后再检查本次请求相关的代码路径。代码是当前运行时事实；文档负责解释意图和约束。如果代码和文档冲突，先核实现有运行行为，并指出可能过期的文档。
+
+完成最小上下文读取后，每次开发任务都检查主要依赖 `../workshop-todo` 的远端新提交：仓库存在且工作树可访问时，执行 `git -C ../workshop-todo fetch --prune origin`，再比较 `HEAD...origin/main`。这一步只更新远端引用，不自动 pull、merge、rebase 或修改后端工作树；发现落后时先报告提交范围和对本任务的影响。网络不可用或仓库不存在时说明证据缺口，但不阻塞纯本地任务。
 
 ## 执行规则
 
@@ -25,6 +28,8 @@
 - 发布文档使用 `docs/release.md` 独立维护。应用资产如果影响安装包、Release 展示、签名/公证、自动更新或分发说明，也应同步更新 `docs/release.md`。
 - 短期执行记录优先放在任务系统或当前对话中；只有成为长期项目事实后，才进入 repo 文档。
 - 需要把任务沉淀写入应用时，应优先调用本地 app server/CLI；不要把直接修改 `userData` 文件当作正式能力。
+- 修改 Workshop 共享任务、项目、认证、响应或分页契约时，必须同时评估后端、网页端、Desktop 和独立 Todo CLI；保持后端向后兼容并按 `docs/testing.md` 做跨仓库验证。
+- 不要混淆两个 CLI：`workshop-todo-cli` 发布的 `todo` 直接访问远端任务系统，本 repo 发布的 `workshop` / `workshop-desktop` 只访问正在运行的 Desktop 本地 app server。
 
 ## AI 记录边界
 
@@ -51,7 +56,7 @@ AI 创建记录时默认使用短记录。记录面向人类后续阅读和编�
 
 ## AI 记录方式
 
-正式记录必须通过正在运行的 Workshop Desktop app server/CLI 创建。优先使用自定义 CLI `workshop`（`workshop-desktop` 是同一入口的别名），不要依赖 `npx --yes pnpm app:*` 参数转发作为正式入口。新增记录可直接使用 `record.create`；编辑记录正文或创建任务必须先用 `confirmation.request` 打开 Workshop 临时确认页，用户确认后由 Workshop 执行动作。把任务或记录发送给 Codex 执行时，应通过 Workshop Desktop 的 `codex.send` 服务层能力，不要让客户端直接打开 Terminal。
+正式记录必须通过正在运行的 Workshop Desktop app server/CLI 创建。优先使用自定义 CLI `workshop`（`workshop-desktop` 是同一入口的别名），不要依赖 `npx --yes pnpm app:*` 参数转发作为正式入口。新增记录可直接使用 `record.create`；编辑记录正文或通用高风险动作使用 `confirmation.request`。创建任务优先使用 `workshop task create` 提交包含项目、负责人和可选标签的标准提议，由 Workshop 打开可信确认页并在用户确认后执行。把任务或记录发送给 Codex 执行时，应通过 Workshop Desktop 的 `codex.send` 服务层能力，不要让客户端直接打开 Terminal。
 
 本 repo 的 Workshop 项目 ID 是 `98`，项目名是 `workshop-desktop`。创建项目记录时使用：
 
@@ -86,7 +91,7 @@ workshop record get --id <record-id> --json
 当环境变量 `WORKSHOP_DESKTOP_SERVER_PORT` 和 `WORKSHOP_DESKTOP_SERVER_TOKEN` 存在时，本次执行由 Workshop Desktop 派发。派发不附带额外说明：执行内容就是用户消息本身，项目 ID 用上文声明的本 repo Workshop 项目 ID，运行与任务/记录的关联由 Workshop Desktop 的运行状态表持有。此时适用：
 
 - 回写遵循上文 AI 记录边界与密度规则，方式优先用上文 CLI（它会自动使用这两个环境变量）；无法使用 CLI 时，直接 `POST http://127.0.0.1:${WORKSHOP_DESKTOP_SERVER_PORT}/rpc`，请求头 `Authorization: Bearer ${WORKSHOP_DESKTOP_SERVER_TOKEN}`，请求体 `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<正文>","scopeType":"project","projectId":98}}`。
-- 派发注入的 token 仅允许 `record.create`（回写）与 `record.search`（取用，只读），不要尝试其他方法。
+- 派发注入的 token 允许 `record.create`、`record.search`，以及当前活跃运行项目范围内的 `task.list`、`task.get`、`task.creationContext` 和 `task.create.request`。任务写入只能提交确认请求；不要尝试直接创建、修改、删除任务，也不要调用 `context.current`、通用 `confirmation.request` 或 `codex.send`。
 
 ## 发布与自动更新流程
 

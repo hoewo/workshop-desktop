@@ -84,9 +84,37 @@ npx --yes pnpm run test:main
 当前覆盖：
 
 - 本地个人记录 store 的并发写入串行化、任务记录去重和删除。
-- Workshop API 服务层的 allowlist 请求构造、token 刷新和创建任务输入校验。
+- Workshop API 服务层的 allowlist 请求构造、token 刷新、任务筛选、项目标签读取和统一创建任务输入校验。
+- app server 对专用任务创建提议、受限 agent 项目作用域和通用确认能力隔离的静态边界。
+- `workshop task create` 对负责人、可选标签名的解析，以及向 app server 提交标准 `pending` 创建提议的本地集成链路。
 
 提交前检查会自动运行这些 smoke tests。
+
+## 开发任务启动时的后台新提交检查
+
+`workshop-todo` 是 Desktop 的主要远端业务依赖。每次开发任务读取完最小上下文后，如果同级后台仓库存在，先执行只读远端同步并比较本地与远端：
+
+```bash
+git -C ../workshop-todo fetch --prune origin
+git -C ../workshop-todo rev-list --left-right --count HEAD...origin/main
+```
+
+`fetch` 只用于发现新提交，不代表当前开发任务应自动升级后台。发现本地落后时，先审查提交和共享契约影响；只有用户明确要求或当前任务本身包含后台同步时，才在确认工作树干净后使用 `git pull --ff-only`。网络检查失败不应阻塞只涉及 Desktop 本地能力的工作。
+
+## 跨仓库兼容性验证
+
+涉及 Workshop 共享项目、任务、成员、认证、响应 envelope、分页或实时事件契约时，不能只验证 Desktop。若四个仓库位于同级目录，至少运行：
+
+```bash
+(cd ../workshop-todo && go test ./...)
+(cd ../workshop-todo-cli && go test ./...)
+(cd ../workshop-todo-website/frontend && npm ci && npm run build:check)
+bash scripts/pre-commit-check.sh
+```
+
+当前后端 `go test ./...` 会运行单元测试，但依赖 PostgreSQL 的迁移、事务、持久化事件与实时链路测试在未配置 `WORKSHOP_TEST_POSTGRES_DSN` 时会跳过，因此仍不能替代真实数据库、网关和权限场景的 API 验证。共享契约升级在发布前还需使用同一测试账号和项目完成最小端到端验证，至少覆盖登录/刷新、项目与任务列表分页、任务创建与状态流转、成员权限以及错误响应。
+
+发布顺序默认是：先发布向后兼容的后端，再升级网页端、独立 `todo` CLI 和 Desktop；确认消费者完成迁移后，才允许删除旧字段、旧状态或旧行为。纯客户端能力可以独立发布，但不得预设尚未上线的后端契约。
 
 ## 本地 AI Bridge 验证
 
@@ -118,7 +146,10 @@ workshop record get --id <record-id> --json
 workshop record open --id <record-id>
 workshop record annotate --annotations-file ./annotations.json --json
 workshop project list
+workshop project members --project-id 98 --json
+workshop project tags --project-id 98 --json
 workshop task list --project-id 98
+workshop task get --project-id 98 --id <task-id> --json
 workshop context current --json
 ```
 
@@ -130,6 +161,24 @@ workshop context current --json
 - 标注命令通过 app server 更新记录 metadata，不改写记录正文。
 - 当前上下文命令返回最近聚焦的 Workshop 窗口对象；如果长时间未切换焦点，结果可标记为 `stale`。
 - 任务读取要求桌面端已有有效登录配置。
+
+统一任务创建验证：
+
+```bash
+workshop task create "验证统一任务创建" --project-id 98 --assignee me --tags Bug --json
+```
+
+预期结果：
+
+- CLI 先按项目解析负责人和可选标签；缺少负责人或已选标签不属于项目时拒绝提交，省略标签时提交空标签集合。
+- CLI 返回 `requestId` 和待确认状态，不直接创建任务。
+- Desktop 打开由自身模板生成的确认页；确认后以 `pending` 状态创建任务，取消或关闭时不写入。
+- 首页直接创建与记录“转为待办”使用同一个创建面板；均要求负责人，标签可选。记录只在任务成功创建后标记为已转任务。
+- 记录窗口打开创建面板时扩展为完整表单尺寸，关闭或创建完成后恢复原窗口宽度。
+- 首页提供明确的任务列表入口；首页与跨项目 CLI 查询均采用受控低并发同步，标签按需读取，单个项目失败时保留其余项目和上次成功结果。
+- 可分别使用 Bug、技术方案评审、需求、想法等项目标签验证场景筛选；标签不改变任务状态语义。
+- 已选标签在首页、任务列表和任务详情中均可见；紧凑列表最多显示两个标签并提示剩余数量。
+- CLI/AI 确认创建任务后，已打开的首页和任务窗口无需手动刷新即可显示新任务。
 
 临时确认窗口验证：
 

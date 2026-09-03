@@ -1,6 +1,7 @@
 import {
   CircleHelp,
   Download,
+  ListTodo,
   LoaderCircle,
   NotebookPen,
   Plus,
@@ -23,6 +24,7 @@ import {
   type ProjectTodoGroup
 } from "../../lib/tasks";
 import { LocalProjectContextMenu, type LocalProjectContextMenuState } from "../LocalProjectContextMenu";
+import { TaskTagChips } from "../TaskViews";
 import { WorkshopMark } from "../WorkshopMark";
 
 function handleKeyboardAction(event: KeyboardEvent<HTMLElement>, action: () => void) {
@@ -47,11 +49,13 @@ export function HomeSurface({
   projectLocalDirectories,
   projectTodoGroups,
   recentTasks,
+  taskMessage,
   updateStatus,
   loadData,
   hideProjectTaskPreview,
   onOpenManual,
   onOpenCreateLocalProject,
+  onOpenCreateTask,
   onOpenPersonalRecords,
   onOpenSettings,
   onOpenSticky,
@@ -77,11 +81,13 @@ export function HomeSurface({
   projectLocalDirectories: Record<string, string>;
   projectTodoGroups: ProjectTodoGroup[];
   recentTasks: EnrichedTask[];
+  taskMessage: string;
   updateStatus: AppUpdateStatus | null;
   loadData: () => void;
   hideProjectTaskPreview: () => void;
   onOpenManual: () => void;
   onOpenCreateLocalProject: () => void;
+  onOpenCreateTask: () => void;
   onOpenPersonalRecords: () => void;
   onOpenSettings: () => void;
   onOpenSticky: () => void;
@@ -136,6 +142,13 @@ export function HomeSurface({
         <div className="notice" role="alert">
           <WifiOff size={16} />
           <span>{error}</span>
+        </div>
+      ) : null}
+
+      {!error && taskMessage ? (
+        <div className="notice success" role="status">
+          <ShieldCheck size={16} />
+          <span>{taskMessage}</span>
         </div>
       ) : null}
 
@@ -331,7 +344,22 @@ export function HomeSurface({
           <div className="home-panel-head">
             <div>
               <span className="eyebrow">Tasks</span>
-              <h2>Workshop 任务源</h2>
+              <h2>任务列表</h2>
+            </div>
+            <div className="home-panel-head-actions">
+              <button type="button" className="secondary-button compact-command" onClick={onOpenSticky}>
+                <ListTodo size={15} />
+                <span>查看全部</span>
+              </button>
+              <button
+                type="button"
+                className="secondary-button compact-command"
+                onClick={onOpenCreateTask}
+                disabled={!isRemoteConnected || projectTodoGroups.length === 0}
+              >
+                <Plus size={15} />
+                <span>创建待办</span>
+              </button>
             </div>
           </div>
 
@@ -350,6 +378,7 @@ export function HomeSurface({
                   <span>
                     {task.projectName} · {stateLabels[task.state]} · {formatRelative(task.updated_at)}
                   </span>
+                  <TaskTagChips tags={task.resolvedTags} compact maxVisible={2} />
                 </div>
               </article>
             ))}
@@ -379,7 +408,7 @@ export function HomeSurface({
             </button>
             <button type="button" onClick={onOpenSticky}>
               <StickyNote size={17} />
-              <span>桌面便签</span>
+              <span>任务列表</span>
             </button>
           </section>
 

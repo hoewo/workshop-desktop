@@ -4,6 +4,7 @@ import type {
   AppConfig,
   AppUpdateStatus,
   CodexRunMeta,
+  CreateTaskRequest,
   CurrentUserPayload,
   LocalProject,
   Organization,
@@ -15,6 +16,7 @@ import type {
   PersonalRecordStatus,
   PersonalRecordTarget,
   Project,
+  ProjectTag,
   ProjectsPayload,
   Task,
   TaskState,
@@ -33,6 +35,7 @@ import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { StickyLoginRequiredSurface, StickySurface } from "./components/surfaces/StickySurface";
 import { TraySurface } from "./components/surfaces/TraySurface";
 import { UpdateSurface } from "./components/surfaces/UpdateSurface";
+import { TaskComposer } from "./components/TaskComposer";
 import { useKeyedCompletionFeedback, useSingleCompletionFeedback } from "./hooks/useCompletionFeedback";
 import { useFocusPulse } from "./hooks/useFocusPulse";
 import {
@@ -66,6 +69,7 @@ import {
   getStickyHeader,
   isVisibleTask,
   mergeProjects,
+  resolveTaskTags,
   stateLabels,
   taskListStates,
   taskCompleteAnimationMs,
@@ -76,7 +80,15 @@ import {
 import { readShellContentHeight, readTextareaHeightForFit } from "./lib/windowFit";
 
 // 同步数据时按项目/组织扇出的远程请求并发上限，避免一次性打满后端触发限流（RATE_LIMIT_EXCEEDED）
-const LOAD_DATA_CONCURRENCY = 3;
+const LOAD_DATA_CONCURRENCY = 1;
+
+interface TaskComposerState {
+  sessionId: string;
+  projectId?: number;
+  content: string;
+  lockProject?: boolean;
+  sourceRecord?: PersonalRecord;
+}
 
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -100,7 +112,12 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [draftConfig, setDraftConfig] = useState<AppConfig | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectTags, setProjectTags] = useState<Map<number, ProjectTag[]>>(new Map());
+  const [loadingProjectTagIds, setLoadingProjectTagIds] = useState<Set<number>>(new Set());
   const [tasks, setTasks] = useState<EnrichedTask[]>([]);
+  const projectTagsRef = useRef<Map<number, ProjectTag[]>>(new Map());
+  const projectTagRequestsRef = useRef<Map<number, Promise<ProjectTag[]>>>(new Map());
+  const tasksRef = useRef<EnrichedTask[]>([]);
   const [projectFilter] = useState(getInitialProjectFilter);
   const [taskFilter] = useState(getInitialTaskFilter);
   const [isLoading, setIsLoading] = useState(false);
@@ -127,6 +144,9 @@ export default function App() {
   const [isRenamingLocalProject, setIsRenamingLocalProject] = useState(false);
   const [linkLocalProjectTarget, setLinkLocalProjectTarget] = useState<LocalProject | null>(null);
   const [isLinkingLocalProject, setIsLinkingLocalProject] = useState(false);
+  const [taskComposer, setTaskComposer] = useState<TaskComposerState | null>(null);
+  const [taskComposerError, setTaskComposerError] = useState("");
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
   useEffect(() => {
     if (surface !== "tray" && surface !== "home") {
@@ -239,6 +259,7 @@ export default function App() {
   const arrangementHeightTimerRef = useRef<number | null>(null);
   const arrangementMaxHeightRef = useRef<number | null>(null);
   const lastWindowFitRef = useRef("");
+  const recordWindowWidthBeforeComposerRef = useRef<number | null>(null);
   const activeRecordRef = useRef<PersonalRecord | null>(null);
   const recordBodyRef = useRef("");
   const recordDirtyRef = useRef(false);
@@ -267,6 +288,10 @@ export default function App() {
   useEffect(() => {
     taskNoteDirtyRef.current = taskNoteDirty;
   }, [taskNoteDirty]);
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   useEffect(() => {
     return () => {
@@ -332,10 +357,50 @@ export default function App() {
     [isSingleTaskSticky, surface]
   );
 
+  const rememberProjectTags = useCallback((projectId: number, tags: ProjectTag[]) => {
+    setProjectTags((current) => {
+      const next = new Map(current);
+      next.set(projectId, tags);
+      projectTagsRef.current = next;
+      return next;
+    });
+    return tags;
+  }, []);
+
+  const loadProjectTags = useCallback(
+    (projectId: number, force = false) => {
+      if (!force && projectTagsRef.current.has(projectId)) {
+        return Promise.resolve(projectTagsRef.current.get(projectId) ?? []);
+      }
+      const inFlight = projectTagRequestsRef.current.get(projectId);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      setLoadingProjectTagIds((current) => new Set(current).add(projectId));
+      const request = apiData<ProjectTag[]>(window.workshopDesktop.listProjectTags({ projectId, pageSize: 200 }))
+        .then((payload) => rememberProjectTags(projectId, extractList<ProjectTag>(payload, "tags").filter((tag) => !tag.deleted_at)))
+        .finally(() => {
+          projectTagRequestsRef.current.delete(projectId);
+          setLoadingProjectTagIds((current) => {
+            const next = new Set(current);
+            next.delete(projectId);
+            return next;
+          });
+        });
+      projectTagRequestsRef.current.set(projectId, request);
+      return request;
+    },
+    [rememberProjectTags]
+  );
+
   const loadData = useCallback(async () => {
     if (!config || !isLoggedIn(config)) {
       setProjects([]);
+      setProjectTags(new Map());
+      projectTagsRef.current = new Map();
       setTasks([]);
+      tasksRef.current = [];
       return;
     }
 
@@ -351,44 +416,91 @@ export default function App() {
       const standaloneProjects = extractList<Project>(standaloneProjectPayload, "projects");
       const organizationsPayload = await apiData<OrganizationsPayload | Organization[]>(window.workshopDesktop.listOrganizations());
       const organizations = extractList<Organization>(organizationsPayload, "organizations");
-      const organizationProjectGroups = await mapWithConcurrency(organizations, LOAD_DATA_CONCURRENCY, async (organization) => {
-        const payload = await apiData<ProjectsPayload | Project[]>(
-          window.workshopDesktop.listProjects({
-            organizationId: organization.id,
-            pageSize: 200
-          })
-        );
-        return extractList<Project>(payload, "projects").map((project) => withOrganization(project, organization));
+      const organizationProjectResults = await mapWithConcurrency(organizations, LOAD_DATA_CONCURRENCY, async (organization) => {
+        try {
+          const payload = await apiData<ProjectsPayload | Project[]>(
+            window.workshopDesktop.listProjects({
+              organizationId: organization.id,
+              pageSize: 200
+            })
+          );
+          return {
+            failed: false,
+            projects: extractList<Project>(payload, "projects").map((project) => withOrganization(project, organization))
+          };
+        } catch {
+          return { failed: true, projects: [] as Project[] };
+        }
       });
-      const nextProjects = mergeProjects([standaloneProjects, ...organizationProjectGroups]);
+      const nextProjects = mergeProjects([standaloneProjects, ...organizationProjectResults.map((result) => result.projects)]);
       setProjects(nextProjects);
 
-      const taskGroups = await mapWithConcurrency(nextProjects, LOAD_DATA_CONCURRENCY, async (project) => {
-        const payload = await apiData<TasksPayload | Task[]>(
-          window.workshopDesktop.listTasks({
-            projectId: project.id,
-            states: taskListStates,
-            pageSize: 200
-          })
-        );
+      const projectTaskData = await mapWithConcurrency(nextProjects, LOAD_DATA_CONCURRENCY, async (project) => {
+        const cachedTags = projectTagsRef.current.get(project.id) ?? [];
+        try {
+          const payload = await apiData<TasksPayload | Task[]>(
+            window.workshopDesktop.listTasks({
+              projectId: project.id,
+              states: taskListStates,
+              pageSize: 200
+            })
+          );
+          const rawTasks = extractList<Task>(payload, "tasks");
+          let tags = cachedTags;
+          let tagSyncFailed = false;
+          if (rawTasks.some((task) => Boolean(task.tags?.trim()))) {
+            try {
+              tags = await loadProjectTags(project.id, true);
+            } catch {
+              tagSyncFailed = true;
+            }
+          }
 
-        const meId = getMeId(project, currentUser?.username || config.username);
-        const projectLabel = getProjectDisplayName(project);
-        return extractList<Task>(payload, "tasks").map<EnrichedTask>((task) => ({
-          ...task,
-          projectName: projectLabel,
-          meId,
-          isMine: task.creator_id === meId || task.executor_id === meId
-        }));
+          const meId = getMeId(project, currentUser?.username || config.username);
+          const projectLabel = getProjectDisplayName(project);
+          return {
+            projectId: project.id,
+            taskSyncFailed: false,
+            tagSyncFailed,
+            tasks: rawTasks.map<EnrichedTask>((task) => ({
+              ...task,
+              projectName: projectLabel,
+              meId,
+              isMine: task.creator_id === meId || task.executor_id === meId,
+              resolvedTags: resolveTaskTags(task.tags, tags)
+            }))
+          };
+        } catch {
+          return {
+            projectId: project.id,
+            taskSyncFailed: true,
+            tagSyncFailed: false,
+            tasks: tasksRef.current.filter((task) => task.project_id === project.id)
+          };
+        }
       });
 
-      setTasks(taskGroups.flat().sort(compareTasks));
+      const nextTasks = projectTaskData.flatMap((item) => item.tasks).sort(compareTasks);
+      tasksRef.current = nextTasks;
+      setTasks(nextTasks);
+
+      const failedOrganizationCount = organizationProjectResults.filter((result) => result.failed).length;
+      const failedTaskProjectCount = projectTaskData.filter((item) => item.taskSyncFailed).length;
+      const failedTagProjectCount = projectTaskData.filter((item) => item.tagSyncFailed).length;
+      const warnings = [
+        failedOrganizationCount > 0 ? `${failedOrganizationCount} 个组织项目未同步` : "",
+        failedTaskProjectCount > 0 ? `${failedTaskProjectCount} 个项目的任务未同步` : "",
+        failedTagProjectCount > 0 ? `${failedTagProjectCount} 个项目的标签未同步` : ""
+      ].filter(Boolean);
+      if (warnings.length > 0) {
+        setError(`${warnings.join("；")}。已保留成功加载的任务，请稍后刷新。`);
+      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "同步失败");
     } finally {
       setIsLoading(false);
     }
-  }, [config]);
+  }, [config, loadProjectTags]);
 
   const applyTaskStateChange = useCallback(
     (notice: TaskStateChangeNotice) => {
@@ -704,8 +816,14 @@ export default function App() {
   useEffect(
     () =>
       window.workshopDesktop.onRefresh((event) => {
+        // 新建任务会改变列表成员和汇总数量，需要重新拉取完整数据
+        if (event?.reason === "task-created") {
+          void loadData();
+          return;
+        }
+
         // 任务状态变更只做本地乐观更新（多窗口同步），不触发全量网络刷新
-        if (event?.task) {
+        if (event?.reason === "task-state" && event.task) {
           applyTaskStateChange(event.task);
           return;
         }
@@ -770,6 +888,11 @@ export default function App() {
     }
 
     const isRecordDetail = surface === "record" && Boolean(activeRecord);
+    const isRecordTaskComposerOpen = surface === "record" && Boolean(taskComposer);
+    if (isRecordTaskComposerOpen && recordWindowWidthBeforeComposerRef.current === null) {
+      recordWindowWidthBeforeComposerRef.current = window.innerWidth;
+    }
+    const restoreRecordWidth = !isRecordTaskComposerOpen ? recordWindowWidthBeforeComposerRef.current : null;
     const isDetailWindow = (surface === "sticky" && isSingleTaskSticky) || isRecordDetail;
     const isCollapsedList =
       (surface === "sticky" && stickyListCollapsed && !isSingleTaskSticky) || (surface === "record" && recordListCollapsed && !activeRecord);
@@ -790,18 +913,31 @@ export default function App() {
         const maxHeight = arrangementMaxHeightRef.current
           ? Math.min(baseMaxHeight, Math.max(minHeight, arrangementMaxHeightRef.current))
           : baseMaxHeight;
-        const request: WindowFitRequest = {
-          height: contentHeight,
-          minWidth: surface === "record" ? 320 : 300,
-          minHeight,
-          maxHeight
-        };
+        const request: WindowFitRequest = isRecordTaskComposerOpen
+          ? {
+              width: 560,
+              height: Math.max(contentHeight, 600),
+              minWidth: 520,
+              minHeight: 520,
+              maxWidth: 680,
+              maxHeight: 720
+            }
+          : {
+              ...(restoreRecordWidth !== null ? { width: restoreRecordWidth } : {}),
+              height: contentHeight,
+              minWidth: surface === "record" ? 320 : 300,
+              minHeight,
+              maxHeight
+            };
         const requestKey = JSON.stringify(request);
         if (requestKey === lastWindowFitRef.current) {
           return;
         }
         lastWindowFitRef.current = requestKey;
         void window.workshopDesktop.fitWindowContent(request);
+        if (!isRecordTaskComposerOpen && restoreRecordWidth !== null) {
+          recordWindowWidthBeforeComposerRef.current = null;
+        }
       });
     }
 
@@ -828,6 +964,7 @@ export default function App() {
     records,
     stickyListCollapsed,
     surface,
+    taskComposer,
     taskNoteBody,
     tasks
   ]);
@@ -1479,6 +1616,26 @@ export default function App() {
     }
   }
 
+  function handleComposerProjectChange(projectId: number) {
+    setTaskComposerError("");
+    void loadProjectTags(projectId).catch(() => {
+      setTaskComposerError("标签暂未加载，可不选标签直接创建；稍后重开可重试。");
+    });
+  }
+
+  function openDirectTaskComposer(projectId?: number) {
+    const nextProjectId = projectId ?? projects[0]?.id;
+    setTaskComposerError("");
+    setTaskComposer({
+      sessionId: crypto.randomUUID(),
+      projectId: nextProjectId,
+      content: ""
+    });
+    if (nextProjectId) {
+      handleComposerProjectChange(nextProjectId);
+    }
+  }
+
   async function createTaskFromRecord() {
     const saved = recordDirtyRef.current ? await saveRecordNow() : activeRecordRef.current;
     if (!saved?.projectId) {
@@ -1487,35 +1644,53 @@ export default function App() {
     }
 
     setRecordMessage("");
+    setTaskComposerError("");
+    setTaskComposer({
+      sessionId: crypto.randomUUID(),
+      projectId: saved.projectId,
+      content: deriveRecordTitle(recordBodyRef.current, saved.title),
+      lockProject: true,
+      sourceRecord: saved
+    });
+    handleComposerProjectChange(saved.projectId);
+  }
+
+  async function submitTaskCreation(request: CreateTaskRequest) {
+    const sourceRecord = taskComposer?.sourceRecord;
+    setTaskComposerError("");
+    setIsCreatingTask(true);
+
+    let createdTask: Task;
     try {
-      const createdTask = await apiData<Task>(window.workshopDesktop.createTask({
-        projectId: saved.projectId,
-        content: deriveRecordTitle(recordBodyRef.current, saved.title)
-      }));
-      if (saved.id) {
-        await window.workshopDesktop.savePersonalRecord({
-          id: saved.id,
-          bodyMarkdown: saved.bodyMarkdown,
-          scopeType: saved.scopeType,
-          status: "promoted",
-          localProjectId: saved.localProjectId,
-          projectId: saved.projectId,
-          projectName: saved.projectName,
-          taskId: saved.taskId,
-          taskTitle: saved.taskTitle,
-          promotedTaskId: createdTask.id
-        });
-      }
+      createdTask = await apiData<Task>(window.workshopDesktop.createTask(request));
+    } catch (nextError) {
+      setTaskComposerError(nextError instanceof Error ? nextError.message : "创建待办失败");
+      setIsCreatingTask(false);
+      return;
+    }
 
-      const now = new Date().toISOString();
-      await window.workshopDesktop.notifyTaskChanged({
-        id: createdTask.id,
-        projectId: createdTask.project_id,
-        state: createdTask.state,
-        updatedAt: createdTask.updated_at || now,
-        completionAt: createdTask.completion_at ?? null
+    setTaskComposer(null);
+    setIsCreatingTask(false);
+    await loadData();
+
+    if (!sourceRecord?.id) {
+      setTaskMessage(`已创建待办：${createdTask.content}`);
+      return;
+    }
+
+    try {
+      await window.workshopDesktop.savePersonalRecord({
+        id: sourceRecord.id,
+        bodyMarkdown: sourceRecord.bodyMarkdown,
+        scopeType: sourceRecord.scopeType,
+        status: "promoted",
+        localProjectId: sourceRecord.localProjectId,
+        projectId: sourceRecord.projectId,
+        projectName: sourceRecord.projectName,
+        taskId: sourceRecord.taskId,
+        taskTitle: sourceRecord.taskTitle,
+        promotedTaskId: createdTask.id
       });
-
       setRecordMessage("");
       await loadRecords();
       await window.workshopDesktop.openSticky({
@@ -1524,7 +1699,9 @@ export default function App() {
       });
       await window.workshopDesktop.closeWindow();
     } catch (nextError) {
-      setRecordMessage(nextError instanceof Error ? nextError.message : "转任务失败");
+      setRecordMessage(
+        `待办已创建（#${createdTask.id}），但记录状态更新失败：${nextError instanceof Error ? nextError.message : "未知错误"}`
+      );
     }
   }
 
@@ -2085,6 +2262,28 @@ export default function App() {
         </section>
       </div>
     ) : null;
+  const taskComposerDialog = taskComposer ? (
+    <TaskComposer
+      key={taskComposer.sessionId}
+      busy={isCreatingTask}
+      currentUsername={config?.username}
+      error={taskComposerError}
+      initialContent={taskComposer.content}
+      initialProjectId={taskComposer.projectId}
+      lockProject={taskComposer.lockProject}
+      loadingProjectTagIds={loadingProjectTagIds}
+      projects={projects}
+      projectTags={projectTags}
+      onCancel={() => {
+        if (!isCreatingTask) {
+          setTaskComposer(null);
+          setTaskComposerError("");
+        }
+      }}
+      onProjectChange={handleComposerProjectChange}
+      onSubmit={(request) => void submitTaskCreation(request)}
+    />
+  ) : null;
 
   if (!config || !draftConfig) {
     return (
@@ -2148,7 +2347,8 @@ export default function App() {
     const isRecordSearchExpanded = recordSearchOpen || hasRecordSearchQuery;
 
     return (
-      <RecordSurface
+      <>
+        <RecordSurface
         activeRecord={activeRecord}
         archiveActiveRecord={() => void archiveActiveRecord()}
         archiveRecord={(record) => void archiveRecord(record)}
@@ -2198,7 +2398,9 @@ export default function App() {
         setRecordSearchQuery={setRecordSearchQuery}
         visibleRecords={visibleRecords}
         windowFocusClass={noteWindowFocusClass}
-      />
+        />
+        {taskComposerDialog}
+      </>
     );
   }
 
@@ -2252,6 +2454,7 @@ export default function App() {
         <HomeSurface
           codexRuns={codexRuns}
           error={error}
+          taskMessage={taskMessage}
           hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
           isLoading={isLoading}
           isRemoteConnected={isLoggedIn(config)}
@@ -2266,6 +2469,7 @@ export default function App() {
           loadData={() => void loadData()}
           hideProjectTaskPreview={hideProjectTaskPreview}
           onOpenManual={() => void window.workshopDesktop.openManual()}
+          onOpenCreateTask={() => openDirectTaskComposer()}
           onOpenCreateLocalProject={() => void handleCreateLocalProject()}
           onOpenPersonalRecords={() => void window.workshopDesktop.openPersonalRecord()}
           onOpenSettings={() => void window.workshopDesktop.openSettings()}
@@ -2282,6 +2486,7 @@ export default function App() {
         />
         {renameLocalProjectDialog}
         {linkLocalProjectDialog}
+        {taskComposerDialog}
       </>
     );
   }

@@ -2,8 +2,35 @@ import { Archive, Check, PauseCircle, Play, RotateCcw, SquareTerminal } from "lu
 import { useRef } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import type { TaskState } from "../../shared/types";
-import { formatRelative, splitTags, stateLabels, stateTone, type EnrichedTask } from "../lib/tasks";
+import { formatRelative, stateLabels, stateTone, type EnrichedTask } from "../lib/tasks";
 import { ListCellArchiveButton, ListCellCompleteButton } from "./ListCellActions";
+
+export function TaskTagChips({
+  tags,
+  compact = false,
+  maxVisible
+}: {
+  tags: EnrichedTask["resolvedTags"];
+  compact?: boolean;
+  maxVisible?: number;
+}) {
+  if (tags.length === 0) {
+    return null;
+  }
+
+  const limit = maxVisible ?? (compact ? 2 : 3);
+  const visibleTags = tags.slice(0, limit);
+  const hiddenCount = tags.length - visibleTags.length;
+
+  return (
+    <div className={`tag-row ${compact ? "compact" : ""}`} aria-label={`标签：${tags.map((tag) => tag.name).join("、")}`}>
+      {visibleTags.map((tag) => (
+        <span key={tag.id}>{tag.name}</span>
+      ))}
+      {hiddenCount > 0 ? <span className="tag-overflow">+{hiddenCount}</span> : null}
+    </div>
+  );
+}
 
 export function TaskRow({
   task,
@@ -25,7 +52,7 @@ export function TaskRow({
   onUpdate: (task: EnrichedTask, state: TaskState) => void;
 }) {
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
-  const tags = splitTags(task.tags);
+  const tags = task.resolvedTags;
   const isDone = task.state === "completed";
 
   function handleDragStart(event: DragEvent<HTMLElement>) {
@@ -80,13 +107,7 @@ export function TaskRow({
           {task.priority !== null && task.priority !== undefined ? <span>P{task.priority}</span> : null}
           <span>{formatRelative(task.updated_at)}</span>
         </div>
-        {!compact && tags.length > 0 ? (
-          <div className="tag-row">
-            {tags.slice(0, 3).map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
-          </div>
-        ) : null}
+        <TaskTagChips tags={tags} compact={compact} />
       </div>
       <ListCellArchiveButton
         disabled={busyTaskId === task.id}
@@ -122,6 +143,7 @@ export function TaskDetail({
           <span className={`state-dot ${stateTone[task.state]}`} />
           <p className="task-detail-content">{task.content}</p>
         </div>
+        <TaskTagChips tags={task.resolvedTags} maxVisible={task.resolvedTags.length} />
       </article>
 
       <label className="task-note-panel">

@@ -23,8 +23,11 @@ function usage(command = commandName()) {
   ${command} record open --id <record-id>
   ${command} record annotate --annotations-file ./annotations.json
   ${command} project list
-  ${command} task list [--project-id 98] [--state pending,completed]
+  ${command} project members --project-id 98
+  ${command} project tags --project-id 98
+  ${command} task list [--project-id 98] [--state pending,completed] [--query "keyword"]
   ${command} task get --id <task-id> [--project-id 98]
+  ${command} task create "待办内容" --project-id 98 --assignee me [--tags Bug,后端]
   ${command} context current
   ${command} confirmation open --title "确认标题" --html-file ./confirm.html
   ${command} confirmation request --title "确认标题" --html-file ./confirm.html --action-file ./action.json
@@ -44,6 +47,11 @@ Options:
   --task-title <text>
   --id <text|number>
   --state <state[,state]>
+  --assignee <me|user-id|username>
+  --executor <me|user-id|username> Alias for --assignee.
+  --executor-ids <id[,id]> Filter tasks by assignee IDs.
+  --tags <name[,name]>    Optionally resolve project tag names.
+  --tag-ids <id[,id]>     Optionally use exact project tag IDs.
   --query <text>
   --limit <number>
   --page-size <number>
@@ -143,6 +151,21 @@ function splitOptionList(value) {
     .filter(Boolean);
 }
 
+function positiveIdList(value, name) {
+  const values = splitOptionList(value) || [];
+  const ids = [...new Set(values.map((item) => Number(item)))];
+  if (ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+    throw new Error(`${name} must contain positive integer IDs`);
+  }
+  return ids;
+}
+
+function projectTagDisplayName(name) {
+  const text = String(name || "").trim();
+  const match = text.match(/^\[([^\]]+)\]\(#[0-9a-fA-F]{6,8}\)$/);
+  return match?.[1]?.trim() || text;
+}
+
 function formatDate(value) {
   if (!value) {
     return "";
@@ -226,6 +249,8 @@ function printTasks(tasks, total) {
         task.id,
         `[${task.state}]`,
         `project:${task.project_id}${task.projectName ? ` ${task.projectName}` : ""}`,
+        task.executor?.username ? `owner:${task.executor.username}` : task.executor_id ? `owner:${task.executor_id}` : "",
+        task.tagDetails?.length ? `tags:${task.tagDetails.map((tag) => tag.displayName || projectTagDisplayName(tag.name)).join(",")}` : "",
         truncate(task.content, 90),
         formatDate(task.updated_at)
       ]
@@ -241,19 +266,21 @@ function printTasks(tasks, total) {
 async function collectTasks(options, pageSizeOverride) {
   const projectId = numberOption(options["project-id"], "--project-id");
   const states = splitOptionList(options.state);
+  const query = options.query ? String(options.query).trim() : undefined;
+  const executorIds = positiveIdList(options["executor-ids"], "--executor-ids");
+  const tagIds = positiveIdList(options["tag-ids"], "--tag-ids");
   const pageSize = pageSizeOverride ?? numberOption(options["page-size"], "--page-size");
   if (projectId !== undefined) {
-    return rpc("task.list", { projectId, states, pageSize });
+    return rpc("task.list", { projectId, states, query, executorIds, tagIds, pageSize });
   }
 
   const projectResult = await rpc("project.list", { pageSize: 500 });
   const projects = projectResult.projects || [];
-  const taskGroups = await Promise.all(
-    projects.map(async (project) => {
-      const result = await rpc("task.list", { projectId: project.id, states, pageSize });
-      return (result.tasks || []).map((task) => ({ ...task, projectName: project.name }));
-    })
-  );
+  const taskGroups = [];
+  for (const project of projects) {
+    const result = await rpc("task.list", { projectId: project.id, states, query, executorIds, tagIds, pageSize });
+    taskGroups.push((result.tasks || []).map((task) => ({ ...task, projectName: project.name })));
+  }
   const tasks = taskGroups.flat().sort((first, second) => new Date(second.updated_at).getTime() - new Date(first.updated_at).getTime());
   return { tasks, total: tasks.length };
 }
@@ -342,7 +369,12 @@ async function probeConnection(connection) {
   return {
     reachable: true,
     fullAccess: response.ok && payload?.ok === true,
-    authScope: response.ok && payload?.ok === true ? "full" : error.includes("只允许 record.create") ? "restricted" : "unknown",
+    authScope:
+      response.ok && payload?.ok === true
+        ? "full"
+        : error.includes("当前受限 token 无权调用") || error.includes("只允许 record.create")
+          ? "restricted"
+          : "unknown",
     latencyMs: Date.now() - startedAt,
     statusCode: response.status,
     error: response.ok && payload?.ok === true ? undefined : error || `HTTP ${response.status}`
@@ -568,6 +600,38 @@ async function listProjects(options) {
   printProjects(result.projects || [], result.total);
 }
 
+async function getTaskCreationContext(options) {
+  const projectId = numberOption(options["project-id"], "--project-id");
+  if (!projectId) {
+    throw new Error("--project-id is required");
+  }
+  return rpc("task.creationContext", { projectId });
+}
+
+async function listProjectMembers(options) {
+  const context = await getTaskCreationContext(options);
+  const members = context.project?.members || [];
+  if (options.json) {
+    console.log(JSON.stringify({ project: context.project, currentUserId: context.currentUserId, members }, null, 2));
+    return;
+  }
+  for (const member of members) {
+    console.log([member.user_id, member.username, member.role, member.is_me ? "me" : ""].filter(Boolean).join("\t"));
+  }
+}
+
+async function listProjectTags(options) {
+  const context = await getTaskCreationContext(options);
+  const tags = context.tags || [];
+  if (options.json) {
+    console.log(JSON.stringify({ project: context.project, tags }, null, 2));
+    return;
+  }
+  for (const tag of tags) {
+    console.log([tag.id, projectTagDisplayName(tag.name)].join("\t"));
+  }
+}
+
 async function listTasks(options) {
   const result = await collectTasks(options);
 
@@ -584,8 +648,11 @@ async function getTask(options) {
   if (taskId === undefined) {
     throw new Error("--id is required");
   }
-  const result = await collectTasks(options, numberOption(options["page-size"], "--page-size") ?? 500);
-  const task = (result.tasks || []).find((candidate) => candidate.id === taskId);
+  const projectId = numberOption(options["project-id"], "--project-id");
+  const result = projectId
+    ? await rpc("task.get", { projectId, taskId })
+    : await collectTasks(options, numberOption(options["page-size"], "--page-size") ?? 500);
+  const task = projectId ? result.task : (result.tasks || []).find((candidate) => candidate.id === taskId);
 
   if (options.json) {
     console.log(JSON.stringify({ task: task ?? null }, null, 2));
@@ -598,6 +665,80 @@ async function getTask(options) {
 
   console.log([task.id, `[${task.state}]`, `project:${task.project_id}`, formatDate(task.updated_at)].join("\t"));
   console.log(task.content || "");
+}
+
+function resolveAssignee(context, rawAssignee) {
+  const value = String(rawAssignee || "").trim();
+  const members = context.project?.members || [];
+  if (!value) {
+    throw new Error("--assignee is required");
+  }
+  if (value.toLowerCase() === "me") {
+    if (!context.currentUserId) {
+      throw new Error("Cannot resolve the current user in this project");
+    }
+    return context.currentUserId;
+  }
+  if (/^\d+$/.test(value)) {
+    const id = Number(value);
+    if (!members.some((member) => member.user_id === id)) {
+      throw new Error(`Assignee is not a project member: ${id}`);
+    }
+    return id;
+  }
+  const matches = members.filter((member) => member.username?.trim().toLowerCase() === value.toLowerCase());
+  if (matches.length !== 1) {
+    throw new Error(matches.length === 0 ? `Project member not found: ${value}` : `Project member name is ambiguous: ${value}`);
+  }
+  return matches[0].user_id;
+}
+
+function resolveTagIds(context, options) {
+  if (options.tags && options["tag-ids"]) {
+    throw new Error("--tags and --tag-ids cannot be used together");
+  }
+  if (options["tag-ids"]) {
+    return positiveIdList(options["tag-ids"], "--tag-ids");
+  }
+  const names = splitOptionList(options.tags) || [];
+  if (names.length === 0) {
+    return [];
+  }
+  const projectTags = context.tags || [];
+  return names.map((name) => {
+    const matches = projectTags.filter((tag) => projectTagDisplayName(tag.name).toLowerCase() === name.toLowerCase());
+    if (matches.length !== 1) {
+      throw new Error(matches.length === 0 ? `Project tag not found: ${name}` : `Project tag name is ambiguous: ${name}`);
+    }
+    return matches[0].id;
+  });
+}
+
+async function createTask(options) {
+  const projectId = numberOption(options["project-id"], "--project-id");
+  if (!projectId) {
+    throw new Error("--project-id is required");
+  }
+  const content = String(options.content || options._.slice(2).join(" ")).trim();
+  if (!content) {
+    throw new Error("Task content is required");
+  }
+  const context = await rpc("task.creationContext", { projectId });
+  const executorId = resolveAssignee(context, options.assignee ?? options.executor);
+  const tagIds = resolveTagIds(context, options);
+  const result = await rpc("task.create.request", {
+    projectId,
+    content,
+    executorId,
+    tagIds,
+    state: options.state || "pending"
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log(`Requested task creation ${result.request.requestId}: ${result.request.status}`);
 }
 
 async function getCurrentContext(options) {
@@ -773,6 +914,16 @@ async function main() {
     return;
   }
 
+  if (resource === "project" && action === "members") {
+    await listProjectMembers(options);
+    return;
+  }
+
+  if (resource === "project" && action === "tags") {
+    await listProjectTags(options);
+    return;
+  }
+
   if (resource === "task" && action === "list") {
     await listTasks(options);
     return;
@@ -780,6 +931,11 @@ async function main() {
 
   if (resource === "task" && action === "get") {
     await getTask(options);
+    return;
+  }
+
+  if (resource === "task" && action === "create") {
+    await createTask(options);
     return;
   }
 

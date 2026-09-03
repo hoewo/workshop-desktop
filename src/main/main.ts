@@ -51,6 +51,7 @@ import type {
   CreateLocalProjectRequest,
   CreateTaskRequest,
   LinkLocalProjectWorkshopProjectRequest,
+  ListProjectTagsRequest,
   ListProjectsRequest,
   ListTasksRequest,
   LoginRequest,
@@ -64,6 +65,7 @@ import type {
   PersonalRecordStatus,
   PersonalRecordTarget,
   Project,
+  ProjectTag,
   ProjectsPayload,
   RecordSearchLogEntry,
   RenameLocalProjectRequest,
@@ -72,6 +74,7 @@ import type {
   SendToCodexResponse,
   StickyTarget,
   Task,
+  TaskCreationContext,
   TaskPreviewRequest,
   TaskStateChangeNotice,
   TaskState,
@@ -153,6 +156,8 @@ let registeredPanelShortcut = false;
 let registeredNewPersonalRecordShortcut = false;
 let appServer: http.Server | null = null;
 let appServerInfo: { port: number; token: string; agentToken: string } | null = null;
+const agentProjectScopeCounts = new Map<number, number>();
+const agentScopedRuns = new Map<string, number>();
 let appUpdateService: AppUpdateService | null = null;
 let currentWorkshopContext: WorkshopCurrentContext = { kind: "none" };
 let confirmationRequestsQueue: Promise<unknown> = Promise.resolve();
@@ -866,6 +871,37 @@ function normalizeOptionalPositiveNumber(value: unknown, label: string) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
 }
 
+function normalizePositiveNumberList(value: unknown, label: string, maxItems = 20) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const items = [...new Set(value.map((item) => normalizePositiveNumber(item, label)))];
+  if (items.length > maxItems) {
+    throw new Error(`${label} 最多选择 ${maxItems} 个`);
+  }
+  return items;
+}
+
+function normalizeTaskCreationRequest(value: unknown): CreateTaskRequest & { state: "pending" } {
+  const request = isPlainObject(value) ? value : {};
+  const content = safeWindowText(request.content, 2000);
+  if (!content) {
+    throw new Error("任务内容不能为空");
+  }
+  const tagIds = normalizePositiveNumberList(request.tagIds, "标签 ID");
+  const state = request.state === undefined ? "pending" : request.state;
+  if (state !== "pending") {
+    throw new Error("新建待办的初始状态必须为 pending");
+  }
+  return {
+    projectId: normalizePositiveNumber(request.projectId, "项目 ID"),
+    content,
+    executorId: normalizePositiveNumber(request.executorId, "负责人"),
+    tagIds,
+    state
+  };
+}
+
 function normalizeAppServerRecordListParams(params: unknown): ListRecordsParams {
   const value = isPlainObject(params) ? params : {};
   const scopeType = normalizeRecordScope(value.scopeType ?? value.scope);
@@ -1052,12 +1088,7 @@ function normalizeConfirmationAction(value: unknown): ConfirmationAction | undef
       return { type: "record.annotate", annotations };
     }
     case "task.create": {
-      const projectId = normalizePositiveNumber(value.projectId, "项目 ID");
-      const content = safeWindowText(value.content, 4000);
-      if (!content) {
-        throw new Error("task.create 需要 content");
-      }
-      return { type: "task.create", projectId, content };
+      return { type: "task.create", ...normalizeTaskCreationRequest(value) };
     }
     case "task.updateState": {
       const taskId = normalizePositiveNumber(value.taskId, "任务 ID");
@@ -1104,7 +1135,18 @@ function normalizeAppServerListTasksParams(params: unknown): ListTasksRequest {
   return {
     projectId: normalizePositiveNumber(value.projectId, "项目 ID"),
     states: rawStates && rawStates.length > 0 ? rawStates : undefined,
+    query: safeWindowText(value.query ?? value.search, 200) ?? undefined,
+    executorIds: normalizePositiveNumberList(value.executorIds, "负责人 ID", 50),
+    tagIds: normalizePositiveNumberList(value.tagIds, "标签 ID", 50),
     pageSize: normalizeOptionalPositiveNumber(value.pageSize, "pageSize")
+  };
+}
+
+function normalizeAppServerTaskGetParams(params: unknown) {
+  const value = isPlainObject(params) ? params : {};
+  return {
+    projectId: normalizePositiveNumber(value.projectId, "项目 ID"),
+    taskId: normalizePositiveNumber(value.taskId ?? value.id, "任务 ID")
   };
 }
 
@@ -1540,11 +1582,39 @@ function codexEnvironment(): NodeJS.ProcessEnv {
     PATH: [...pathEntries].join(path.delimiter)
   };
   if (appServerInfo) {
-    // 受限 token：被派发的 agent 只能回写记录，不能再触发 codex.send。
+    // 受限 token：被派发的 agent 只能使用显式开放的记录与项目范围内任务能力，不能再触发 codex.send。
     env.WORKSHOP_DESKTOP_SERVER_PORT = String(appServerInfo.port);
     env.WORKSHOP_DESKTOP_SERVER_TOKEN = appServerInfo.agentToken;
   }
   return env;
+}
+
+function grantAgentProjectScope(run: CodexRunMeta) {
+  if (agentScopedRuns.has(run.runId)) {
+    return;
+  }
+  agentScopedRuns.set(run.runId, run.projectId);
+  agentProjectScopeCounts.set(run.projectId, (agentProjectScopeCounts.get(run.projectId) ?? 0) + 1);
+}
+
+function revokeAgentProjectScope(runId: string) {
+  const projectId = agentScopedRuns.get(runId);
+  if (!projectId) {
+    return;
+  }
+  agentScopedRuns.delete(runId);
+  const nextCount = (agentProjectScopeCounts.get(projectId) ?? 1) - 1;
+  if (nextCount <= 0) {
+    agentProjectScopeCounts.delete(projectId);
+  } else {
+    agentProjectScopeCounts.set(projectId, nextCount);
+  }
+}
+
+function assertAgentProjectScope(scope: AppServerScope, projectId: number) {
+  if (scope === "agent" && !agentProjectScopeCounts.has(projectId)) {
+    throw new Error(`当前 AI 运行无权访问项目：${projectId}`);
+  }
 }
 
 const CODEX_RUNS_LIMIT = 100;
@@ -1737,14 +1807,7 @@ async function executeConfirmationAction(action?: ConfirmationAction): Promise<u
   }
 
   if (action.type === "task.create") {
-    const task = getApiResponseData<Task>(await workshopApiService.createTask({ projectId: action.projectId, content: action.content }));
-    notifyTaskChanged({
-      id: task.id,
-      projectId: action.projectId,
-      state: task.state,
-      updatedAt: task.updated_at,
-      completionAt: task.completion_at ?? null
-    });
+    const task = getApiResponseData<Task>(await createTaskForDesktop(action));
     return { task };
   }
 
@@ -1848,7 +1911,13 @@ async function sendToCodex(params: unknown): Promise<SendToCodexResponse> {
     startedAt: new Date().toISOString()
   };
 
-  return request.backend === "exec" ? sendToCodexExec(run, userInput) : sendToCodexAppServer(run, userInput);
+  grantAgentProjectScope(run);
+  try {
+    return await (request.backend === "exec" ? sendToCodexExec(run, userInput) : sendToCodexAppServer(run, userInput));
+  } catch (error) {
+    revokeAgentProjectScope(run.runId);
+    throw error;
+  }
 }
 
 async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<SendToCodexResponse> {
@@ -1891,12 +1960,14 @@ async function sendToCodexAppServer(run: CodexRunMeta, prompt: string): Promise<
             completedAt: new Date().toISOString(),
             ...(lastMessage ? { lastMessage } : {})
           });
+          revokeAgentProjectScope(run.runId);
         }
       }
     });
     await updateCodexRun(run.runId, { threadId, turnId });
     return { localDirectory: run.cwd, runId: run.runId, backend: "app-server", threadId };
   } catch (error) {
+    revokeAgentProjectScope(run.runId);
     const lastMessage = takeLastMessage(error instanceof Error ? error.message : "codex 启动失败", "failed");
     await updateCodexRun(run.runId, {
       status: "failed",
@@ -1920,6 +1991,7 @@ async function sendToCodexExec(run: CodexRunMeta, prompt: string): Promise<SendT
     stdio: "ignore"
   });
   child.on("exit", (code) => {
+    revokeAgentProjectScope(run.runId);
     void finalizeCodexExecRun(run.runId, outputPath, code);
   });
 
@@ -1929,6 +2001,7 @@ async function sendToCodexExec(run: CodexRunMeta, prompt: string): Promise<SendT
       child.once("error", (error) => reject(error));
     });
   } catch (error) {
+    revokeAgentProjectScope(run.runId);
     await updateCodexRun(run.runId, {
       status: "failed",
       completedAt: new Date().toISOString(),
@@ -1962,35 +2035,35 @@ async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
   const rpc = isPlainObject(payload) ? (payload as Partial<AppServerRpcRequest>) : {};
   if (rpc.method === "context.current") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 context.current");
+      throw new Error("当前受限 token 无权调用 context.current");
     }
     return { context: getCurrentWorkshopContext() };
   }
 
   if (rpc.method === "confirmation.open") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 confirmation.open");
+      throw new Error("当前受限 token 无权调用 confirmation.open");
     }
     return openTemporaryConfirmationWindow(rpc.params);
   }
 
   if (rpc.method === "confirmation.request") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 confirmation.request");
+      throw new Error("当前受限 token 无权调用 confirmation.request");
     }
     return requestAsyncConfirmationWindow(rpc.params);
   }
 
   if (rpc.method === "confirmation.status") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 confirmation.status");
+      throw new Error("当前受限 token 无权调用 confirmation.status");
     }
     return listConfirmationRequestsForAppServer(rpc.params);
   }
 
   if (rpc.method === "codex.send") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 codex.send");
+      throw new Error("当前受限 token 无权调用 codex.send");
     }
     return sendToCodex(rpc.params);
   }
@@ -2020,28 +2093,28 @@ async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
 
   if (rpc.method === "record.list") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 record.list");
+      throw new Error("当前受限 token 无权调用 record.list");
     }
     return listRecordsForAppServer(rpc.params);
   }
 
   if (rpc.method === "record.get") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 record.get");
+      throw new Error("当前受限 token 无权调用 record.get");
     }
     return getRecordForAppServer(rpc.params);
   }
 
   if (rpc.method === "record.open") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 record.open");
+      throw new Error("当前受限 token 无权调用 record.open");
     }
     return openRecordForAppServer(rpc.params);
   }
 
   if (rpc.method === "record.annotate") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 record.annotate");
+      throw new Error("当前受限 token 无权调用 record.annotate");
     }
     return annotateRecordsForAppServer(rpc.params);
   }
@@ -2054,16 +2127,34 @@ async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
 
   if (rpc.method === "project.list") {
     if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 project.list");
+      throw new Error("当前受限 token 无权调用 project.list");
     }
     return listProjectsForAppServer(rpc.params);
   }
 
+  if (rpc.method === "task.creationContext") {
+    const value = isPlainObject(rpc.params) ? rpc.params : {};
+    const projectId = normalizePositiveNumber(value.projectId, "项目 ID");
+    assertAgentProjectScope(scope, projectId);
+    return getTaskCreationContextForAppServer(projectId);
+  }
+
   if (rpc.method === "task.list") {
-    if (scope !== "full") {
-      throw new Error("当前 token 只允许 record.create，不能调用 task.list");
-    }
-    return listTasksForAppServer(rpc.params);
+    const request = normalizeAppServerListTasksParams(rpc.params);
+    assertAgentProjectScope(scope, request.projectId);
+    return listTasksForAppServer(request);
+  }
+
+  if (rpc.method === "task.get") {
+    const request = normalizeAppServerTaskGetParams(rpc.params);
+    assertAgentProjectScope(scope, request.projectId);
+    return getTaskForAppServer(request);
+  }
+
+  if (rpc.method === "task.create.request") {
+    const request = normalizeTaskCreationRequest(rpc.params);
+    assertAgentProjectScope(scope, request.projectId);
+    return requestTaskCreationForAppServer(request);
   }
 
   throw new Error(`不支持的 app server 方法：${String(rpc.method ?? "")}`);
@@ -2143,6 +2234,8 @@ function stopAppServer() {
   appServer?.close();
   appServer = null;
   appServerInfo = null;
+  agentProjectScopeCounts.clear();
+  agentScopedRuns.clear();
   void fs.unlink(appServerConnectionPath()).catch(() => undefined);
 }
 
@@ -2785,12 +2878,131 @@ async function listProjectsForAppServer(params: unknown) {
   return { projects, total: projects.length };
 }
 
-async function listTasksForAppServer(params: unknown) {
-  const payload = getApiResponseData<TasksPayload | Task[]>(
-    await workshopApiService.listTasks(normalizeAppServerListTasksParams(params))
+function getProjectTagDisplayName(name: string) {
+  const match = name.trim().match(/^\[([^\]]+)\]\(#[0-9a-fA-F]{6,8}\)$/);
+  return match?.[1]?.trim() || name.trim();
+}
+
+async function getTaskCreationContextForAppServer(projectId: number): Promise<TaskCreationContext> {
+  const projectResult = await listProjectsForAppServer({ pageSize: 500 });
+  const project = projectResult.projects.find((candidate) => candidate.id === projectId);
+  if (!project) {
+    throw new Error(`项目不存在或当前用户无权访问：${projectId}`);
+  }
+  const tagsPayload = getApiResponseData<ProjectTag[]>(
+    await workshopApiService.listProjectTags({ projectId, pageSize: 200 })
   );
+  const tags = extractPayloadList<ProjectTag>(tagsPayload, "tags").filter((tag) => !tag.deleted_at);
+  return {
+    project,
+    currentUserId: project.members?.find((member) => member.is_me)?.user_id,
+    tags
+  };
+}
+
+async function validateTaskCreationRequest(request: CreateTaskRequest) {
+  const context = await getTaskCreationContextForAppServer(request.projectId);
+  if (!context.project.members?.some((member) => member.user_id === request.executorId)) {
+    throw new Error("负责人不是当前项目成员");
+  }
+  const availableTagIds = new Set(context.tags.map((tag) => tag.id));
+  const invalidTagIds = request.tagIds.filter((tagId) => !availableTagIds.has(tagId));
+  if (invalidTagIds.length > 0) {
+    throw new Error(`标签不属于当前项目：${invalidTagIds.join(", ")}`);
+  }
+  return context;
+}
+
+async function createTaskForDesktop(value: unknown, sender?: WebContents) {
+  const request = normalizeTaskCreationRequest(value);
+  await validateTaskCreationRequest(request);
+  const response = await workshopApiService.createTask(request);
+  if (response.ok) {
+    notifyTaskCreated(sender);
+  }
+  return response;
+}
+
+function renderTaskCreationConfirmationBody(request: CreateTaskRequest, context: TaskCreationContext) {
+  const executor = context.project.members.find((member) => member.user_id === request.executorId);
+  const tagNames = request.tagIds.map((tagId) => {
+    const tag = context.tags.find((candidate) => candidate.id === tagId);
+    return tag ? getProjectTagDisplayName(tag.name) : String(tagId);
+  });
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { margin: 0; padding: 22px; color: #1f2428; background: #fff; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      dl { display: grid; grid-template-columns: 84px 1fr; gap: 12px 16px; margin: 0; }
+      dt { color: #69716d; font-weight: 650; }
+      dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+      .content { white-space: pre-wrap; }
+      .tag { display: inline-block; margin: 0 6px 6px 0; padding: 2px 8px; border-radius: 999px; background: #e8f1ed; color: #1f6f5b; }
+      .hint { margin: 20px 0 0; color: #69716d; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <dl>
+      <dt>项目</dt><dd>${escapeHtml(context.project.name)}</dd>
+      <dt>待办内容</dt><dd class="content">${escapeHtml(request.content)}</dd>
+      <dt>负责人</dt><dd>${escapeHtml(executor?.username || String(request.executorId))}</dd>
+      <dt>标签</dt><dd>${tagNames.length > 0 ? tagNames.map((name) => `<span class="tag">${escapeHtml(name)}</span>`).join("") : "未设置"}</dd>
+      <dt>初始状态</dt><dd>待办</dd>
+    </dl>
+    <p class="hint">确认后由 Workshop 创建待办；取消不会写入远端任务系统。</p>
+  </body>
+</html>`;
+}
+
+async function requestTaskCreationForAppServer(params: unknown) {
+  const request = normalizeTaskCreationRequest(params);
+  const context = await validateTaskCreationRequest(request);
+  const result = await requestAsyncConfirmationWindow({
+    title: "确认创建待办",
+    html: renderTaskCreationConfirmationBody(request, context),
+    width: 620,
+    height: 520,
+    action: { type: "task.create", ...request }
+  });
+  return { ...result, proposal: request };
+}
+
+async function listTasksForAppServer(params: unknown) {
+  const request = normalizeAppServerListTasksParams(params);
+  const payload = getApiResponseData<TasksPayload | Task[]>(await workshopApiService.listTasks(request));
   const tasks = extractPayloadList<Task>(payload, "tasks");
-  return { tasks, total: extractPayloadTotal(payload, tasks.length) };
+  let projectTags: ProjectTag[] = [];
+  if (tasks.some((task) => Boolean(task.tags?.trim()))) {
+    try {
+      const tagsPayload = getApiResponseData<ProjectTag[]>(
+        await workshopApiService.listProjectTags({ projectId: request.projectId, pageSize: 200 })
+      );
+      projectTags = extractPayloadList<ProjectTag>(tagsPayload, "tags").filter((tag) => !tag.deleted_at);
+    } catch {
+      // 标签详情属于展示增强；读取失败不能让已有任务列表一起丢失。
+    }
+  }
+  const tagsById = new Map(projectTags.map((tag) => [tag.id, tag]));
+  const enrichedTasks = tasks.map((task) => ({
+    ...task,
+    tagDetails: (task.tags ?? "")
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value))
+      .map((tagId) => tagsById.get(tagId))
+      .filter((tag): tag is ProjectTag => Boolean(tag))
+      .map((tag) => ({ ...tag, displayName: getProjectTagDisplayName(tag.name) }))
+  }));
+  return { tasks: enrichedTasks, total: extractPayloadTotal(payload, tasks.length) };
+}
+
+async function getTaskForAppServer(params: unknown) {
+  const request = normalizeAppServerTaskGetParams(params);
+  const result = await listTasksForAppServer({ projectId: request.projectId, pageSize: 500 });
+  const task = result.tasks.find((candidate) => candidate.id === request.taskId) ?? null;
+  return { task };
 }
 
 function notifyRecordsChanged(notice: PersonalRecordChangeNotice | null = null) {
@@ -4118,6 +4330,11 @@ function notifyTaskChanged(notice: TaskStateChangeNotice, sender?: WebContents) 
   sendWorkshopRefresh({ reason: "task-state", task: notice }, sender);
 }
 
+function notifyTaskCreated(sender?: WebContents) {
+  hideTaskPreviewWindow();
+  sendWorkshopRefresh({ reason: "task-created" }, sender);
+}
+
 async function bindProjectLocalDirectory(projectId: number, owner?: BrowserWindow | null) {
   if (!Number.isFinite(projectId)) {
     throw new Error("项目 ID 无效");
@@ -4269,8 +4486,11 @@ function registerIpc() {
   );
   ipcMain.handle("workshop:listOrganizations", () => workshopApiService.listOrganizations());
   ipcMain.handle("workshop:listTasks", (_event, request: ListTasksRequest) => workshopApiService.listTasks(request));
-  ipcMain.handle("workshop:createTask", (_event, request: CreateTaskRequest) =>
-    workshopApiService.createTask(request)
+  ipcMain.handle("workshop:listProjectTags", (_event, request: ListProjectTagsRequest) =>
+    workshopApiService.listProjectTags(request)
+  );
+  ipcMain.handle("workshop:createTask", (event, request: CreateTaskRequest) =>
+    createTaskForDesktop(request, event.sender)
   );
   ipcMain.handle("workshop:updateTask", (_event, request: UpdateTaskRequest) =>
     workshopApiService.updateTask(request)

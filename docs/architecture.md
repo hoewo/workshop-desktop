@@ -13,6 +13,33 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 - Skill 是用户 AI 环境读取的协作说明，不在桌面端进程内执行。
 - 文档解释为什么这样分层；代码维护实际入口和接口细节。
 
+## 关联系统与仓库边界
+
+Workshop Todo 是一个由四个仓库组成、共享后端业务契约但独立发布的产品系统：
+
+| 仓库 | 产品职责 | 自有事实 |
+| --- | --- | --- |
+| [`workshop-todo`](https://github.com/hoewo/workshop-todo) | Go 后端服务；向各客户端提供项目、成员、任务、标签、附件/评论、反馈和实时事件能力 | 远端业务模型、权限、状态迁移、API 行为和持久化 |
+| [`workshop-todo-website`](https://github.com/hoewo/workshop-todo-website) | 团队协作网页端；提供完整项目和任务管理界面 | Web 交互、路由、浏览器会话和展示状态 |
+| [`workshop-todo-cli`](https://github.com/hoewo/workshop-todo-cli) | 独立 `todo` 命令行客户端；直接操作远端项目和任务 | CLI 配置、目录到远端组织/项目的本机绑定和命令行交互 |
+| [`workshop-desktop`](https://github.com/hoewo/workshop-desktop) | 本 repo；个人当前注意力工作台、本地记录和 Codex 执行入口 | 本地项目、记录、目录绑定、确认请求和 Codex 运行状态 |
+
+稳定调用方向是：
+
+```text
+workshop-todo-website ─┐
+workshop-todo-cli ─────┼─> Gateway / NebulaAuth ─> workshop-todo ─> PostgreSQL / OSS
+workshop-desktop ──────┘
+
+Codex / 本地 AI ─> workshop / workshop-desktop CLI ─> Desktop app server ─> 本地记录与执行能力
+```
+
+- 网页端、独立 `todo` CLI 和 Desktop 都是后端契约的消费者，客户端之间不互相调用。
+- Gateway / NebulaAuth 负责远端认证和身份转发；`workshop-todo` 负责授权后的业务规则与数据事实。
+- 本 repo 的 `workshop` / `workshop-desktop` CLI 是 Desktop 本地 app server 的门面；`workshop-todo-cli` 的 `todo` 是远端任务系统客户端，两者不共享命令职责。
+- 当前各客户端分别维护请求与类型映射。引入可生成的机器可读契约前，跨仓库升级必须以后端实际路由、模型和响应代码为运行时事实，并逐一验证三个客户端。
+- 后端契约应优先保持向后兼容；需要破坏性变更时，先提供兼容窗口并升级三个消费者，最后再移除旧契约。
+
 ## 数据与事实归属
 
 - Workshop 后端是远端任务源、用户、组织和认证的事实源。
@@ -35,9 +62,11 @@ Workshop Desktop 是一个 Electron + React 桌面客户端，用于快速查看
 ## 本地 AI Bridge 与 CLI
 
 - app server 只绑定 `127.0.0.1`。
-- token 分完整 token 和受限 token：完整 token 面向本机用户能力；受限 token 只用于被派发 agent 的窄回写能力。
+- token 分完整 token 和受限 token：完整 token 面向本机用户能力；受限 token 只开放记录回写/检索，以及活跃 Codex 运行关联项目内的任务只读和创建提议能力。
 - CLI 只调用 app server，负责发现、参数、文件输入、JSON 输出和友好命令封装；它不保存业务事实。
 - 新增记录是低风险 append-only 写入；编辑已有对象、改变状态、创建任务、批量整理和执行派发等高风险动作应通过确认页或用户手势完成。
+- Desktop 直接创建、记录转待办和 AI/CLI 创建提议共用同一任务创建服务；任务必须明确内容和项目成员负责人，项目标签可选，初始状态为 `pending`。
+- 被派发 agent 可以读取活跃运行关联项目中的任务、成员和标签，但只能通过专用任务创建提议请求打开由 Desktop 生成的可信确认页，不能提交任意确认 HTML 或直接写任务。
 - `codex.send` 属于 Workshop UI / service layer 的执行动作，不是被派发 agent 可递归触发的能力。
 - CLI 能力补齐不是逐个补命令，而是验证主进程服务层是否提供清晰、可组合、可确认的能力面。
 - 具体 RPC method、CLI 子命令、confirmation action 和权限 allowlist 由代码和测试维护，不在本文枚举。

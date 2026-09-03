@@ -4,6 +4,7 @@ import type {
   AuthTokens,
   CreateTaskRequest,
   CurrentUserPayload,
+  ListProjectTagsRequest,
   ListProjectsRequest,
   ListTasksRequest,
   LoginPayload,
@@ -11,6 +12,7 @@ import type {
   Organization,
   OrganizationsPayload,
   Project,
+  ProjectTag,
   ProjectsPayload,
   Task,
   TaskState,
@@ -294,6 +296,21 @@ export class WorkshopApiService {
       query: {
         project_id: projectId,
         state: normalizeTaskStateList(value.states),
+        search_key: safeText(value.query, 200) ?? undefined,
+        executor_id: Array.isArray(value.executorIds) ? value.executorIds : undefined,
+        tags: Array.isArray(value.tagIds) ? value.tagIds : undefined,
+        page_size: normalizePageSize(value.pageSize)
+      }
+    });
+  }
+
+  listProjectTags(request: ListProjectTagsRequest) {
+    const value: Record<string, unknown> = isPlainObject(request) ? request : {};
+    const projectId = normalizePositiveInteger(value.projectId, "项目 ID");
+    return this.performApiRequest<ProjectTag[]>({
+      method: "GET",
+      path: `/projects/${projectId}/tags`,
+      query: {
         page_size: normalizePageSize(value.pageSize)
       }
     });
@@ -306,12 +323,23 @@ export class WorkshopApiService {
     if (!content) {
       throw new Error("任务内容不能为空");
     }
+    const executorId = normalizePositiveInteger(value.executorId, "负责人");
+    const tagIds = Array.isArray(value.tagIds)
+      ? [...new Set(value.tagIds.map((tagId) => normalizePositiveInteger(tagId, "标签 ID")))]
+      : [];
+    const state = value.state === undefined ? "pending" : value.state;
+    if (state !== "pending") {
+      throw new Error("新建待办的初始状态必须为 pending");
+    }
     return this.performApiRequest<Task>({
       method: "POST",
       path: "/tasks",
       body: {
         project_id: projectId,
-        content
+        content,
+        executor_id: executorId,
+        ...(tagIds.length > 0 ? { tags: tagIds.join(",") } : {}),
+        state
       }
     });
   }

@@ -207,6 +207,13 @@ button {
   font-weight: 780;
 }
 
+.home-panel-head-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .compact-command {
   width: auto;
   height: 30px;
@@ -642,6 +649,163 @@ button {
   justify-content: center;
   padding: 22px;
   background: rgba(31, 38, 35, 0.28);
+}
+
+.task-composer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(31, 38, 35, 0.32);
+}
+
+.task-composer-sheet {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(30, 36, 34, 0.12);
+  border-radius: 10px;
+  background: #f9f8f4;
+  box-shadow: 0 22px 60px rgba(26, 31, 29, 0.24);
+}
+
+.task-composer-sheet > header,
+.task-composer-sheet > footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.task-composer-sheet > header {
+  border-bottom: 1px solid rgba(30, 36, 34, 0.08);
+}
+
+.task-composer-sheet > footer {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(30, 36, 34, 0.08);
+}
+
+.task-composer-sheet > footer button {
+  width: auto;
+  min-width: 94px;
+}
+
+.task-composer-sheet h2 {
+  margin: 0;
+  color: #1f2623;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.task-composer-form {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.task-composer-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #5f6762;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.task-composer-form textarea {
+  min-height: 92px;
+  resize: vertical;
+  padding: 9px 10px;
+  line-height: 1.45;
+}
+
+.task-composer-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-composer-tags {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.task-composer-tags legend {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: #5f6762;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.task-composer-tags legend small {
+  color: #7a817d;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.task-composer-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.task-composer-tag-list button {
+  min-height: 29px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid rgba(38, 105, 84, 0.16);
+  border-radius: 999px;
+  background: #fffdf8;
+  color: #53615a;
+  cursor: pointer;
+}
+
+.task-composer-tag-list button:hover,
+.task-composer-tag-list button.selected {
+  border-color: rgba(38, 105, 84, 0.36);
+  background: #e8f1ed;
+  color: #1f6f5b;
+}
+
+.task-composer-empty,
+.task-composer-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.task-composer-empty {
+  color: #756f61;
+}
+
+.task-composer-empty:has(svg) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-composer-error {
+  color: #9f3a2e;
 }
 
 .project-link-sheet {
@@ -2037,6 +2201,22 @@ textarea:focus {
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tag-row.compact {
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.tag-row.compact span {
+  max-width: 84px;
+  padding: 2px 5px;
+  font-size: 10px;
+}
+
+.tag-row span.tag-overflow {
+  background: rgba(30, 36, 34, 0.07);
+  color: #68706c;
 }
 
 .task-detail-actions button.done {

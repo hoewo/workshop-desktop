@@ -65,6 +65,7 @@ const bridge: DesktopBridge = {
   listProjects: (request) => ipcRenderer.invoke("workshop:listProjects", request),
   listOrganizations: () => ipcRenderer.invoke("workshop:listOrganizations"),
   listTasks: (request) => ipcRenderer.invoke("workshop:listTasks", request),
+  listProjectTags: (request) => ipcRenderer.invoke("workshop:listProjectTags", request),
   createTask: (request) => ipcRenderer.invoke("workshop:createTask", request),
   updateTask: (request) => ipcRenderer.invoke("workshop:updateTask", request),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),

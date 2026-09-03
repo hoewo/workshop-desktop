@@ -1,6 +1,6 @@
 {
   "name": "workshop-desktop",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "private": true,
   "description": "A lightweight cross-platform desktop client for Workshop todos.",
   "author": "Workshop",
@@ -35,6 +35,7 @@
     "app:project:list": "node scripts/workshop-desktop-cli.mjs project list",
     "app:task:list": "node scripts/workshop-desktop-cli.mjs task list",
     "app:task:get": "node scripts/workshop-desktop-cli.mjs task get",
+    "app:task:create": "node scripts/workshop-desktop-cli.mjs task create",
     "app:context:current": "node scripts/workshop-desktop-cli.mjs context current",
     "app:confirmation:open": "node scripts/workshop-desktop-cli.mjs confirmation open",
     "app:confirmation:request": "node scripts/workshop-desktop-cli.mjs confirmation request",

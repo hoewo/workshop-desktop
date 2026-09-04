@@ -308,6 +308,8 @@ export interface PersonalRecordMeta {
   title: string;
   scopeType: PersonalRecordScope;
   status: PersonalRecordStatus;
+  /** 归档前状态，用于恢复；只有 archived 记录应保留。 */
+  archivedFromStatus?: Extract<PersonalRecordStatus, "active" | "completed">;
   origin?: PersonalRecordOrigin;
   localProjectId?: string;
   projectId?: number;
@@ -365,6 +367,11 @@ export interface AnnotatePersonalRecordRequest {
     createdAt?: string;
     updatedAt?: string;
   };
+}
+
+export interface PersonalRecordStatusChangeTarget {
+  id: string;
+  expectedUpdatedAt: string;
 }
 
 export type CodexSendKind = "task" | "record";
@@ -458,6 +465,16 @@ export type ConfirmationAction =
   | {
       type: "record.annotate";
       annotations: AnnotatePersonalRecordRequest[];
+    }
+  | {
+      type: "record.archive";
+      projectId: number;
+      records: PersonalRecordStatusChangeTarget[];
+    }
+  | {
+      type: "record.restore";
+      projectId: number;
+      records: PersonalRecordStatusChangeTarget[];
     }
   | {
       type: "task.create";

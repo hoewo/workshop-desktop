@@ -22,6 +22,8 @@ function usage(command = commandName()) {
   ${command} record get --id <record-id>
   ${command} record open --id <record-id>
   ${command} record annotate --annotations-file ./annotations.json
+  ${command} record archive --project-id 98 --ids <id[,id]> [--reason "原因"]
+  ${command} record restore --project-id 98 --ids <id[,id]> [--reason "原因"]
   ${command} project list
   ${command} project members --project-id 98
   ${command} project tags --project-id 98
@@ -46,6 +48,7 @@ Options:
   --task-id <number>
   --task-title <text>
   --id <text|number>
+  --ids <id[,id]>        Record IDs for archive or restore (1-50).
   --state <state[,state]>
   --assignee <me|user-id|username>
   --executor <me|user-id|username> Alias for --assignee.
@@ -53,6 +56,7 @@ Options:
   --tags <name[,name]>    Optionally resolve project tag names.
   --tag-ids <id[,id]>     Optionally use exact project tag IDs.
   --query <text>
+  --reason <text>        Human-readable archive or restore reason.
   --limit <number>
   --page-size <number>
   --html <html>           Temporary confirmation HTML.
@@ -65,6 +69,7 @@ Options:
   --width <number>        Temporary confirmation window width.
   --height <number>       Temporary confirmation window height.
   --include-body          Include markdown bodies when listing records.
+  --include-archived      Include archived records when searching; agent calls also require --project-id.
   --open                  Ask the desktop app to open the created record.
   --json                  Print machine-readable JSON.
 `;
@@ -107,7 +112,7 @@ function parseArgs(argv) {
     }
 
     const key = arg.slice(2);
-    if (key === "open" || key === "json" || key === "include-body" || key === "help") {
+    if (key === "open" || key === "json" || key === "include-body" || key === "include-archived" || key === "help") {
       result[key] = true;
       continue;
     }
@@ -156,6 +161,14 @@ function positiveIdList(value, name) {
   const ids = [...new Set(values.map((item) => Number(item)))];
   if (ids.some((id) => !Number.isInteger(id) || id <= 0)) {
     throw new Error(`${name} must contain positive integer IDs`);
+  }
+  return ids;
+}
+
+function recordIdList(value, name) {
+  const ids = [...new Set(splitOptionList(value) || [])];
+  if (ids.length === 0 || ids.length > 50 || ids.some((id) => !/^[a-zA-Z0-9_-]+$/.test(id))) {
+    throw new Error(`${name} must contain 1-50 valid record IDs`);
   }
   return ids;
 }
@@ -506,7 +519,7 @@ async function listRecords(options) {
 }
 
 async function searchRecords(options) {
-  const query = options.query || options._[0];
+  const query = options.query || options._.slice(2).join(" ");
   if (!query) {
     throw new Error("record search 需要 --query 或位置参数作为搜索词");
   }
@@ -514,8 +527,10 @@ async function searchRecords(options) {
     query,
     scopeType: options.scope,
     localProjectId: options["local-project-id"],
+    projectId: numberOption(options["project-id"], "--project-id"),
     limit: numberOption(options.limit, "--limit"),
     includeBody: options["include-body"] === true,
+    includeArchived: options["include-archived"] === true,
     caller: options.caller || "CLI",
     protocol: "rpc"
   });
@@ -584,6 +599,27 @@ async function annotateRecords(options) {
   }
 
   console.log(`Annotated ${result.total ?? result.records?.length ?? annotations.length} records.`);
+}
+
+async function requestRecordLifecycle(options, mode) {
+  const projectId = numberOption(options["project-id"], "--project-id");
+  if (!projectId) {
+    throw new Error("--project-id is required");
+  }
+  const recordIds = recordIdList(options.ids ?? options.id, options.ids ? "--ids" : "--id");
+  const result = await rpc(`record.${mode}.request`, {
+    projectId,
+    recordIds,
+    ...(options.reason ? { reason: String(options.reason).trim() } : {})
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const label = mode === "archive" ? "archive" : "restore";
+  console.log(`Requested record ${label} ${result.request.requestId}: ${result.request.status}`);
 }
 
 async function listProjects(options) {
@@ -906,6 +942,11 @@ async function main() {
 
   if (resource === "record" && action === "annotate") {
     await annotateRecords(options);
+    return;
+  }
+
+  if (resource === "record" && (action === "archive" || action === "restore")) {
+    await requestRecordLifecycle(options, action);
     return;
   }
 

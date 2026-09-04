@@ -109,16 +109,16 @@ Consequences:
 
 Status: accepted
 
-Decision: `codex.send` 只能由用户手势（桌面端 UI 的发送入口）或持有完整 token 的本机调用方触发。桌面端派发 Codex 执行时，注入给被执行 agent 的是受限 token；它允许 `record.create`、`record.search`，以及活跃运行关联项目内的任务只读和任务创建提议，但不允许直接写任务、调用通用确认页或递归触发 `codex.send`。
+Decision: `codex.send` 只能由用户手势（桌面端 UI 的发送入口）或持有完整 token 的本机调用方触发。桌面端派发 Codex 执行时，注入给被执行 agent 的是受限 token；它允许 `record.create`、`record.search`，以及活跃运行关联项目内的记录归档/恢复提议、任务只读和任务创建提议，但不允许直接修改或删除记录/任务、调用通用确认页或递归触发 `codex.send`。
 
 Rationale: AI 需要结合当前项目待办判断重复工作、责任人和执行上下文，也需要把明确结论提出为待办；但任务和记录正文来自外部输入，存在提示注入风险。读取必须限定到用户主动派发的活跃项目，写入必须停留在用户确认一侧。
 
 Consequences:
 
 - app server 维护两级 token：完整 token 写入 `userData/app-server.json`；受限 token 仅通过环境变量 `WORKSHOP_DESKTOP_SERVER_PORT` / `WORKSHOP_DESKTOP_SERVER_TOKEN` 注入被派发的 Codex 进程。
-- 受限 token 的任务访问仅在对应项目存在活跃 Codex 运行期间有效；其他项目会被拒绝。
-- 受限 token 可以读取项目任务、成员和标签，并提交标准化任务创建提议；提议由 Desktop 生成可信确认页，确认后才执行。
-- 受限 token 不能直接创建、修改或删除任务，不能调用通用 `confirmation.request`，也不能调用 `context.current` 或 `codex.send`。
+- 受限 token 的项目范围记录提议和任务访问仅在对应项目存在活跃 Codex 运行期间有效；其他项目会被拒绝。
+- 受限 token 可以提交标准化记录归档/恢复提议，读取项目任务、成员和标签，并提交标准化任务创建提议；提议由 Desktop 生成可信确认页，确认后才执行。
+- 受限 token 不能直接修改或删除记录/任务，不能调用通用 `confirmation.request`，也不能调用 `context.current` 或 `codex.send`。
 - 通过 bridge 创建的记录带 `origin: agent`，与人工记录区分；origin 跟随创建者，编辑不改变来源。
 - 后续若实现"任务自动派发"，必须先重新评审本决策，不得默认绕过用户手势。
 
@@ -368,6 +368,25 @@ Consequences:
 - 整理入口使用布局语义图标和范围文案，并仅在触发窗口显示结果反馈；置顶入口必须明确其作用于所有便签窗口。
 - 本决策只增加 Desktop 内部窗口状态与 IPC，不修改后端、任务/记录数据格式或跨仓库共享契约。
 
+### D-024 AI 归档与恢复通过项目范围确认提议执行
+
+Status: accepted
+
+Decision: `workshop` CLI 和被派发 AI 可以为当前项目提交记录归档或恢复提议，但不能直接改变记录状态。Desktop 根据精确记录 ID 生成可信确认页；用户确认后，主进程再次校验项目归属、记录状态、更新时间和编辑保护状态，并由记录 store 整批原子写入。归档保留正文、标注、范围和任务关联，恢复回到归档前的 `active` 或 `completed` 状态。
+
+Rationale: 记录整理需要让 AI 把“建议归档”推进为真实状态，但归档会从当前注意力列表隐藏内容，不能等同于低风险标注或静默直写。专用请求比开放任意确认动作更容易约束项目范围、展示影响并处理确认期间的数据变化；可恢复状态避免把归档变成弱删除。
+
+Consequences:
+
+- `record.archive.request` 和 `record.restore.request` 是专用 app server 能力；CLI 只负责提交提议，没有跳过确认的参数。
+- 受限 agent token 只能在活跃 Codex 运行关联项目内提交 1-50 个精确记录 ID；完整 token 也复用同一确认链路。
+- 确认动作携带记录的 `expectedUpdatedAt`。任一记录不存在、越出项目、状态不匹配、确认后已变化或正处于受保护编辑态时，整个批次失败。
+- 归档成功后关闭对应的非编辑详情窗口并通知其余窗口刷新；恢复不自动打开详情窗口。
+- `archivedFromStatus` 只用于恢复生命周期，兼容旧归档数据时缺省恢复为 `active`；它不形成新的记录类型。
+- 显式 `record list --status archived` 可以发现归档记录；`record search --include-archived --project-id <id>` 可以在需要时把归档记录纳入检索。
+- 该能力只修改 Desktop 自有的本地记录契约，不修改 Workshop 后端、Web 或独立 `todo` CLI；归档/恢复不改变远端任务状态。
+- 删除、合并、正文重组和无确认批量状态写入仍不开放给 AI。
+
 ## 开放问题
 
 ### MVP 边界审查（2026-07-08）
@@ -406,6 +425,5 @@ Consequences:
 - 异步确认动作集合是否需要扩展到删除、合并、重组记录，还是继续保持窄集合？
 - Codex 运行除工作台和托盘面板状态行外，是否需要完整日志视图和系统级完成通知？
 - 发送到 Codex 前是否需要让用户预览最终组装的 prompt？
-- 是否需要为记录归档或记录状态变更提供正式 CLI / confirmation action，而不是只能通过 UI 操作？
 - 是否改接 `codex app-server daemon` 共享实例，以换取 Codex app 的实时可见？当前为列表可见；实测（CLI/app 0.133.0）turn 进行中在 Codex app 打开该线程，页面可能挂住，需重启 Codex app 才恢复，执行本身不受影响。
 - 派发执行是否需要工作区隔离（per-run worktree 或要求干净工作区）？实测派发 agent 与本地未提交修改在同一 checkout 并发写作。

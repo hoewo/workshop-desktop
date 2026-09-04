@@ -11,6 +11,7 @@ import type {
   PersonalRecordMeta,
   PersonalRecordOrigin,
   PersonalRecordScope,
+  PersonalRecordStatusChangeTarget,
   PersonalRecordStatus,
   SavePersonalRecordRequest
 } from "../shared/types";
@@ -23,8 +24,12 @@ export function normalizeRecordStatus(value: unknown): PersonalRecordStatus {
   return value === "completed" || value === "promoted" || value === "archived" ? value : "active";
 }
 
-function isListedRecordStatus(status: PersonalRecordStatus) {
+function isListedRecordStatus(status: PersonalRecordStatus): status is "active" | "completed" {
   return status === "active" || status === "completed";
+}
+
+function normalizeArchivedFromStatus(value: unknown): "active" | "completed" | undefined {
+  return value === "completed" ? "completed" : value === "active" ? "active" : undefined;
 }
 
 function normalizeRecordId(id: string) {
@@ -209,6 +214,10 @@ export class PersonalRecordStore {
     return records.filter((record) => isListedRecordStatus(record.status));
   }
 
+  async listAll() {
+    return this.readRecordIndexAfterWrites();
+  }
+
   async get(id: string): Promise<PersonalRecord | null> {
     await this.waitForPendingWrites();
     const safeId = normalizeRecordId(id);
@@ -234,6 +243,14 @@ export class PersonalRecordStore {
 
   annotate(request: AnnotatePersonalRecordRequest): Promise<PersonalRecordMeta> {
     return this.enqueueWrite(() => this.annotateNow(request));
+  }
+
+  archiveProjectRecords(projectId: number, targets: PersonalRecordStatusChangeTarget[]): Promise<PersonalRecordMeta[]> {
+    return this.enqueueWrite(() => this.changeProjectArchiveStatusNow(projectId, targets, "archive"));
+  }
+
+  restoreProjectRecords(projectId: number, targets: PersonalRecordStatusChangeTarget[]): Promise<PersonalRecordMeta[]> {
+    return this.enqueueWrite(() => this.changeProjectArchiveStatusNow(projectId, targets, "restore"));
   }
 
   delete(id: string): Promise<string> {
@@ -279,6 +296,8 @@ export class PersonalRecordStore {
               ...record,
               scopeType: normalizeRecordScope(record.scopeType),
               status: normalizeRecordStatus(record.status),
+              archivedFromStatus:
+                normalizeRecordStatus(record.status) === "archived" ? normalizeArchivedFromStatus(record.archivedFromStatus) : undefined,
               localProjectId: safeLocalProjectId(record.localProjectId),
               annotations: normalizeRecordAnnotations(record.annotations)
             }))
@@ -327,11 +346,20 @@ export class PersonalRecordStore {
     const fallbackTitle = taskTitle || projectName;
     // origin 跟随创建者，后续编辑不改变来源。
     const requestedOrigin: PersonalRecordOrigin = nextRequest.origin === "agent" ? "agent" : "human";
+    const status = normalizeRecordStatus(nextRequest.status ?? existing?.status);
+    const existingStatus = existing?.status ?? "active";
+    const archivedFromStatus =
+      status === "archived"
+        ? isListedRecordStatus(existingStatus)
+          ? existingStatus
+          : normalizeArchivedFromStatus(existing?.archivedFromStatus) ?? "active"
+        : undefined;
     const meta: PersonalRecordMeta = {
       id,
       title: deriveRecordTitle(bodyMarkdown, fallbackTitle),
       scopeType,
-      status: normalizeRecordStatus(nextRequest.status ?? existing?.status),
+      status,
+      ...(archivedFromStatus ? { archivedFromStatus } : {}),
       origin: existing?.origin ?? requestedOrigin,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -344,6 +372,73 @@ export class PersonalRecordStore {
     await writeFileAtomic(this.recordBodyPath(id), bodyMarkdown);
     await this.writeRecordIndex(nextRecords);
     return { ...meta, bodyMarkdown };
+  }
+
+  private async changeProjectArchiveStatusNow(
+    projectId: number,
+    targets: PersonalRecordStatusChangeTarget[],
+    mode: "archive" | "restore"
+  ): Promise<PersonalRecordMeta[]> {
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      throw new Error("项目 ID 无效");
+    }
+    if (!Array.isArray(targets) || targets.length === 0 || targets.length > 50) {
+      throw new Error("记录状态变更每次需要选择 1-50 条记录");
+    }
+
+    const normalizedTargets = targets.map((target) => ({
+      id: normalizeRecordId(target.id),
+      expectedUpdatedAt: safeTimestamp(target.expectedUpdatedAt, "")
+    }));
+    if (new Set(normalizedTargets.map((target) => target.id)).size !== normalizedTargets.length) {
+      throw new Error("记录状态变更不能包含重复 ID");
+    }
+    if (normalizedTargets.some((target) => !target.expectedUpdatedAt)) {
+      throw new Error("记录状态变更缺少有效的 expectedUpdatedAt");
+    }
+
+    const records = await this.readRecordIndex();
+    const recordsById = new Map(records.map((record) => [record.id, record]));
+    for (const target of normalizedTargets) {
+      const record = recordsById.get(target.id);
+      if (!record) {
+        throw new Error(`记录不存在：${target.id}`);
+      }
+      if (record.projectId !== projectId) {
+        throw new Error(`记录不属于项目 ${projectId}：${target.id}`);
+      }
+      if (record.updatedAt !== target.expectedUpdatedAt) {
+        throw new Error(`记录已在确认后发生变化，请重新提交：${record.title}`);
+      }
+      if (mode === "archive" && !isListedRecordStatus(record.status)) {
+        throw new Error(`记录当前不可归档：${record.title}（${record.status}）`);
+      }
+      if (mode === "restore" && record.status !== "archived") {
+        throw new Error(`记录当前不可恢复：${record.title}（${record.status}）`);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const targetIds = new Set(normalizedTargets.map((target) => target.id));
+    const changed: PersonalRecordMeta[] = [];
+    const nextRecords = records.map((record) => {
+      if (!targetIds.has(record.id)) {
+        return record;
+      }
+      const next: PersonalRecordMeta =
+        mode === "archive"
+          ? { ...record, status: "archived", archivedFromStatus: record.status as "active" | "completed", updatedAt: now }
+          : {
+              ...record,
+              status: normalizeArchivedFromStatus(record.archivedFromStatus) ?? "active",
+              archivedFromStatus: undefined,
+              updatedAt: now
+            };
+      changed.push(next);
+      return next;
+    });
+    await this.writeRecordIndex(nextRecords);
+    return changed;
   }
 
   private async annotateNow(request: AnnotatePersonalRecordRequest): Promise<PersonalRecordMeta> {

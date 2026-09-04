@@ -70,7 +70,10 @@ workshop --json doctor
 ```bash
 workshop record create --title "记录标题" --body "记录内容" --scope project --project-id 98 --project-name workshop-desktop --open
 workshop record list --project-id 98 --json
+workshop record list --project-id 98 --status archived --json
 workshop record get --id <record-id> --json
+workshop record archive --project-id 98 --ids <record-id-1>,<record-id-2> --reason "已完成整理" --json
+workshop record restore --project-id 98 --ids <record-id-1>,<record-id-2> --json
 workshop task list --project-id 98 --json
 workshop project members --project-id 98 --json
 workshop project tags --project-id 98 --json
@@ -81,6 +84,8 @@ workshop confirmation request --title "确认标题" --html-file ./confirm.html 
 ```
 
 `workshop task create` 不直接写入任务系统：它提交标准化创建提议并打开 Desktop 确认页，用户确认后才会创建。Desktop 直接创建和记录转待办也使用同一套“内容 + 负责人 + 可选项目标签”契约。
+
+`workshop record archive` / `restore` 同样只提交项目内记录状态提议。Desktop 会展示记录清单，用户确认后再整批归档或恢复；归档不删除正文、标注或任务关联。
 
 发布版在非 Windows 平台启动时会自动安装用户级 `workshop` 和 `workshop-desktop` shim 到 `~/.local/bin`。Windows 发布包当前尚未自动安装 CLI shim；Windows 用户先使用应用内能力，CLI 自动安装另行实现。
 

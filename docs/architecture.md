@@ -62,9 +62,9 @@ Codex / 本地 AI ─> workshop / workshop-desktop CLI ─> Desktop app server �
 ## 本地 AI Bridge 与 CLI
 
 - app server 只绑定 `127.0.0.1`。
-- token 分完整 token 和受限 token：完整 token 面向本机用户能力；受限 token 只开放记录回写/检索，以及活跃 Codex 运行关联项目内的任务只读和创建提议能力。
+- token 分完整 token 和受限 token：完整 token 面向本机用户能力；受限 token 只开放记录回写/检索、活跃 Codex 运行关联项目内的记录归档/恢复提议，以及同项目任务只读和创建提议能力。
 - CLI 只调用 app server，负责发现、参数、文件输入、JSON 输出和友好命令封装；它不保存业务事实。
-- 新增记录是低风险 append-only 写入；编辑已有对象、改变状态、创建任务、批量整理和执行派发等高风险动作应通过确认页或用户手势完成。
+- 新增记录是低风险 append-only 写入；编辑已有对象、改变状态、创建任务、批量整理和执行派发等高风险动作应通过确认页或用户手势完成。记录归档/恢复使用专用项目范围请求、确认时版本校验和 store 原子批量写入。
 - Desktop 直接创建、记录转待办和 AI/CLI 创建提议共用同一任务创建服务；任务必须明确内容和项目成员负责人，项目标签可选，初始状态为 `pending`。
 - 被派发 agent 可以读取活跃运行关联项目中的任务、成员和标签，但只能通过专用任务创建提议请求打开由 Desktop 生成的可信确认页，不能提交任意确认 HTML 或直接写任务。
 - `codex.send` 属于 Workshop UI / service layer 的执行动作，不是被派发 agent 可递归触发的能力。

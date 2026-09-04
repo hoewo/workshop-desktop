@@ -162,6 +162,26 @@ workshop context current --json
 - 当前上下文命令返回最近聚焦的 Workshop 窗口对象；如果长时间未切换焦点，结果可标记为 `stale`。
 - 任务读取要求桌面端已有有效登录配置。
 
+记录归档与恢复验证：
+
+```bash
+workshop record archive --project-id 98 --ids <record-id-1>,<record-id-2> --reason "已完成整理" --json
+workshop confirmation status --id <request-id> --json
+workshop record list --project-id 98 --status archived --json
+workshop record search "<关键词>" --project-id 98 --include-archived --json
+workshop record restore --project-id 98 --ids <record-id-1>,<record-id-2> --json
+```
+
+预期结果：
+
+- 归档和恢复命令立即返回待确认的 `requestId`，不会直接改变状态，也没有跳过确认参数。
+- 确认页由 Desktop 模板生成并逐条展示记录；取消或关闭时不写入。
+- 确认归档后，所选记录整批变为 `archived`，从当前列表隐藏，但可被显式归档列表和包含归档的检索发现；正文、标注和任务关联保持不变。
+- 确认恢复后，记录回到归档前的 `active` 或 `completed`；旧归档数据没有 `archivedFromStatus` 时回到 `active`。
+- 任一 ID 不存在、不属于项目、状态不匹配、确认后更新时间变化或详情窗口处于未保存编辑态时，整批失败且其他记录也不改变。
+- 归档成功后，所选记录的非编辑详情窗口关闭，项目工作区与其他列表收到刷新通知；恢复不会自动打开记录窗口。
+- 使用受限 agent token 时，只能为当前活跃 Codex 运行关联项目提交 1-50 条记录；归档/恢复不会调用远端 Workshop 任务 API。
+
 统一任务创建验证：
 
 ```bash

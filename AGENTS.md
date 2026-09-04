@@ -38,7 +38,7 @@
 - AI 可以在任务完成、讨论形成稳定结论、或用户要求记录时新增一条记录。
 - AI 默认不编辑、删除或改写用户已有记录。
 - AI 默认不创建 Workshop 任务；用户可以在 Workshop Desktop 中阅读、编辑记录，并按需要使用现有“转为任务”能力。
-- 用户在 Workshop 临时确认页确认后，Workshop 可以执行已声明的记录正文更新、记录创建、记录标注、任务创建或任务状态更新；删除、合并和重组多条记录不属于默认动作。
+- 用户在 Workshop 临时确认页确认后，Workshop 可以执行已声明的记录正文更新、记录创建、记录标注、项目范围内的记录归档/恢复、任务创建或任务状态更新；删除、合并和重组多条记录不属于默认动作。
 - 记录里可以写迭代草稿、任务草稿、决策草稿或 repo fact 候选，但这些内容仍然只是记录内容。
 - 只有用户把记录转为任务后，它才进入任务体系。
 - 只有 agent 修改 repo 文件并经过本 repo 文档边界检查后，内容才成为 repo fact。
@@ -76,6 +76,13 @@ workshop record create --title "记录标题" --body-file ./path/to/note.md --sc
 workshop record list --project-id 98 --json
 ```
 
+归档和恢复必须使用专用确认请求；AI 不能把标注中的 `retention=archived` 当作真实归档，也不能直接改记录状态：
+
+```bash
+workshop record archive --project-id 98 --ids <record-id-1>,<record-id-2> --reason "<原因>" --json
+workshop record restore --project-id 98 --ids <record-id-1>,<record-id-2> --json
+```
+
 `record list` 默认只返回记录元数据（如 id、标题、状态、范围、项目/任务归属和时间戳），用于标题级筛选和去重判断。只有需要阅读某条候选记录正文时，再单独读取：
 
 ```bash
@@ -91,7 +98,7 @@ workshop record get --id <record-id> --json
 当环境变量 `WORKSHOP_DESKTOP_SERVER_PORT` 和 `WORKSHOP_DESKTOP_SERVER_TOKEN` 存在时，本次执行由 Workshop Desktop 派发。派发不附带额外说明：执行内容就是用户消息本身，项目 ID 用上文声明的本 repo Workshop 项目 ID，运行与任务/记录的关联由 Workshop Desktop 的运行状态表持有。此时适用：
 
 - 回写遵循上文 AI 记录边界与密度规则，方式优先用上文 CLI（它会自动使用这两个环境变量）；无法使用 CLI 时，直接 `POST http://127.0.0.1:${WORKSHOP_DESKTOP_SERVER_PORT}/rpc`，请求头 `Authorization: Bearer ${WORKSHOP_DESKTOP_SERVER_TOKEN}`，请求体 `{"method":"record.create","params":{"title":"<标题>","bodyMarkdown":"<正文>","scopeType":"project","projectId":98}}`。
-- 派发注入的 token 允许 `record.create`、`record.search`，以及当前活跃运行项目范围内的 `task.list`、`task.get`、`task.creationContext` 和 `task.create.request`。任务写入只能提交确认请求；不要尝试直接创建、修改、删除任务，也不要调用 `context.current`、通用 `confirmation.request` 或 `codex.send`。
+- 派发注入的 token 允许 `record.create`、`record.search`，当前活跃运行项目范围内的 `record.archive.request`、`record.restore.request`、`task.list`、`task.get`、`task.creationContext` 和 `task.create.request`。记录归档/恢复与任务创建只能提交专用确认请求；不要尝试直接修改或删除记录/任务，也不要调用 `context.current`、通用 `confirmation.request` 或 `codex.send`。
 
 ## 发布与自动更新流程
 

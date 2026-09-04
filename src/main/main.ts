@@ -63,6 +63,7 @@ import type {
   PersonalRecordMeta,
   PersonalRecordScope,
   PersonalRecordStatus,
+  PersonalRecordStatusChangeTarget,
   PersonalRecordTarget,
   Project,
   ProjectTag,
@@ -820,6 +821,12 @@ interface ListRecordsParams {
   includeBody?: boolean;
 }
 
+interface RecordLifecycleRequest {
+  projectId: number;
+  recordIds: string[];
+  reason?: string;
+}
+
 interface NormalizedSendToCodexParams {
   kind: "task" | "record";
   backend: CodexRunBackend;
@@ -932,7 +939,7 @@ function normalizeTaskCreationRequest(value: unknown): CreateTaskRequest & { sta
 
 function normalizeAppServerRecordListParams(params: unknown): ListRecordsParams {
   const value = isPlainObject(params) ? params : {};
-  const scopeType = normalizeRecordScope(value.scopeType ?? value.scope);
+  const scopeType = value.scopeType || value.scope ? normalizeRecordScope(value.scopeType ?? value.scope) : undefined;
   const status =
     value.status === "active" || value.status === "completed" || value.status === "promoted" || value.status === "archived"
       ? value.status
@@ -958,6 +965,51 @@ function normalizeAppServerRecordGetParams(params: unknown) {
     throw new Error("record.get 需要 id");
   }
   return { id };
+}
+
+function normalizeRecordStatusChangeTargets(value: unknown): PersonalRecordStatusChangeTarget[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 50) {
+    throw new Error("记录状态变更每次需要选择 1-50 条记录");
+  }
+  const records = value.map((raw) => {
+    const target = isPlainObject(raw) ? raw : {};
+    const id = safeWindowText(target.id, 120);
+    const expectedUpdatedAt = safeWindowText(target.expectedUpdatedAt, 40);
+    if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+      throw new Error("记录状态变更包含无效记录 ID");
+    }
+    if (!expectedUpdatedAt || Number.isNaN(new Date(expectedUpdatedAt).getTime())) {
+      throw new Error(`记录状态变更缺少有效的 expectedUpdatedAt：${id}`);
+    }
+    return { id, expectedUpdatedAt };
+  });
+  if (new Set(records.map((record) => record.id)).size !== records.length) {
+    throw new Error("记录状态变更不能包含重复 ID");
+  }
+  return records;
+}
+
+function normalizeRecordLifecycleRequest(params: unknown): RecordLifecycleRequest {
+  const value = isPlainObject(params) ? params : {};
+  const rawIds = Array.isArray(value.recordIds) ? value.recordIds : Array.isArray(value.ids) ? value.ids : [];
+  if (rawIds.length === 0 || rawIds.length > 50) {
+    throw new Error("记录归档或恢复每次需要选择 1-50 条记录");
+  }
+  const recordIds = rawIds.map((rawId) => {
+    const id = safeWindowText(rawId, 120);
+    if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+      throw new Error("记录归档或恢复包含无效记录 ID");
+    }
+    return id;
+  });
+  if (new Set(recordIds).size !== recordIds.length) {
+    throw new Error("记录归档或恢复不能包含重复 ID");
+  }
+  return {
+    projectId: normalizePositiveNumber(value.projectId, "项目 ID"),
+    recordIds,
+    reason: safeWindowText(value.reason, 300) ?? undefined
+  };
 }
 
 function normalizeAnnotationConfidence(value: unknown) {
@@ -1114,6 +1166,14 @@ function normalizeConfirmationAction(value: unknown): ConfirmationAction | undef
     case "record.annotate": {
       const { annotations } = normalizeAppServerRecordAnnotateParams({ annotations: value.annotations });
       return { type: "record.annotate", annotations };
+    }
+    case "record.archive":
+    case "record.restore": {
+      return {
+        type: value.type,
+        projectId: normalizePositiveNumber(value.projectId, "项目 ID"),
+        records: normalizeRecordStatusChangeTargets(value.records)
+      };
     }
     case "task.create": {
       return { type: "task.create", ...normalizeTaskCreationRequest(value) };
@@ -1610,7 +1670,7 @@ function codexEnvironment(): NodeJS.ProcessEnv {
     PATH: [...pathEntries].join(path.delimiter)
   };
   if (appServerInfo) {
-    // 受限 token：被派发的 agent 只能使用显式开放的记录与项目范围内任务能力，不能再触发 codex.send。
+    // 受限 token：被派发的 agent 只能使用显式开放的记录能力、项目范围提议和任务读取，不能再触发 codex.send。
     env.WORKSHOP_DESKTOP_SERVER_PORT = String(appServerInfo.port);
     env.WORKSHOP_DESKTOP_SERVER_TOKEN = appServerInfo.agentToken;
   }
@@ -1790,6 +1850,49 @@ function buildRecordSaveRequest(record: PersonalRecord, bodyMarkdown: string): S
   };
 }
 
+function assertRecordWindowsNotProtected(recordIds: string[]) {
+  const targetIds = new Set(recordIds);
+  const protectedIds = new Set<string>();
+  for (const win of recordWindows) {
+    const target = recordWindowTargets.get(win);
+    if (!win.isDestroyed() && target?.noteId && targetIds.has(target.noteId) && windowArrangementStates.get(win)?.protected === true) {
+      protectedIds.add(target.noteId);
+    }
+  }
+  if (protectedIds.size > 0) {
+    throw new Error(`以下记录正在编辑，请先保存或取消编辑：${[...protectedIds].join(", ")}`);
+  }
+}
+
+function closeRecordDetailWindows(recordIds: string[]) {
+  const targetIds = new Set(recordIds);
+  for (const win of [...recordWindows]) {
+    const target = recordWindowTargets.get(win);
+    if (!win.isDestroyed() && target?.noteId && targetIds.has(target.noteId)) {
+      win.close();
+    }
+  }
+}
+
+async function changeProjectRecordArchiveStatus(
+  projectId: number,
+  targets: PersonalRecordStatusChangeTarget[],
+  mode: "archive" | "restore"
+) {
+  assertRecordWindowsNotProtected(targets.map((target) => target.id));
+  const records =
+    mode === "archive"
+      ? await personalRecordStore.archiveProjectRecords(projectId, targets)
+      : await personalRecordStore.restoreProjectRecords(projectId, targets);
+  for (const record of records) {
+    notifyRecordsChanged({ id: record.id, status: record.status, updatedAt: record.updatedAt });
+  }
+  if (mode === "archive") {
+    closeRecordDetailWindows(records.map((record) => record.id));
+  }
+  return { records, total: records.length };
+}
+
 async function executeConfirmationAction(action?: ConfirmationAction): Promise<unknown> {
   if (!action) {
     return null;
@@ -1832,6 +1935,14 @@ async function executeConfirmationAction(action?: ConfirmationAction): Promise<u
 
   if (action.type === "record.annotate") {
     return annotateRecordsForAppServer({ annotations: action.annotations });
+  }
+
+  if (action.type === "record.archive" || action.type === "record.restore") {
+    return changeProjectRecordArchiveStatus(
+      action.projectId,
+      action.records,
+      action.type === "record.archive" ? "archive" : "restore"
+    );
   }
 
   if (action.type === "task.create") {
@@ -2145,6 +2256,12 @@ async function handleAppServerRpc(payload: unknown, scope: AppServerScope) {
       throw new Error("当前受限 token 无权调用 record.annotate");
     }
     return annotateRecordsForAppServer(rpc.params);
+  }
+
+  if (rpc.method === "record.archive.request" || rpc.method === "record.restore.request") {
+    const request = normalizeRecordLifecycleRequest(rpc.params);
+    assertAgentProjectScope(scope, request.projectId);
+    return requestRecordLifecycleForAppServer(request, rpc.method === "record.archive.request" ? "archive" : "restore");
   }
 
   if (rpc.method === "record.search") {
@@ -2790,10 +2907,14 @@ async function listPersonalRecords() {
   return personalRecordStore.listVisible();
 }
 
+async function listAllPersonalRecords() {
+  return personalRecordStore.listAll();
+}
+
 async function listRecordsForAppServer(params: unknown) {
   const options = normalizeAppServerRecordListParams(params);
   const query = options.query?.toLowerCase();
-  let records: PersonalRecordMeta[] = await listPersonalRecords();
+  let records: PersonalRecordMeta[] = options.status ? await listAllPersonalRecords() : await listPersonalRecords();
 
   if (options.scopeType) {
     records = records.filter((record) => record.scopeType === options.scopeType);
@@ -2831,7 +2952,7 @@ async function listRecordsForAppServer(params: unknown) {
 
 // record.search：搜 title + body 正文（pull 路径，编程工具主动检索记录池）
 // 与 record.list 的区别：list 只搜 meta 字段；search 读 body 正文做关键词匹配。
-// 读开放：agent token 也可以调用（scope 参数用于记遥测日志，不限制访问）。
+// 读开放：agent token 也可以调用。读取归档记录时必须显式提供当前活跃项目作用域。
 async function searchRecordsForAppServer(params: unknown, scope: AppServerScope) {
   const value = isPlainObject(params) ? params : {};
   const query = safeWindowText(value.query, 200);
@@ -2839,20 +2960,33 @@ async function searchRecordsForAppServer(params: unknown, scope: AppServerScope)
     throw new Error("record.search 需要 query 参数");
   }
   const localProjectId = safeLocalProjectId(value.localProjectId) || undefined;
-  const scopeType = normalizeRecordScope(value.scopeType ?? value.scope);
+  const scopeType = value.scopeType || value.scope ? normalizeRecordScope(value.scopeType ?? value.scope) : undefined;
   const rawLimit = typeof value.limit === "number" && Number.isFinite(value.limit) ? Math.trunc(value.limit) : undefined;
   const limit = rawLimit ? clamp(rawLimit, 1, 50) : 20;
   const includeBody = value.includeBody === true;
+  const includeArchived = value.includeArchived === true;
+  const projectId = normalizeOptionalPositiveNumber(value.projectId, "项目 ID");
+  if (includeArchived && scope === "agent" && projectId === undefined) {
+    throw new Error("受限 token 检索归档记录时必须提供项目 ID");
+  }
+  if (projectId !== undefined) {
+    assertAgentProjectScope(scope, projectId);
+  }
   const caller = safeWindowText(value.caller, 80) ?? "unknown";
   const protocol: "rpc" | "mcp" = value.protocol === "mcp" ? "mcp" : "rpc";
 
   const lowerQuery = query.toLowerCase();
-  let metas: PersonalRecordMeta[] = await listPersonalRecords();
+  let metas: PersonalRecordMeta[] = includeArchived
+    ? (await listAllPersonalRecords()).filter((record) => record.status !== "promoted")
+    : await listPersonalRecords();
   if (scopeType) {
     metas = metas.filter((r) => r.scopeType === scopeType);
   }
   if (localProjectId) {
     metas = metas.filter((r) => r.localProjectId === localProjectId);
+  }
+  if (projectId !== undefined) {
+    metas = metas.filter((record) => record.projectId === projectId);
   }
 
   // 读 body 正文做关键词匹配
@@ -2906,6 +3040,88 @@ async function annotateRecordsForAppServer(params: unknown) {
     records.push(await annotatePersonalRecord(annotation));
   }
   return { records, total: records.length };
+}
+
+function renderRecordLifecycleConfirmationBody(
+  mode: "archive" | "restore",
+  request: RecordLifecycleRequest,
+  records: PersonalRecord[]
+) {
+  const actionLabel = mode === "archive" ? "归档" : "恢复";
+  const rows = records
+    .map(
+      (record) =>
+        `<li><strong>${escapeHtml(record.title)}</strong><br><span>${escapeHtml(record.id)} · ${escapeHtml(record.status)}</span></li>`
+    )
+    .join("");
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { margin: 0; padding: 22px; color: #1f2428; background: #fff; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      h2 { margin: 0 0 8px; font-size: 17px; }
+      p { margin: 8px 0; }
+      ul { margin: 16px 0; padding-left: 22px; }
+      li { margin: 0 0 10px; overflow-wrap: anywhere; }
+      li span, .hint { color: #69716d; font-size: 12px; }
+      .reason { white-space: pre-wrap; padding: 10px 12px; border-radius: 8px; background: #f5f6f3; }
+    </style>
+  </head>
+  <body>
+    <h2>确认${actionLabel} ${records.length} 条记录</h2>
+    <p>项目 ID：${request.projectId}</p>
+    ${request.reason ? `<p class="reason">原因：${escapeHtml(request.reason)}</p>` : ""}
+    <ul>${rows}</ul>
+    <p class="hint">${
+      mode === "archive"
+        ? "确认后记录将从当前列表隐藏；正文、标注和任务关联不会删除，可通过恢复命令找回。"
+        : "确认后记录将恢复到归档前的 active 或 completed 状态。"
+    } 任一记录在确认前发生变化时，本批次不会执行。</p>
+  </body>
+</html>`;
+}
+
+async function requestRecordLifecycleForAppServer(request: RecordLifecycleRequest, mode: "archive" | "restore") {
+  const records: PersonalRecord[] = [];
+  for (const id of request.recordIds) {
+    const record = await getPersonalRecord(id);
+    if (!record) {
+      throw new Error(`记录不存在：${id}`);
+    }
+    if (record.projectId !== request.projectId) {
+      throw new Error(`记录不属于项目 ${request.projectId}：${id}`);
+    }
+    if (mode === "archive" && record.status !== "active" && record.status !== "completed") {
+      throw new Error(`记录当前不可归档：${record.title}（${record.status}）`);
+    }
+    if (mode === "restore" && record.status !== "archived") {
+      throw new Error(`记录当前不可恢复：${record.title}（${record.status}）`);
+    }
+    records.push(record);
+  }
+  assertRecordWindowsNotProtected(records.map((record) => record.id));
+  const action: ConfirmationAction = {
+    type: mode === "archive" ? "record.archive" : "record.restore",
+    projectId: request.projectId,
+    records: records.map((record) => ({ id: record.id, expectedUpdatedAt: record.updatedAt }))
+  };
+  const result = await requestAsyncConfirmationWindow({
+    title: mode === "archive" ? "确认归档记录" : "确认恢复记录",
+    html: renderRecordLifecycleConfirmationBody(mode, request, records),
+    width: 660,
+    height: 600,
+    action
+  });
+  return {
+    ...result,
+    proposal: {
+      mode,
+      projectId: request.projectId,
+      reason: request.reason,
+      records: records.map(({ bodyMarkdown: _bodyMarkdown, ...record }) => record)
+    }
+  };
 }
 
 async function listProjectsForAppServer(params: unknown) {

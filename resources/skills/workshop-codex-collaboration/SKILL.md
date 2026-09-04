@@ -262,6 +262,8 @@ workshop --json doctor
 workshop context current --json
 workshop project list --json
 workshop record list --project-id <project-id> --json
+workshop record list --project-id <project-id> --status archived --json
+workshop record search "<关键词>" --project-id <project-id> --include-archived --json
 workshop record get --id <record-id> --json
 workshop project members --project-id <project-id> --json
 workshop project tags --project-id <project-id> --json
@@ -281,9 +283,9 @@ workshop task get --project-id <project-id> --id <task-id> --json
 
 - 用户消息就是任务输入，不要假设还有隐藏说明。
 - Workshop 已在运行状态表里持有关联关系，prompt 里不需要再写来源包装。
-- 注入 token 是受限 token：允许 `record.create`、`record.search`，以及当前活跃运行项目范围内的 `task.list`、`task.get`、`task.creationContext` 和 `task.create.request`。
+- 注入 token 是受限 token：允许 `record.create`、`record.search`，以及当前活跃运行项目范围内的 `record.archive.request`、`record.restore.request`、`task.list`、`task.get`、`task.creationContext` 和 `task.create.request`。
 - 任务能力的项目范围由 Desktop 根据当前派发运行建立并在运行结束时撤销；不要尝试读取其他项目。
-- 不要用受限 token 调用 `context.current`、`record.get`、通用 `confirmation.request` 或 `codex.send`，也不要尝试直接创建、修改或删除任务。
+- 不要用受限 token 调用 `context.current`、`record.get`、通用 `confirmation.request` 或 `codex.send`，也不要尝试直接修改或删除记录/任务。记录归档/恢复和任务创建只能提交专用确认提议。
 - 项目 ID 优先来自目标 repo 的 `AGENTS.md` 或用户消息；没有项目上下文时，完成 repo 任务并说明回写需要项目 ID。
 
 ## 记录与任务边界
@@ -296,7 +298,7 @@ workshop task get --project-id <project-id> --id <task-id> --json
 - AI 可以在任务完成、形成稳定结论、或用户要求记录时创建短记录。
 - AI 默认不编辑、删除、合并、重组用户已有记录。
 - AI 只有在用户明确要求时才提出创建 Workshop 任务；使用标准 `workshop task create` 提议并等待 Desktop 确认页，不直接写任务。改变任务状态同样需要明确要求和确认。
-- 归档记录或改变记录状态只有在目标项目 CLI / confirmation action 明确提供正式能力时才执行；不要通过直接改 `userData` 代替。
+- 用户明确要求归档或恢复项目记录时，使用 `workshop record archive` / `restore` 提交专用确认提议；标注中的 `retention=archived` 只是整理建议，不是真实归档状态。不要通过直接改 `userData` 代替。
 - `codex.send` 是 Workshop UI/service layer 拥有的执行动作，不是 Codex 可随意递归触发的能力。
 
 ## 记录整理架构
@@ -319,6 +321,15 @@ workshop task get --project-id <project-id> --id <task-id> --json
 ```
 
 `intent` 是 AI 对内容主意图的判断，不是记录本体强类型。`retention` 是保留策略；`temp` 代表执行过程材料，任务完成后通常不沉淀正文。`resolution` 表示问题、讨论或任务型记录当前是否已有答案、结论或转化结果。分类变化时优先重跑标注，不迁移记录正文或扩展记录状态机。
+
+项目记录归档与恢复：
+
+```bash
+workshop record archive --project-id <project-id> --ids <record-id-1>,<record-id-2> --reason "<原因>" --json
+workshop record restore --project-id <project-id> --ids <record-id-1>,<record-id-2> --json
+```
+
+两条命令都只提交待确认请求，没有跳过确认参数。每次使用 1-50 个精确 ID；受限 token 只能操作当前活跃运行关联项目。归档保留正文、标注和任务关联，恢复回到归档前状态；删除、合并和正文重组仍不开放。
 
 ## 回写规范
 
@@ -354,7 +365,7 @@ workshop confirmation request --title "<确认标题>" --html-file ./confirm.htm
 workshop confirmation status --id <request-id> --json
 ```
 
-full CLI 可以在通用确认动作中使用 `record.appendBody`、`record.updateBody`、`record.create`、`record.annotate`、`task.create`、`task.updateState`，但动作必须明确、范围清楚、可由用户理解。被派发 agent 不得提交任意确认 HTML 或通用动作；任务创建只能走标准 `task.create.request`。删除、合并和重组多条记录不属于默认动作。
+full CLI 可以在通用确认动作中使用 `record.appendBody`、`record.updateBody`、`record.create`、`record.annotate`、`record.archive`、`record.restore`、`task.create`、`task.updateState`，但归档/恢复仍应优先走专用命令，所有动作都必须明确、范围清楚、可由用户理解。被派发 agent 不得提交任意确认 HTML 或通用动作；记录归档/恢复和任务创建只能分别走标准 `record.archive.request` / `record.restore.request` / `task.create.request`。删除、合并和重组多条记录不属于默认动作。
 
 ## 失败处理
 

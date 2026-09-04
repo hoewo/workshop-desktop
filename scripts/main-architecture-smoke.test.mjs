@@ -122,6 +122,10 @@ test("temporary confirmation bridge stays on the app-server boundary", async () 
   assert.match(mainBundle, /context\.current/);
   assert.match(mainBundle, /record\.open/);
   assert.match(mainBundle, /record\.annotate/);
+  assert.match(mainBundle, /record\.archive\.request/);
+  assert.match(mainBundle, /record\.restore\.request/);
+  assert.match(mainBundle, /record\.archive/);
+  assert.match(mainBundle, /record\.restore/);
   assert.match(mainBundle, /record\.updateBody/);
   assert.match(mainBundle, /task\.creationContext/);
   assert.match(mainBundle, /task\.create\.request/);
@@ -336,6 +340,107 @@ test("Workshop CLI resolves task assignee and optional tags before requesting co
       }
     });
     assert.equal(JSON.parse(untaggedStdout).request.requestId, "request-1");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("Workshop CLI searches archived records and requests lifecycle changes through dedicated confirmation methods", async () => {
+  const calls = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => {
+      const rpc = JSON.parse(body);
+      calls.push(rpc);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          ok: true,
+          result: {
+            request: { requestId: `request-${calls.length}`, status: "pending" },
+            proposal: rpc.params
+          }
+        })
+      );
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const env = {
+      ...process.env,
+      WORKSHOP_DESKTOP_SERVER_PORT: String(address.port),
+      WORKSHOP_DESKTOP_SERVER_TOKEN: "test-token"
+    };
+    await execFileAsync(
+      process.execPath,
+      [
+        "scripts/workshop-desktop-cli.mjs",
+        "record",
+        "search",
+        "当前焦点",
+        "--project-id",
+        "98",
+        "--include-archived",
+        "--json"
+      ],
+      { cwd: process.cwd(), env }
+    );
+    await execFileAsync(
+      process.execPath,
+      [
+        "scripts/workshop-desktop-cli.mjs",
+        "record",
+        "archive",
+        "--project-id",
+        "98",
+        "--ids",
+        "record-a,record-b",
+        "--reason",
+        "已完成整理",
+        "--json"
+      ],
+      { cwd: process.cwd(), env }
+    );
+    await execFileAsync(
+      process.execPath,
+      ["scripts/workshop-desktop-cli.mjs", "record", "restore", "--project-id", "98", "--id", "record-a", "--json"],
+      { cwd: process.cwd(), env }
+    );
+
+    assert.deepEqual(calls, [
+      {
+        method: "record.search",
+        params: {
+          query: "当前焦点",
+          projectId: 98,
+          includeBody: false,
+          includeArchived: true,
+          caller: "CLI",
+          protocol: "rpc"
+        }
+      },
+      {
+        method: "record.archive.request",
+        params: { projectId: 98, recordIds: ["record-a", "record-b"], reason: "已完成整理" }
+      },
+      {
+        method: "record.restore.request",
+        params: { projectId: 98, recordIds: ["record-a"] }
+      }
+    ]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -657,9 +762,56 @@ test("PersonalRecordStore keeps one visible record per task and preserves origin
     assert.equal(annotatedBody?.bodyMarkdown, "# Archived");
     assert.equal(annotatedBody?.annotations?.[0]?.intent, "execution_summary");
 
+    const allRecords = await store.listAll();
+    assert.equal(allRecords.length, 2);
+    assert.equal(allRecords.find((record) => record.id === fresh.id)?.archivedFromStatus, "active");
+
+    const [restored] = await store.restoreProjectRecords(98, [{ id: fresh.id, expectedUpdatedAt: archived.updatedAt }]);
+    assert.equal(restored.status, "active");
+    assert.equal(restored.archivedFromStatus, undefined);
+    assert.equal((await store.get(fresh.id))?.annotations?.[0]?.retention, "archived");
+
+    const completedFresh = await store.save({
+      id: fresh.id,
+      bodyMarkdown: "# Completed before archive",
+      scopeType: "task",
+      status: "completed",
+      projectId: 98,
+      projectName: "workshop-desktop",
+      taskId: 7,
+      taskTitle: "Task",
+      origin: "agent"
+    });
+    const [archivedCompleted] = await store.archiveProjectRecords(98, [
+      { id: fresh.id, expectedUpdatedAt: completedFresh.updatedAt }
+    ]);
+    assert.equal(archivedCompleted.status, "archived");
+    assert.equal(archivedCompleted.archivedFromStatus, "completed");
+    const [restoredCompleted] = await store.restoreProjectRecords(98, [
+      { id: fresh.id, expectedUpdatedAt: archivedCompleted.updatedAt }
+    ]);
+    assert.equal(restoredCompleted.status, "completed");
+
+    const another = await store.save({
+      bodyMarkdown: "# Another",
+      scopeType: "project",
+      projectId: 98,
+      projectName: "workshop-desktop",
+      origin: "human"
+    });
+    await assert.rejects(
+      store.archiveProjectRecords(98, [
+        { id: fresh.id, expectedUpdatedAt: "2020-01-01T00:00:00.000Z" },
+        { id: another.id, expectedUpdatedAt: another.updatedAt }
+      ]),
+      /重新提交/
+    );
+    assert.equal((await store.get(fresh.id))?.status, "completed");
+    assert.equal((await store.get(another.id))?.status, "active");
+
     await store.delete(first.id);
     assert.equal(await store.get(first.id), null);
-    assert.equal((await store.listVisible()).length, 0);
+    assert.equal((await store.listVisible()).length, 2);
   });
 });
 

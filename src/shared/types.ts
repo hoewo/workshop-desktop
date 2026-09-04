@@ -554,6 +554,14 @@ export interface WindowFitRequest {
   minHeight?: number;
   maxWidth?: number;
   maxHeight?: number;
+  preserveUserHeight?: boolean;
+}
+
+export interface TaskComposerTarget {
+  projectId?: number;
+  initialContent?: string;
+  lockProject?: boolean;
+  sourceRecordId?: string;
 }
 
 export interface WindowArrangementNotice {
@@ -634,6 +642,7 @@ export interface DesktopBridge {
   openManual: () => Promise<void>;
   openSticky: (target?: StickyTarget | number) => Promise<void>;
   openPersonalRecord: (target?: PersonalRecordTarget) => Promise<void>;
+  openTaskComposer: (target?: TaskComposerTarget) => Promise<void>;
   listLocalProjects: () => Promise<LocalProject[]>;
   createLocalProject: (request: CreateLocalProjectRequest) => Promise<LocalProject>;
   renameLocalProject: (request: RenameLocalProjectRequest) => Promise<LocalProject>;
@@ -643,6 +652,7 @@ export interface DesktopBridge {
   listPersonalRecords: () => Promise<PersonalRecordMeta[]>;
   getPersonalRecord: (id: string) => Promise<PersonalRecord | null>;
   savePersonalRecord: (record: SavePersonalRecordRequest) => Promise<PersonalRecord>;
+  closePersonalRecord: (id: string) => Promise<void>;
   deletePersonalRecord: (id: string) => Promise<void>;
   showTaskPreview: (request: TaskPreviewRequest) => Promise<void>;
   keepTaskPreview: () => Promise<void>;
@@ -650,6 +660,7 @@ export interface DesktopBridge {
   notifyTaskChanged: (notice: TaskStateChangeNotice) => Promise<void>;
   closeWindow: () => Promise<void>;
   closeSticky: () => Promise<void>;
+  showProjectCloseMenu: () => Promise<void>;
   arrangeStickyWindows: () => Promise<WindowArrangementResult>;
   fitWindowContent: (request: WindowFitRequest) => Promise<void>;
   releaseWindowArrangement: () => Promise<void>;
@@ -672,6 +683,7 @@ export interface DesktopBridge {
   onFocusPulse: (callback: () => void) => () => void;
   onWindowFocusState: (callback: (notice: WindowFocusStateNotice) => void) => () => void;
   onWindowArrangement: (callback: (notice: WindowArrangementNotice) => void) => () => void;
+  onWindowCloseRequest: (callback: () => void) => () => void;
   onRefresh: (callback: (event: WorkshopRefreshEvent) => void) => () => void;
   onRecordsChanged: (callback: (notice: PersonalRecordChangeNotice | null) => void) => () => void;
 }

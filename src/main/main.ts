@@ -75,6 +75,7 @@ import type {
   SendToCodexResponse,
   StickyTarget,
   Task,
+  TaskComposerTarget,
   TaskCreationContext,
   TaskPreviewRequest,
   TaskStateChangeNotice,
@@ -120,7 +121,7 @@ const NOTE_ARRANGE_MARGIN = 12;
 const NOTE_ARRANGE_GAP = 12;
 const NOTE_ARRANGE_LIST_MIN_HEIGHT = 180;
 const NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT = 56;
-const PROJECT_WORKSPACE_COLLAPSED_HEIGHT = 124;
+const PROJECT_WORKSPACE_COLLAPSED_HEIGHT = 140;
 const DARWIN_ON_SCREEN_WINDOW_IDS_TIMEOUT_MS = 1200;
 const CURRENT_CONTEXT_STALE_MS = 5 * 60 * 1000;
 const CONFIRMATION_REQUESTS_LIMIT = 100;
@@ -152,11 +153,13 @@ const recordWindows = new Set<BrowserWindow>();
 const recordWindowTargets = new Map<BrowserWindow, NormalizedRecordTarget>();
 const windowArrangementStates = new Map<BrowserWindow, WindowArrangementState>();
 const arrangedWindowMaxHeights = new Map<BrowserWindow, number>();
+const userResizedWindowHeights = new Map<BrowserWindow, number>();
 const noteWindowFocusOrder = new Map<BrowserWindow, number>();
 let nextNoteWindowFocusOrder = 1;
 let settingsWindowRef: BrowserWindow | null = null;
 let manualWindowRef: BrowserWindow | null = null;
 let updateWindowRef: BrowserWindow | null = null;
+let taskComposerWindowRef: BrowserWindow | null = null;
 let taskPreviewWindowRef: BrowserWindow | null = null;
 let taskPreviewHideTimer: NodeJS.Timeout | null = null;
 let isQuitting = false;
@@ -544,7 +547,7 @@ function hideTrayAndPreviewIfUnfocused() {
 }
 
 interface RendererLoadOptions {
-  surface: "tray" | "home" | "sticky" | "record" | "settings" | "manual" | "update";
+  surface: "tray" | "home" | "sticky" | "record" | "task-composer" | "settings" | "manual" | "update";
   projectId?: number | null;
   taskId?: number | null;
   noteId?: string | null;
@@ -553,6 +556,9 @@ interface RendererLoadOptions {
   localProjectId?: string | null;
   projectName?: string | null;
   taskTitle?: string | null;
+  initialContent?: string | null;
+  sourceRecordId?: string | null;
+  lockProject?: boolean;
 }
 
 function appendRendererQuery(searchParams: URLSearchParams, options: RendererLoadOptions) {
@@ -580,6 +586,15 @@ function appendRendererQuery(searchParams: URLSearchParams, options: RendererLoa
   }
   if (options.taskTitle) {
     searchParams.set("task_title", options.taskTitle);
+  }
+  if (options.initialContent) {
+    searchParams.set("initial_content", options.initialContent);
+  }
+  if (options.sourceRecordId) {
+    searchParams.set("source_record_id", options.sourceRecordId);
+  }
+  if (options.lockProject) {
+    searchParams.set("lock_project", "1");
   }
 }
 
@@ -769,12 +784,16 @@ function releaseWindowArrangement(win: BrowserWindow, notify = true) {
 function registerWindowArrangementLifecycle(win: BrowserWindow) {
   windowArrangementStates.set(win, { protected: false });
   win.on("will-move", () => releaseWindowArrangement(win));
-  win.on("will-resize", () => releaseWindowArrangement(win));
+  win.on("will-resize", (_event, newBounds) => {
+    userResizedWindowHeights.set(win, Math.round(newBounds.height));
+    releaseWindowArrangement(win);
+  });
 }
 
 function clearWindowArrangementLifecycle(win: BrowserWindow) {
   windowArrangementStates.delete(win);
   arrangedWindowMaxHeights.delete(win);
+  userResizedWindowHeights.delete(win);
   noteWindowFocusOrder.delete(win);
 }
 
@@ -3473,6 +3492,86 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
   return win;
 }
 
+function normalizeTaskComposerTarget(target?: TaskComposerTarget) {
+  const value = isPlainObject(target) ? target : {};
+  const sourceRecordId = safeWindowText(value.sourceRecordId, 80);
+  return {
+    projectId:
+      typeof value.projectId === "number" && Number.isFinite(value.projectId) && value.projectId > 0
+        ? Math.trunc(value.projectId)
+        : null,
+    initialContent: safeWindowText(value.initialContent, 2000),
+    lockProject: value.lockProject === true,
+    sourceRecordId:
+      sourceRecordId && /^[a-zA-Z0-9_-]+$/.test(sourceRecordId) ? sourceRecordId : null
+  };
+}
+
+async function createTaskComposerWindow(target: ReturnType<typeof normalizeTaskComposerTarget>) {
+  const config = await readConfig();
+  const win = new BrowserWindow({
+    width: 560,
+    height: 640,
+    minWidth: 520,
+    minHeight: 520,
+    maxWidth: 680,
+    maxHeight: 760,
+    show: false,
+    frame: false,
+    transparent: true,
+    roundedCorners: true,
+    hasShadow: true,
+    resizable: true,
+    movable: true,
+    fullscreenable: false,
+    skipTaskbar: false,
+    alwaysOnTop: config.stickyAlwaysOnTop,
+    title: "创建待办",
+    backgroundColor: "#00000000",
+    ...windowIconOption(),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  win.on("closed", () => {
+    if (taskComposerWindowRef === win) {
+      taskComposerWindowRef = null;
+    }
+  });
+  loadRenderer(win, {
+    surface: "task-composer",
+    projectId: target.projectId,
+    initialContent: target.initialContent,
+    sourceRecordId: target.sourceRecordId,
+    lockProject: target.lockProject
+  });
+  return win;
+}
+
+async function showTaskComposerWindow(target?: TaskComposerTarget, sourceWin?: BrowserWindow | null) {
+  if (taskComposerWindowRef && !taskComposerWindowRef.isDestroyed()) {
+    if (taskComposerWindowRef.isMinimized()) {
+      taskComposerWindowRef.restore();
+    }
+    showInCurrentWorkspace(taskComposerWindowRef);
+    pulseWindowFocus(taskComposerWindowRef);
+    return;
+  }
+
+  const win = await createTaskComposerWindow(normalizeTaskComposerTarget(target));
+  taskComposerWindowRef = win;
+  if (sourceWin && !sourceWin.isDestroyed()) {
+    positionNoteWindowNearSource(win, sourceWin);
+  } else {
+    positionWindowOnScreen(win);
+  }
+  showInCurrentWorkspace(win);
+}
+
 function createSettingsWindow() {
   const win = new BrowserWindow({
     width: 460,
@@ -4012,7 +4111,9 @@ function fitWindowContent(win: BrowserWindow, request?: WindowFitRequest) {
   const maxHeight = arrangedMaxHeight ? Math.min(requestedMaxHeight, arrangedMaxHeight) : requestedMaxHeight;
   const minHeight = Math.min(requestedMinHeight, maxHeight);
   const width = clamp(Math.round(finiteNumber(request.width, bounds.width)), minWidth, maxWidth);
-  const height = clamp(Math.round(finiteNumber(request.height, bounds.height)), minHeight, maxHeight);
+  const requestedHeight = Math.round(finiteNumber(request.height, bounds.height));
+  const userHeight = request.preserveUserHeight ? userResizedWindowHeights.get(win) ?? 0 : 0;
+  const height = clamp(Math.max(requestedHeight, userHeight), minHeight, maxHeight);
 
   win.setMaximumSize(maxAvailableWidth, maxAvailableHeight);
   win.setMinimumSize(minWidth, minHeight);
@@ -4196,6 +4297,60 @@ async function getArrangeableNoteItems(sourceWin: BrowserWindow, displayId: numb
     items: sourceItem ? items.filter((item) => item.groupKey === sourceItem.groupKey) : [],
     sourceItem
   };
+}
+
+function requestCloseNoteWindows(windows: BrowserWindow[]) {
+  for (const win of windows) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send("window:closeRequested");
+    }
+  }
+}
+
+async function showProjectCloseMenu(sourceWin: BrowserWindow | null) {
+  if (!sourceWin || sourceWin.isDestroyed() || !recordWindows.has(sourceWin)) {
+    return;
+  }
+
+  const config = await readConfig();
+  const stickyItems = [...stickyWindows]
+    .filter((win) => !win.isDestroyed())
+    .map((win, index) => getStickyArrangeItem(win, index, config))
+    .filter((item): item is ArrangeItem => Boolean(item));
+  const recordItems = (
+    await Promise.all(
+      [...recordWindows]
+        .filter((win) => !win.isDestroyed())
+        .map((win, index) => getRecordArrangeItem(win, stickyItems.length + index, config))
+    )
+  ).filter((item): item is ArrangeItem => Boolean(item));
+  const sourceItem = recordItems.find((item) => item.win === sourceWin);
+  if (!sourceItem || sourceItem.scope !== "project" || sourceItem.anchorKind !== "project-workspace") {
+    return;
+  }
+
+  const projectItems = [...stickyItems, ...recordItems].filter((item) => item.groupKey === sourceItem.groupKey);
+  const taskDetails = projectItems.filter((item) => item.role === "detail" && stickyWindows.has(item.win));
+  const recordDetails = projectItems.filter((item) => item.role === "detail" && recordWindows.has(item.win));
+  const menu = Menu.buildFromTemplate([
+    {
+      label: `关闭本项目任务详情（${taskDetails.length}）`,
+      enabled: taskDetails.length > 0,
+      click: () => requestCloseNoteWindows(taskDetails.map((item) => item.win))
+    },
+    {
+      label: `关闭本项目记录详情（${recordDetails.length}）`,
+      enabled: recordDetails.length > 0,
+      click: () => requestCloseNoteWindows(recordDetails.map((item) => item.win))
+    },
+    { type: "separator" },
+    {
+      label: `关闭本项目全部相关窗口（${projectItems.length}）`,
+      enabled: projectItems.length > 0,
+      click: () => requestCloseNoteWindows(projectItems.map((item) => item.win))
+    }
+  ]);
+  menu.popup({ window: sourceWin });
 }
 
 function fitColumnHeights(items: ArrangeItem[], availableHeight: number) {
@@ -4712,10 +4867,24 @@ function sendWorkshopRefresh(event: WorkshopRefreshEvent, sender?: WebContents) 
       win.webContents.send("workshop:refresh", event);
     }
   }
+  for (const win of recordWindows) {
+    if (!win.isDestroyed() && win.webContents !== sender) {
+      win.webContents.send("workshop:refresh", event);
+    }
+  }
 }
 
 function sendConfigChanged(config: AppConfig) {
-  const windows = [windowRef, homeWindowRef, settingsWindowRef, manualWindowRef, updateWindowRef, ...stickyWindows, ...recordWindows];
+  const windows = [
+    windowRef,
+    homeWindowRef,
+    settingsWindowRef,
+    manualWindowRef,
+    updateWindowRef,
+    taskComposerWindowRef,
+    ...stickyWindows,
+    ...recordWindows
+  ];
   for (const win of windows) {
     if (win && !win.isDestroyed()) {
       win.webContents.send("config:changed", config);
@@ -4932,6 +5101,9 @@ function registerIpc() {
   ipcMain.handle("record:open", (event, target?: PersonalRecordTarget) =>
     showPersonalRecordWindow(target, BrowserWindow.fromWebContents(event.sender))
   );
+  ipcMain.handle("taskComposer:open", (event, target?: TaskComposerTarget) =>
+    showTaskComposerWindow(target, BrowserWindow.fromWebContents(event.sender))
+  );
   ipcMain.handle("localProject:list", () => listLocalProjects());
   ipcMain.handle("localProject:create", (_event, request: CreateLocalProjectRequest) => createLocalProject(request));
   ipcMain.handle("localProject:rename", (_event, request: RenameLocalProjectRequest) => renameLocalProject(request));
@@ -4949,6 +5121,7 @@ function registerIpc() {
     syncRecordWindowTarget(event.sender, saved);
     return saved;
   });
+  ipcMain.handle("record:close", (_event, id: string) => closeRecordDetailWindows([id]));
   ipcMain.handle("record:delete", (_event, id: string) => deletePersonalRecord(id));
   ipcMain.handle("taskPreview:show", (_event, request: TaskPreviewRequest) => showTaskPreviewWindow(request));
   ipcMain.handle("taskPreview:keep", () => cancelTaskPreviewHide());
@@ -4965,6 +5138,9 @@ function registerIpc() {
   ipcMain.handle("sticky:close", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
+  ipcMain.handle("window:showProjectCloseMenu", (event) =>
+    showProjectCloseMenu(BrowserWindow.fromWebContents(event.sender))
+  );
   ipcMain.handle("sticky:arrange", (event) => arrangeStickyWindows(BrowserWindow.fromWebContents(event.sender)));
   ipcMain.handle("window:fitContent", (event, request: WindowFitRequest) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -4995,6 +5171,9 @@ function registerIpc() {
     }
     for (const win of recordWindows) {
       win.setAlwaysOnTop(enabled);
+    }
+    if (taskComposerWindowRef && !taskComposerWindowRef.isDestroyed()) {
+      taskComposerWindowRef.setAlwaysOnTop(enabled);
     }
     return saveConfig({ stickyAlwaysOnTop: enabled });
   });

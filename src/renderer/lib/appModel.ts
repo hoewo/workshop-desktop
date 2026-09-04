@@ -1,17 +1,29 @@
-import type { ApiResponse, AppConfig, LocalProject, PersonalRecordTarget } from "../../shared/types";
+import type { ApiResponse, AppConfig, LocalProject, PersonalRecordTarget, TaskComposerTarget } from "../../shared/types";
 
-export type Surface = "tray" | "home" | "sticky" | "record" | "settings" | "manual" | "update";
+export type Surface = "tray" | "home" | "sticky" | "record" | "task-composer" | "settings" | "manual" | "update";
 
 export function getSurface(): Surface {
   const surface = new URLSearchParams(window.location.search).get("surface");
   return surface === "home" ||
     surface === "sticky" ||
     surface === "record" ||
+    surface === "task-composer" ||
     surface === "settings" ||
     surface === "manual" ||
     surface === "update"
     ? surface
     : "tray";
+}
+
+export function getInitialTaskComposerTarget(): TaskComposerTarget {
+  const params = new URLSearchParams(window.location.search);
+  const projectId = params.get("project_id");
+  return {
+    projectId: projectId && /^\d+$/.test(projectId) ? Number(projectId) : undefined,
+    initialContent: getSafeQueryText(params, "initial_content", 2000),
+    lockProject: params.get("lock_project") === "1",
+    sourceRecordId: getSafeRecordId(params, "source_record_id")
+  };
 }
 
 export function getInitialProjectFilter() {

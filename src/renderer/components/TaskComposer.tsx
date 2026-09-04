@@ -1,5 +1,5 @@
 import { Check, LoaderCircle, Tag, UserRound, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CreateTaskRequest, Project, ProjectTag } from "../../shared/types";
 import { getMeId, getProjectTagDisplayName } from "../lib/tasks";
 
@@ -45,17 +45,31 @@ export function TaskComposer({
   onProjectChange: (projectId: number) => void;
   onSubmit: (request: CreateTaskRequest) => void;
 }) {
-  const initialProject = projects.find((project) => project.id === initialProjectId) ?? (lockProject ? undefined : projects[0]);
-  const [projectId, setProjectId] = useState<number | undefined>(initialProject?.id);
+  const [projectId, setProjectId] = useState<number | undefined>(initialProjectId);
   const [content, setContent] = useState(initialContent);
-  const [executorId, setExecutorId] = useState<number | undefined>(
-    initialProject ? getMeId(initialProject, currentUsername) : undefined
-  );
+  const [executorId, setExecutorId] = useState<number | undefined>();
   const [tagIds, setTagIds] = useState<number[]>([]);
   const project = projects.find((candidate) => candidate.id === projectId);
+  const initializedProjectIdsRef = useRef(new Set<number>());
   const tags = useMemo(() => sortProjectTags(projectId ? projectTags.get(projectId) ?? [] : []), [projectId, projectTags]);
   const isLoadingTags = projectId ? loadingProjectTagIds.has(projectId) : false;
   const canSubmit = Boolean(project && content.trim() && executorId && !busy);
+
+  useEffect(() => {
+    const nextProject = projects.find((candidate) => candidate.id === projectId) ?? (lockProject ? undefined : projects[0]);
+    if (!nextProject) {
+      return;
+    }
+    if (projectId !== nextProject.id) {
+      setProjectId(nextProject.id);
+      setTagIds([]);
+    }
+    setExecutorId((current) => current ?? getMeId(nextProject, currentUsername));
+    if (!initializedProjectIdsRef.current.has(nextProject.id)) {
+      initializedProjectIdsRef.current.add(nextProject.id);
+      onProjectChange(nextProject.id);
+    }
+  }, [currentUsername, lockProject, onProjectChange, projectId, projects]);
 
   function changeProject(nextProjectId: number) {
     const nextProject = projects.find((candidate) => candidate.id === nextProjectId);

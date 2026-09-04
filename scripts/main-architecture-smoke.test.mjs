@@ -15,7 +15,11 @@ const {
   getLocalProjectDirectoryForWorkshopProject,
   sanitizeLocalProjects
 } = require("../dist/main/localProjectMigration.js");
-const { normalizeCodexFailureMessage, summarizeCodexFailureForDisplay } = require("../dist/shared/codexErrors.js");
+const {
+  formatCodexRunStatusMessage,
+  normalizeCodexFailureMessage,
+  summarizeCodexFailureForDisplay
+} = require("../dist/shared/codexErrors.js");
 const { PersonalRecordStore } = require("../dist/main/recordStore.js");
 const { WorkshopApiService } = require("../dist/main/workshopApiService.js");
 const execFileAsync = promisify(execFile);
@@ -517,6 +521,40 @@ test("note window arrangement stays inside the current work context", async () =
   assert.match(workspaceSource, /PanelsTopLeft/);
 });
 
+test("project workspace follow-up fixes keep window, sync, and record ownership boundaries", async () => {
+  const [mainSource, preloadSource, appSource, workspaceSource, recordSource] = await Promise.all([
+    readFile(path.join(process.cwd(), "src/main/main.ts"), "utf8"),
+    readFile(path.join(process.cwd(), "src/main/preload.ts"), "utf8"),
+    readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8"),
+    readFile(path.join(process.cwd(), "src/renderer/components/surfaces/ProjectWorkspaceSurface.tsx"), "utf8"),
+    readFile(path.join(process.cwd(), "src/renderer/components/surfaces/RecordSurface.tsx"), "utf8")
+  ]);
+  const refreshSource = mainSource.slice(
+    mainSource.indexOf("function sendWorkshopRefresh"),
+    mainSource.indexOf("function sendConfigChanged")
+  );
+
+  assert.match(mainSource, /surface: "task-composer"/);
+  assert.match(mainSource, /showTaskComposerWindow/);
+  assert.match(preloadSource, /taskComposer:open/);
+  assert.match(preloadSource, /record:close/);
+  assert.match(appSource, /openTaskComposer/);
+  assert.match(appSource, /closePersonalRecord\(sourceRecord\.id\)/);
+  assert.doesNotMatch(appSource, /setTaskMessage\(`已创建待办：/);
+  assert.doesNotMatch(appSource, /recordWindowWidthBeforeComposerRef/);
+  assert.match(refreshSource, /for \(const win of recordWindows\)/);
+  assert.match(mainSource, /const PROJECT_WORKSPACE_COLLAPSED_HEIGHT = 140/);
+  assert.match(appSource, /const collapsedListHeight = isProjectWorkspace \? 140 : 56/);
+  assert.match(mainSource, /userResizedWindowHeights/);
+  assert.match(appSource, /preserveUserHeight: isRecordDetail/);
+  assert.match(mainSource, /关闭本项目全部相关窗口/);
+  assert.match(workspaceSource, /onContextMenu/);
+  assert.match(appSource, /config\?\.localProjects/);
+  assert.match(recordSource, /activeRecord\.scopeType !== "task"/);
+  assert.match(appSource, /remoteSyncWarning/);
+  assert.match(appSource, /tagSyncFailedProjectIds/);
+});
+
 test("CodexAppServerClient handles streaming deltas and terminal statuses", () => {
   const client = createCodexClientForNotificationTest();
   const messages = [];
@@ -570,6 +608,27 @@ test("Codex rate-limit errors are normalized for users", () => {
   );
   assert.equal(summarizeCodexFailureForDisplay("HTTP 429 Too Many Requests"), "限流，稍后重试");
   assert.equal(normalizeCodexFailureMessage("codex app-server 未运行"), "codex app-server 未运行");
+});
+
+test("task details render terminal Codex run status instead of a stale launch message", () => {
+  const baseRun = {
+    runId: "run-1",
+    backend: "app-server",
+    kind: "task",
+    title: "Example task",
+    projectId: 98,
+    taskId: 1278,
+    cwd: "/tmp/example",
+    status: "running",
+    startedAt: "2026-09-04T00:00:00.000Z"
+  };
+  assert.equal(formatCodexRunStatusMessage(baseRun), "Codex 执行中，可在 Codex app 查看");
+  assert.equal(formatCodexRunStatusMessage({ ...baseRun, status: "completed" }), "Codex 执行已完成");
+  assert.equal(
+    formatCodexRunStatusMessage({ ...baseRun, status: "failed", lastMessage: "RATE_LIMIT_EXCEEDED" }),
+    "Codex 执行失败：Codex 请求被限流（RATE_LIMIT_EXCEEDED），请稍后再试。"
+  );
+  assert.equal(formatCodexRunStatusMessage({ ...baseRun, status: "interrupted" }), "Codex 执行已中断");
 });
 
 test("local project migration merges legacy Workshop directory bindings by directory", () => {

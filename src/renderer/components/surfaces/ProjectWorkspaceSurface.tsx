@@ -133,6 +133,7 @@ export function ProjectWorkspaceSurface({
   onCreateRecord,
   onCreateTask,
   onCloseSearch,
+  onOpenCloseMenu,
   onExitArrangementCompact,
   onOpenSearch,
   onOpenRecord,
@@ -149,6 +150,7 @@ export function ProjectWorkspaceSurface({
   setTasksCollapsed,
   taskCreateDisabledReason,
   taskSourceState,
+  syncWarning,
   taskTotalCount,
   tasks,
   tasksCollapsed,
@@ -175,6 +177,7 @@ export function ProjectWorkspaceSurface({
   onCreateRecord: () => void;
   onCreateTask: () => void;
   onCloseSearch: () => void;
+  onOpenCloseMenu: () => void;
   onExitArrangementCompact: () => void;
   onOpenSearch: () => void;
   onOpenRecord: (record: PersonalRecordMeta) => void;
@@ -191,6 +194,7 @@ export function ProjectWorkspaceSurface({
   setTasksCollapsed: (value: boolean | ((current: boolean) => boolean)) => void;
   taskCreateDisabledReason?: string;
   taskSourceState: ProjectTaskSourceState;
+  syncWarning?: string;
   taskTotalCount: number;
   tasks: EnrichedTask[];
   tasksCollapsed: boolean;
@@ -212,7 +216,7 @@ export function ProjectWorkspaceSurface({
           ? "登录 Workshop 账号后可同步待办；本地记录仍可使用。"
           : taskSourceState === "unlinked"
             ? "回到工作台，在项目右键菜单中关联远端任务源。"
-            : "";
+            : syncWarning || "";
 
   return (
     <main
@@ -303,7 +307,16 @@ export function ProjectWorkspaceSurface({
           >
             {config.stickyAlwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />}
           </button>
-          <button className="icon-button" type="button" onClick={closeWindow} title="关闭">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={closeWindow}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onOpenCloseMenu();
+            }}
+            title="关闭；右键可关闭本项目相关窗口"
+          >
             <X size={16} />
           </button>
         </div>

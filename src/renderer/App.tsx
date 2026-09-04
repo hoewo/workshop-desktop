@@ -26,6 +26,7 @@ import type {
   WorkshopCodexSkillStatus,
   WindowFitRequest
 } from "../shared/types";
+import { formatCodexRunStatusMessage } from "../shared/codexErrors";
 import { manualRevision } from "./content/manual";
 import { HomeSurface } from "./components/surfaces/HomeSurface";
 import { LoginSurface } from "./components/surfaces/LoginSurface";
@@ -45,6 +46,7 @@ import {
   getErrorMessage,
   getInitialProjectFilter,
   getInitialRecordTarget,
+  getInitialTaskComposerTarget,
   getInitialTaskFilter,
   getProjectLocalDirectory,
   getSurface,
@@ -90,7 +92,7 @@ interface TaskComposerState {
   projectId?: number;
   content: string;
   lockProject?: boolean;
-  sourceRecord?: PersonalRecord;
+  sourceRecordId?: string;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -112,6 +114,7 @@ async function mapWithConcurrency<T, R>(
 
 export default function App() {
   const surface = useMemo(getSurface, []);
+  const initialTaskComposerTarget = useMemo(getInitialTaskComposerTarget, []);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [draftConfig, setDraftConfig] = useState<AppConfig | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -120,7 +123,9 @@ export default function App() {
   const [tasks, setTasks] = useState<EnrichedTask[]>([]);
   const [remoteDataLoaded, setRemoteDataLoaded] = useState(false);
   const [remoteSyncFailed, setRemoteSyncFailed] = useState(false);
+  const [remoteSyncWarning, setRemoteSyncWarning] = useState("");
   const [taskSyncFailedProjectIds, setTaskSyncFailedProjectIds] = useState<Set<number>>(new Set());
+  const [tagSyncFailedProjectIds, setTagSyncFailedProjectIds] = useState<Set<number>>(new Set());
   const projectsRef = useRef<Project[]>([]);
   const projectTagsRef = useRef<Map<number, ProjectTag[]>>(new Map());
   const projectTagRequestsRef = useRef<Map<number, Promise<ProjectTag[]>>>(new Map());
@@ -151,12 +156,22 @@ export default function App() {
   const [isRenamingLocalProject, setIsRenamingLocalProject] = useState(false);
   const [linkLocalProjectTarget, setLinkLocalProjectTarget] = useState<LocalProject | null>(null);
   const [isLinkingLocalProject, setIsLinkingLocalProject] = useState(false);
-  const [taskComposer, setTaskComposer] = useState<TaskComposerState | null>(null);
+  const [taskComposer, setTaskComposer] = useState<TaskComposerState | null>(() =>
+    surface === "task-composer"
+      ? {
+          sessionId: crypto.randomUUID(),
+          projectId: initialTaskComposerTarget.projectId,
+          content: initialTaskComposerTarget.initialContent || "",
+          lockProject: initialTaskComposerTarget.lockProject,
+          sourceRecordId: initialTaskComposerTarget.sourceRecordId
+        }
+      : null
+  );
   const [taskComposerError, setTaskComposerError] = useState("");
   const [isCreatingTask, setIsCreatingTask] = useState(false);
 
   useEffect(() => {
-    if (surface !== "tray" && surface !== "home") {
+    if (surface !== "tray" && surface !== "home" && surface !== "sticky" && surface !== "record") {
       return undefined;
     }
 
@@ -271,7 +286,6 @@ export default function App() {
   const arrangementMessageTimerRef = useRef<number | null>(null);
   const workspaceSearchCollapseSnapshotRef = useRef<{ records: boolean; tasks: boolean } | null>(null);
   const lastWindowFitRef = useRef("");
-  const recordWindowWidthBeforeComposerRef = useRef<number | null>(null);
   const activeRecordRef = useRef<PersonalRecord | null>(null);
   const recordBodyRef = useRef("");
   const recordDirtyRef = useRef(false);
@@ -440,12 +454,15 @@ export default function App() {
       tasksRef.current = [];
       setRemoteDataLoaded(false);
       setRemoteSyncFailed(false);
+      setRemoteSyncWarning("");
       setTaskSyncFailedProjectIds(new Set());
+      setTagSyncFailedProjectIds(new Set());
       return;
     }
 
     setIsLoading(true);
     setRemoteSyncFailed(false);
+    setRemoteSyncWarning("");
     setError("");
     setTaskMessage("");
 
@@ -539,6 +556,9 @@ export default function App() {
       setTaskSyncFailedProjectIds(
         new Set(projectTaskData.filter((item) => item.taskSyncFailed).map((item) => item.projectId))
       );
+      setTagSyncFailedProjectIds(
+        new Set(projectTaskData.filter((item) => item.tagSyncFailed).map((item) => item.projectId))
+      );
 
       const failedOrganizationCount = organizationProjectResults.filter((result) => result.failed).length;
       const failedTaskProjectCount = projectTaskData.filter((item) => item.taskSyncFailed).length;
@@ -549,11 +569,11 @@ export default function App() {
         failedTagProjectCount > 0 ? `${failedTagProjectCount} 个项目的标签未同步` : ""
       ].filter(Boolean);
       if (warnings.length > 0) {
-        setError(`${warnings.join("；")}。已保留成功加载的任务，请稍后刷新。`);
+        setRemoteSyncWarning(`${warnings.join("；")}。已保留成功加载的任务，请稍后刷新。`);
       }
     } catch (nextError) {
       setRemoteSyncFailed(true);
-      setError(nextError instanceof Error ? nextError.message : "同步失败");
+      setRemoteSyncWarning(nextError instanceof Error ? nextError.message : "同步失败");
     } finally {
       setRemoteDataLoaded(true);
       setIsLoading(false);
@@ -860,6 +880,19 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (surface !== "sticky" && surface !== "record") {
+      return undefined;
+    }
+    return window.workshopDesktop.onWindowCloseRequest(() => {
+      if (surface === "sticky") {
+        void closeStickyWindow();
+        return;
+      }
+      void closeRecordWindow();
+    });
+  }, [closeRecordWindow, surface]);
+
+  useEffect(() => {
     if (config && isLoggedIn(config)) {
       void loadData();
     }
@@ -940,11 +973,6 @@ export default function App() {
     }
 
     const isRecordDetail = surface === "record" && Boolean(activeRecord);
-    const isRecordTaskComposerOpen = surface === "record" && Boolean(taskComposer);
-    if (isRecordTaskComposerOpen && recordWindowWidthBeforeComposerRef.current === null) {
-      recordWindowWidthBeforeComposerRef.current = window.innerWidth;
-    }
-    const restoreRecordWidth = !isRecordTaskComposerOpen ? recordWindowWidthBeforeComposerRef.current : null;
     const isDetailWindow = (surface === "sticky" && isSingleTaskSticky) || isRecordDetail;
     const isProjectWorkspaceCollapsed = isProjectWorkspace && workspaceTasksCollapsed && workspaceRecordsCollapsed;
     const isArrangementCompactList = arrangementCompact && !isDetailWindow;
@@ -953,7 +981,7 @@ export default function App() {
       (surface === "record" && !isProjectWorkspace && recordListCollapsed && !activeRecord) ||
       isProjectWorkspaceCollapsed ||
       isArrangementCompactList;
-    const collapsedListHeight = isProjectWorkspace ? 124 : 56;
+    const collapsedListHeight = isProjectWorkspace ? 140 : 56;
     const fixedMinHeight = isCollapsedList ? collapsedListHeight : 112;
     const detailMinHeight = surface === "sticky" && isSingleTaskSticky ? 132 : 188;
     const baseMaxHeight = isCollapsedList
@@ -979,31 +1007,19 @@ export default function App() {
         const maxHeight = arrangementMaxHeight
           ? Math.min(baseMaxHeight, Math.max(minHeight, arrangementMaxHeight))
           : baseMaxHeight;
-        const request: WindowFitRequest = isRecordTaskComposerOpen
-          ? {
-              width: 560,
-              height: Math.max(contentHeight, 600),
-              minWidth: 520,
-              minHeight: 520,
-              maxWidth: 680,
-              maxHeight: 720
-            }
-          : {
-              ...(restoreRecordWidth !== null ? { width: restoreRecordWidth } : {}),
-              height: contentHeight,
-              minWidth: surface === "record" ? 320 : 300,
-              minHeight,
-              maxHeight
-            };
+        const request: WindowFitRequest = {
+          height: contentHeight,
+          minWidth: surface === "record" ? 320 : 300,
+          minHeight,
+          maxHeight,
+          preserveUserHeight: isRecordDetail
+        };
         const requestKey = JSON.stringify(request);
         if (requestKey === lastWindowFitRef.current) {
           return;
         }
         lastWindowFitRef.current = requestKey;
         void window.workshopDesktop.fitWindowContent(request);
-        if (!isRecordTaskComposerOpen && restoreRecordWidth !== null) {
-          recordWindowWidthBeforeComposerRef.current = null;
-        }
       });
     }
 
@@ -1033,7 +1049,6 @@ export default function App() {
     records,
     stickyListCollapsed,
     surface,
-    taskComposer,
     taskNoteBody,
     tasks,
     workspaceRecordsCollapsed,
@@ -1149,11 +1164,10 @@ export default function App() {
   }, [projectFilter, projects]);
   const recordProjectCandidates = useMemo(() => {
     const query = recordProjectQuery.trim().toLowerCase();
-    return projects
-      .map((project) => ({ project, projectName: getProjectDisplayName(project) }))
-      .filter(({ projectName }) => !query || projectName.toLowerCase().includes(query))
+    return (config?.localProjects ?? [])
+      .filter((project) => !query || project.name.toLowerCase().includes(query))
       .slice(0, 8);
-  }, [projects, recordProjectQuery]);
+  }, [config?.localProjects, recordProjectQuery]);
   const contextualRecords = useMemo(
     () => records.filter((record) => recordMatchesListContext(record, recordListContext)),
     [records, recordListContext]
@@ -1207,6 +1221,10 @@ export default function App() {
           : workspaceTasks.length === 0
             ? "empty"
             : "online";
+  const workspaceSyncWarning =
+    workspaceProjectId !== undefined && tagSyncFailedProjectIds.has(workspaceProjectId)
+      ? "标签同步失败，已保留任务；部分标签可能暂不完整。"
+      : "";
   const workspaceTaskCreateDisabledReason =
     projectTaskSourceState === "logged-out"
       ? "请先在设置中登录 Workshop 账号"
@@ -1272,6 +1290,12 @@ export default function App() {
   }, [config, records]);
   const selectedTask = isSingleTaskSticky ? filteredTasks[0] : null;
   const selectedTaskRecord = selectedTask ? taskRecordsByTaskId.get(selectedTask.id) : undefined;
+  const selectedTaskCodexRun = selectedTask
+    ? codexRuns.find(
+        (run) => run.kind === "task" && run.projectId === selectedTask.project_id && run.taskId === selectedTask.id
+      )
+    : undefined;
+  const selectedTaskCodexMessage = formatCodexRunStatusMessage(selectedTaskCodexRun);
   const canExtractTasks = surface === "sticky" && projectFilter !== "all" && taskFilter === "all";
 
   useEffect(() => {
@@ -1530,7 +1554,7 @@ export default function App() {
     await saveRecordNow();
   }
 
-  async function assignRecordToProject(project: Project, projectName: string) {
+  async function assignRecordToProject(project: LocalProject) {
     const now = new Date().toISOString();
     const baseRecord = activeRecordRef.current ?? {
       id: "",
@@ -1545,9 +1569,9 @@ export default function App() {
       ...baseRecord,
       status: "active",
       scopeType: "project",
-      localProjectId: undefined,
-      projectId: project.id,
-      projectName,
+      localProjectId: project.id,
+      projectId: project.linkedWorkshopProjectId,
+      projectName: project.name,
       taskId: undefined,
       taskTitle: undefined,
       updatedAt: now,
@@ -1749,16 +1773,8 @@ export default function App() {
 
   function openDirectTaskComposer(projectId?: number, lockProject = false) {
     const nextProjectId = projectId ?? projects[0]?.id;
-    setTaskComposerError("");
-    setTaskComposer({
-      sessionId: crypto.randomUUID(),
-      projectId: nextProjectId,
-      content: "",
-      lockProject
-    });
-    if (nextProjectId) {
-      handleComposerProjectChange(nextProjectId);
-    }
+    setTaskMessage("");
+    void window.workshopDesktop.openTaskComposer({ projectId: nextProjectId, lockProject });
   }
 
   async function createTaskFromRecord() {
@@ -1769,19 +1785,16 @@ export default function App() {
     }
 
     setRecordMessage("");
-    setTaskComposerError("");
-    setTaskComposer({
-      sessionId: crypto.randomUUID(),
+    await window.workshopDesktop.openTaskComposer({
       projectId: saved.projectId,
-      content: deriveRecordTitle(recordBodyRef.current, saved.title),
+      initialContent: deriveRecordTitle(recordBodyRef.current, saved.title),
       lockProject: true,
-      sourceRecord: saved
+      sourceRecordId: saved.id
     });
-    handleComposerProjectChange(saved.projectId);
   }
 
   async function submitTaskCreation(request: CreateTaskRequest) {
-    const sourceRecord = taskComposer?.sourceRecord;
+    const sourceRecordId = taskComposer?.sourceRecordId;
     setTaskComposerError("");
     setIsCreatingTask(true);
 
@@ -1794,16 +1807,22 @@ export default function App() {
       return;
     }
 
-    setTaskComposer(null);
     setIsCreatingTask(false);
-    await loadData();
+    if (surface !== "task-composer") {
+      await loadData();
+    }
 
-    if (!sourceRecord?.id) {
-      setTaskMessage(`已创建待办：${createdTask.content}`);
+    if (!sourceRecordId) {
+      setTaskComposer(null);
+      await window.workshopDesktop.closeWindow();
       return;
     }
 
     try {
+      const sourceRecord = await window.workshopDesktop.getPersonalRecord(sourceRecordId);
+      if (!sourceRecord) {
+        throw new Error("来源记录不存在");
+      }
       await window.workshopDesktop.savePersonalRecord({
         id: sourceRecord.id,
         bodyMarkdown: sourceRecord.bodyMarkdown,
@@ -1817,16 +1836,19 @@ export default function App() {
         promotedTaskId: createdTask.id
       });
       setRecordMessage("");
-      await loadRecords();
       await window.workshopDesktop.openSticky({
         projectId: createdTask.project_id,
         taskId: createdTask.id
       });
+      await window.workshopDesktop.closePersonalRecord(sourceRecord.id);
+      setTaskComposer(null);
       await window.workshopDesktop.closeWindow();
     } catch (nextError) {
-      setRecordMessage(
+      window.alert(
         `待办已创建（#${createdTask.id}），但记录状态更新失败：${nextError instanceof Error ? nextError.message : "未知错误"}`
       );
+      setTaskComposer(null);
+      await window.workshopDesktop.closeWindow();
     }
   }
 
@@ -2464,6 +2486,9 @@ export default function App() {
         if (!isCreatingTask) {
           setTaskComposer(null);
           setTaskComposerError("");
+          if (surface === "task-composer") {
+            void window.workshopDesktop.closeWindow();
+          }
         }
       }}
       onProjectChange={handleComposerProjectChange}
@@ -2486,6 +2511,14 @@ export default function App() {
         ? "window-selected-focus"
         : "window-selected-idle"
       : "window-unselected-idle";
+
+  if (surface === "task-composer") {
+    return taskComposerDialog ?? (
+      <main className="app-shell loading-shell">
+        <LoaderCircle className="spin" size={22} />
+      </main>
+    );
+  }
 
   if (surface === "settings") {
     return (
@@ -2570,6 +2603,7 @@ export default function App() {
               }
             }}
             onCloseSearch={closeProjectWorkspaceSearch}
+            onOpenCloseMenu={() => void window.workshopDesktop.showProjectCloseMenu()}
             onExitArrangementCompact={releaseCurrentWindowArrangement}
             onOpenSearch={openProjectWorkspaceSearch}
             onOpenRecord={(record) =>
@@ -2591,6 +2625,7 @@ export default function App() {
             setTasksCollapsed={setWorkspaceTasksCollapsed}
             taskCreateDisabledReason={workspaceTaskCreateDisabledReason}
             taskSourceState={projectTaskSourceState}
+            syncWarning={workspaceSyncWarning}
             taskTotalCount={workspaceTasks.length}
             tasks={visibleWorkspaceTasks}
             tasksCollapsed={workspaceTasksCollapsed}
@@ -2611,7 +2646,7 @@ export default function App() {
         arrangementProtected={arrangementProtected}
         archiveActiveRecord={() => void archiveActiveRecord()}
         archiveRecord={(record) => void archiveRecord(record)}
-        assignRecordToProject={(project, projectName) => void assignRecordToProject(project, projectName)}
+        assignRecordToProject={(project) => void assignRecordToProject(project)}
         closeRecordWindow={() => void closeRecordWindow()}
         completeActiveRecord={() => void completeActiveRecord()}
         completeRecord={(record) => void completeRecord(record)}
@@ -2713,7 +2748,7 @@ export default function App() {
       <>
         <HomeSurface
           codexRuns={codexRuns}
-          error={error}
+          error={error || remoteSyncWarning}
           taskMessage={taskMessage}
           hasManualUpdate={config.lastSeenManualRevision !== manualRevision}
           isLoading={isLoading}
@@ -2799,7 +2834,7 @@ export default function App() {
         stickyHeader={stickyHeader}
         stickyListCollapsed={stickyListCollapsed}
         stickyProjectId={stickyProjectId}
-        taskMessage={taskMessage}
+        taskMessage={selectedTaskCodexMessage || taskMessage}
         taskNoteBody={taskNoteBody}
         updateTaskNoteBody={(body) => {
           taskNoteBodyRef.current = body;
@@ -2818,7 +2853,7 @@ export default function App() {
     <>
       <TraySurface
         codexRuns={codexRuns}
-        error={error}
+        error={error || remoteSyncWarning}
         hoveredProjectId={hoveredProjectId}
         isLoading={isLoading}
         localProjects={config.localProjects}

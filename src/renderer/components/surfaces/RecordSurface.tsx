@@ -20,7 +20,7 @@ import {
   X
 } from "lucide-react";
 import type { RefObject } from "react";
-import type { AppConfig, PersonalRecord, PersonalRecordMeta, Project } from "../../../shared/types";
+import type { AppConfig, LocalProject, PersonalRecord, PersonalRecordMeta } from "../../../shared/types";
 import { getLocalProjectLocalDirectory, getProjectLocalDirectory } from "../../lib/appModel";
 import {
   getRecordHeaderTitle,
@@ -91,7 +91,7 @@ export function RecordSurface({
   arrangementProtected: boolean;
   archiveActiveRecord: () => void;
   archiveRecord: (record: PersonalRecordMeta) => void;
-  assignRecordToProject: (project: Project, projectName: string) => void;
+  assignRecordToProject: (project: LocalProject) => void;
   closeRecordWindow: () => void;
   completeActiveRecord: () => void;
   completeRecord: (record: PersonalRecordMeta) => void;
@@ -116,7 +116,7 @@ export function RecordSurface({
   recordListContext: RecordListContext;
   recordMessage: string;
   recordMode: RecordMode;
-  recordProjectCandidates: Array<{ project: Project; projectName: string }>;
+  recordProjectCandidates: LocalProject[];
   recordProjectQuery: string;
   recordSaveStatus: RecordSaveStatus;
   recordScopePickerOpen: boolean;
@@ -152,7 +152,7 @@ export function RecordSurface({
           : "本地草稿";
   const isTaskNote = activeRecord?.scopeType === "task";
   const isCompletedRecord = activeRecord?.status === "completed";
-  const canAssignRecordToProject = activeRecord?.scopeType === "none";
+  const canAssignRecordToProject = Boolean(activeRecord && activeRecord.scopeType !== "task");
   const canPromoteToTask = activeRecord?.scopeType === "project" && Boolean(activeRecord.projectId);
 
   return (
@@ -182,7 +182,7 @@ export function RecordSurface({
                   className="scope-switch-button"
                   type="button"
                   onClick={() => setRecordScopePickerOpen((open) => !open)}
-                  title="分配到项目"
+                  title={activeRecord?.scopeType === "project" ? "切换项目" : "分配到项目"}
                 >
                   <Folder size={14} strokeWidth={2.8} />
                 </button>
@@ -211,15 +211,15 @@ export function RecordSurface({
                   placeholder="项目"
                   autoFocus
                 />
-                {recordProjectCandidates.map(({ project, projectName }) => (
+                {recordProjectCandidates.map((project) => (
                   <button
                     className="scope-option"
                     type="button"
                     key={project.id}
-                    onClick={() => assignRecordToProject(project, projectName)}
+                    onClick={() => assignRecordToProject(project)}
                   >
                     <span className="record-scope project">项目</span>
-                    <strong>{projectName}</strong>
+                    <strong>{project.name}</strong>
                   </button>
                 ))}
                 {recordProjectCandidates.length === 0 ? <div className="scope-empty">没有项目</div> : null}

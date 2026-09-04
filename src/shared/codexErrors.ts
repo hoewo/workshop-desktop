@@ -1,3 +1,5 @@
+import type { CodexRunMeta } from "./types";
+
 const RATE_LIMIT_PATTERNS = [
   /RATE_LIMIT_EXCEEDED/i,
   /\brate[_\s-]?limit(?:ed| exceeded)?\b/i,
@@ -30,4 +32,20 @@ export function summarizeCodexFailureForDisplay(message: string | undefined) {
     return "限流，稍后重试";
   }
   return normalized.length > 28 ? `${normalized.slice(0, 28)}...` : normalized;
+}
+
+export function formatCodexRunStatusMessage(run: CodexRunMeta | undefined) {
+  if (!run) {
+    return "";
+  }
+  if (run.status === "running") {
+    return "Codex 执行中，可在 Codex app 查看";
+  }
+  if (run.status === "completed") {
+    return "Codex 执行已完成";
+  }
+  if (run.status === "failed") {
+    return `Codex 执行失败：${normalizeCodexFailureMessage(run.lastMessage || "执行失败")}`;
+  }
+  return "Codex 执行已中断";
 }

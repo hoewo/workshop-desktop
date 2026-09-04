@@ -12,6 +12,7 @@ import type {
   SavePersonalRecordRequest,
   SendToCodexRequest,
   StickyTarget,
+  TaskComposerTarget,
   TaskPreviewRequest,
   WindowArrangementNotice,
   WindowArrangementState,
@@ -37,6 +38,10 @@ function sanitizeStickyTarget(target?: StickyTarget | number) {
 }
 
 function sanitizeRecordTarget(target?: PersonalRecordTarget) {
+  return isPlainObject(target) ? target : undefined;
+}
+
+function sanitizeTaskComposerTarget(target?: TaskComposerTarget) {
   return isPlainObject(target) ? target : undefined;
 }
 
@@ -75,6 +80,8 @@ const bridge: DesktopBridge = {
   openManual: () => ipcRenderer.invoke("manual:open"),
   openSticky: (target?: StickyTarget | number) => ipcRenderer.invoke("sticky:open", sanitizeStickyTarget(target)),
   openPersonalRecord: (target?: PersonalRecordTarget) => ipcRenderer.invoke("record:open", sanitizeRecordTarget(target)),
+  openTaskComposer: (target?: TaskComposerTarget) =>
+    ipcRenderer.invoke("taskComposer:open", sanitizeTaskComposerTarget(target)),
   listLocalProjects: () => ipcRenderer.invoke("localProject:list"),
   createLocalProject: (request: CreateLocalProjectRequest) =>
     ipcRenderer.invoke("localProject:create", sanitizeCreateLocalProjectRequest(request)),
@@ -88,6 +95,7 @@ const bridge: DesktopBridge = {
   listPersonalRecords: () => ipcRenderer.invoke("record:list"),
   getPersonalRecord: (id: string) => ipcRenderer.invoke("record:get", id),
   savePersonalRecord: (record: SavePersonalRecordRequest) => ipcRenderer.invoke("record:save", record),
+  closePersonalRecord: (id: string) => ipcRenderer.invoke("record:close", id),
   deletePersonalRecord: (id: string) => ipcRenderer.invoke("record:delete", id),
   showTaskPreview: (request: TaskPreviewRequest) => ipcRenderer.invoke("taskPreview:show", request),
   keepTaskPreview: () => ipcRenderer.invoke("taskPreview:keep"),
@@ -95,6 +103,7 @@ const bridge: DesktopBridge = {
   notifyTaskChanged: (notice) => ipcRenderer.invoke("task:changed", notice),
   closeWindow: () => ipcRenderer.invoke("window:close"),
   closeSticky: () => ipcRenderer.invoke("sticky:close"),
+  showProjectCloseMenu: () => ipcRenderer.invoke("window:showProjectCloseMenu"),
   arrangeStickyWindows: () => ipcRenderer.invoke("sticky:arrange"),
   fitWindowContent: (request) => ipcRenderer.invoke("window:fitContent", request),
   releaseWindowArrangement: () => ipcRenderer.invoke("window:releaseArrangement"),
@@ -140,6 +149,11 @@ const bridge: DesktopBridge = {
     const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as WindowArrangementNotice);
     ipcRenderer.on("window:arrangement", listener);
     return () => ipcRenderer.removeListener("window:arrangement", listener);
+  },
+  onWindowCloseRequest: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("window:closeRequested", listener);
+    return () => ipcRenderer.removeListener("window:closeRequested", listener);
   },
   onRefresh: (callback) => {
     const listener = (_event: IpcRendererEvent, payload: unknown) => callback(payload as WorkshopRefreshEvent);

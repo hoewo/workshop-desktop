@@ -265,6 +265,30 @@ jobs:
             Start-Sleep -Seconds ($attempt * 30)
           }
 
+      - name: Validate Windows artifacts
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $installer = "Workshop-Todo-Setup-$version.exe"
+          $required = @(
+            "release/$installer",
+            "release/$installer.blockmap",
+            "release/Workshop-Todo-Portable-$version.exe",
+            "release/latest.yml"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              Write-Error "Missing expected Windows artifact: $file"
+              exit 1
+            }
+          }
+
+          $metadata = Get-Content "release/latest.yml" -Raw
+          if (-not $metadata.Contains("url: $installer") -or -not $metadata.Contains("path: $installer")) {
+            Write-Error "latest.yml does not reference the published installer name: $installer"
+            exit 1
+          }
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:

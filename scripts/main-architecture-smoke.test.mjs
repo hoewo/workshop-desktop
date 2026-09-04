@@ -493,6 +493,21 @@ test("packaged app carries and auto-installs the Workshop CLI shim", async () =>
   );
 });
 
+test("Windows release assets keep updater-compatible names", async () => {
+  const [packageJsonRaw, releaseWorkflow, releaseScript] = await Promise.all([
+    readFile(path.join(process.cwd(), "package.json"), "utf8"),
+    readFile(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8"),
+    readFile(path.join(process.cwd(), "scripts/release.sh"), "utf8")
+  ]);
+  const packageJson = JSON.parse(packageJsonRaw);
+
+  assert.equal(packageJson.build.nsis.artifactName, "Workshop-Todo-Setup-${version}.${ext}");
+  assert.equal(packageJson.build.portable.artifactName, "Workshop-Todo-Portable-${version}.${ext}");
+  assert.match(releaseWorkflow, /latest\.yml does not reference the published installer name/);
+  assert.match(releaseScript, /Workshop-Todo-Setup-\$\{version\}\.exe\.blockmap/);
+  assert.match(releaseScript, /Workshop-Todo-Portable-\$\{version\}\.exe/);
+});
+
 test("app startup opens the workbench home regardless of login state", async () => {
   const mainBundle = await readFile(path.join(process.cwd(), "dist/main/main.js"), "utf8");
 

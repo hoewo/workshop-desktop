@@ -62,7 +62,8 @@ bash scripts/release.sh 0.2.0
 - GitHub Release 已公开，且不只是 source archives。
 - Release 包含：
   - macOS universal zip、对应 blockmap 和 `latest-mac.yml`。
-  - Windows x64 installer、portable exe 和 `latest.yml`。
+  - Windows x64 installer、对应 blockmap、portable exe 和 `latest.yml`。
+  - Windows 资产使用无空格的稳定文件名：`Workshop-Todo-Setup-<version>.exe`、对应 blockmap 和 `Workshop-Todo-Portable-<version>.exe`；`latest.yml` 的 `url`、`path` 必须与 installer 文件名完全一致。
 - 发布包携带 `workshop` CLI shim 和 `workshop-codex-collaboration` Skill；具体资源来源以 `package.json.build.extraResources` 为准。
 
 ## macOS 自动更新验证

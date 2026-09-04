@@ -125,6 +125,12 @@
         "portable"
       ]
     },
+    "nsis": {
+      "artifactName": "Workshop-Todo-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Workshop-Todo-Portable-${version}.${ext}"
+    },
     "linux": {
       "icon": "resources/app-icon.png",
       "target": [

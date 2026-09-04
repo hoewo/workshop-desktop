@@ -38,6 +38,11 @@ export const recordStatusLabels: Record<PersonalRecordStatus, string> = {
   archived: "已归档"
 };
 
+export const recordOriginLabels = {
+  human: "人工",
+  agent: "AI"
+} as const;
+
 function truncateRecordTitle(title: string) {
   return title.length > 48 ? `${title.slice(0, 48)}...` : title;
 }
@@ -119,6 +124,19 @@ export function recordMatchesSearch(record: PersonalRecordMeta, tokens: string[]
 
   const searchableText = [record.title, record.projectName, record.taskTitle, recordStatusLabels[record.status]]
     .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return tokens.every((token) => searchableText.includes(token));
+}
+
+export function recordMatchesProjectWorkspaceSearch(record: PersonalRecordMeta, tokens: string[]) {
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  const origin = record.origin ?? "human";
+  const searchableText = [record.title, recordStatusLabels[record.status], origin, recordOriginLabels[origin]]
     .join(" ")
     .toLowerCase();
 

@@ -154,6 +154,18 @@ export function compareTasks(a: EnrichedTask, b: EnrichedTask) {
   return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
 }
 
+export function taskMatchesProjectWorkspaceSearch(task: EnrichedTask, tokens: string[]) {
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  const searchableText = [task.content, task.state, stateLabels[task.state], ...task.resolvedTags.map((tag) => tag.name)]
+    .join(" ")
+    .toLowerCase();
+
+  return tokens.every((token) => searchableText.includes(token));
+}
+
 export function splitTags(tags?: string | null) {
   if (!tags) {
     return [];

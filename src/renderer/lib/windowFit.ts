@@ -54,7 +54,10 @@ function readElementHeightForFit(element: HTMLElement): number {
   if (
     element.classList.contains("task-detail") ||
     element.classList.contains("task-note-panel") ||
-    element.classList.contains("record-preview-panel")
+    element.classList.contains("record-preview-panel") ||
+    element.classList.contains("project-workspace-scroll") ||
+    element.classList.contains("project-workspace-section") ||
+    element.classList.contains("project-workspace-section-body")
   ) {
     return readElementChildrenHeight(element);
   }

@@ -49,7 +49,7 @@ export function TraySurface({
   hideProjectTaskPreview,
   loadData,
   onLocalProjectDirectoryClick,
-  onLocalProjectRecord,
+  onLocalProjectWorkspace,
   onLinkLocalProjectRemote,
   onOpenManual,
   onOpenHome,
@@ -57,7 +57,7 @@ export function TraySurface({
   onUnlinkLocalProjectRemote,
   onProjectHover,
   onRemoteProjectDirectoryClick,
-  onProjectRecord
+  onProjectWorkspace
 }: {
   codexRuns: CodexRunMeta[];
   error: string;
@@ -73,7 +73,7 @@ export function TraySurface({
   hideProjectTaskPreview: () => void;
   loadData: () => void;
   onLocalProjectDirectoryClick: (localProjectId: string) => void;
-  onLocalProjectRecord: (project: LocalProject) => void;
+  onLocalProjectWorkspace: (project: LocalProject) => void;
   onLinkLocalProjectRemote: (project: LocalProject) => void;
   onOpenManual: () => void;
   onOpenHome: () => void;
@@ -81,7 +81,7 @@ export function TraySurface({
   onUnlinkLocalProjectRemote: (project: LocalProject) => void;
   onProjectHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
   onRemoteProjectDirectoryClick: (projectId: number) => void;
-  onProjectRecord: (group: ProjectTodoGroup) => void;
+  onProjectWorkspace: (group: ProjectTodoGroup) => void;
 }) {
   const [localProjectMenu, setLocalProjectMenu] = useState<LocalProjectContextMenuState | null>(null);
   const linkedWorkshopProjectIds = new Set(
@@ -186,7 +186,7 @@ export function TraySurface({
               }}
               onClick={() => {
                 setLocalProjectMenu(null);
-                onLocalProjectRecord(project);
+                onLocalProjectWorkspace(project);
               }}
               onContextMenu={(event) => {
                 event.preventDefault();
@@ -197,18 +197,18 @@ export function TraySurface({
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   setLocalProjectMenu(null);
-                  onLocalProjectRecord(project);
+                  onLocalProjectWorkspace(project);
                 }
               }}
             >
               <div className="project-row-content">
                 <button
-                  className={`project-record-button ${recordCount > 0 ? "has-record" : ""}`}
+                  className={`project-workspace-button ${recordCount > 0 ? "has-record" : ""}`}
                   type="button"
-                  title={recordCount > 0 ? `${recordCount} 条记录` : "项目记录"}
+                  title={recordCount > 0 ? `打开项目工作区（${recordCount} 条记录）` : "打开项目工作区"}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onLocalProjectRecord(project);
+                    onLocalProjectWorkspace(project);
                   }}
                 >
                   <NotebookPen size={15} />
@@ -251,22 +251,22 @@ export function TraySurface({
               tabIndex={0}
               onMouseEnter={(event) => onProjectHover(group, event.currentTarget.getBoundingClientRect())}
               onFocus={(event) => onProjectHover(group, event.currentTarget.getBoundingClientRect())}
-              onClick={() => onProjectRecord(group)}
+              onClick={() => onProjectWorkspace(group)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  onProjectRecord(group);
+                  onProjectWorkspace(group);
                 }
               }}
             >
               <div className="project-row-content">
                 <button
-                  className={`project-record-button ${recordCount > 0 ? "has-record" : ""}`}
+                  className={`project-workspace-button ${recordCount > 0 ? "has-record" : ""}`}
                   type="button"
-                  title={recordCount > 0 ? `${recordCount} 条记录` : "项目记录"}
+                  title={recordCount > 0 ? `打开项目工作区（${recordCount} 条记录）` : "打开项目工作区"}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onProjectRecord(group);
+                    onProjectWorkspace(group);
                   }}
                 >
                   <NotebookPen size={15} />

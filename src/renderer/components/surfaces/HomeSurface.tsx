@@ -60,12 +60,12 @@ export function HomeSurface({
   onOpenSettings,
   onOpenSticky,
   onLocalProjectDirectoryClick,
-  onLocalProjectRecord,
+  onLocalProjectWorkspace,
   onLinkLocalProjectRemote,
   onRenameLocalProject,
   onUnlinkLocalProjectRemote,
   onProjectHover,
-  onProjectRecord,
+  onProjectWorkspace,
   onRemoteProjectDirectoryClick,
   onTaskOpen
 }: {
@@ -92,12 +92,12 @@ export function HomeSurface({
   onOpenSettings: () => void;
   onOpenSticky: () => void;
   onLocalProjectDirectoryClick: (localProjectId: string) => void;
-  onLocalProjectRecord: (project: LocalProject) => void;
+  onLocalProjectWorkspace: (project: LocalProject) => void;
   onLinkLocalProjectRemote: (project: LocalProject) => void;
   onRenameLocalProject: (project: LocalProject) => void;
   onUnlinkLocalProjectRemote: (project: LocalProject) => void;
   onProjectHover: (group: ProjectTodoGroup, anchor: DOMRect) => void;
-  onProjectRecord: (group: ProjectTodoGroup) => void;
+  onProjectWorkspace: (group: ProjectTodoGroup) => void;
   onRemoteProjectDirectoryClick: (projectId: number) => void;
   onTaskOpen: (task: EnrichedTask) => void;
 }) {
@@ -170,7 +170,7 @@ export function HomeSurface({
         </div>
         <div>
           <strong>{totalProjectRecords}</strong>
-          <span>远端项目记录</span>
+          <span>记录</span>
         </div>
         <div>
           <strong>{runningCodexRuns}</strong>
@@ -217,7 +217,7 @@ export function HomeSurface({
               const recordCount = localProjectRecordCounts.get(project.id) ?? 0;
               const openLocalProject = () => {
                 setLocalProjectMenu(null);
-                onLocalProjectRecord(project);
+                onLocalProjectWorkspace(project);
               };
               return (
                 <article
@@ -245,9 +245,9 @@ export function HomeSurface({
                 >
                   <div className="project-row-content">
                     <button
-                      className={`project-record-button ${recordCount > 0 ? "has-record" : ""}`}
+                      className={`project-workspace-button ${recordCount > 0 ? "has-record" : ""}`}
                       type="button"
-                      title={recordCount > 0 ? `${recordCount} 条记录` : "项目记录"}
+                      title={recordCount > 0 ? `打开项目工作区（${recordCount} 条记录）` : "打开项目工作区"}
                       onClick={(event) => {
                         event.stopPropagation();
                         openLocalProject();
@@ -296,17 +296,17 @@ export function HomeSurface({
                   tabIndex={0}
                   onMouseEnter={(event) => onProjectHover(group, event.currentTarget.getBoundingClientRect())}
                   onFocus={(event) => onProjectHover(group, event.currentTarget.getBoundingClientRect())}
-                  onClick={() => onProjectRecord(group)}
-                  onKeyDown={(event) => handleKeyboardAction(event, () => onProjectRecord(group))}
+                  onClick={() => onProjectWorkspace(group)}
+                  onKeyDown={(event) => handleKeyboardAction(event, () => onProjectWorkspace(group))}
                 >
                   <div className="project-row-content">
                     <button
-                      className={`project-record-button ${recordCount > 0 ? "has-record" : ""}`}
+                      className={`project-workspace-button ${recordCount > 0 ? "has-record" : ""}`}
                       type="button"
-                      title={recordCount > 0 ? `${recordCount} 条记录` : "记项目"}
+                      title={recordCount > 0 ? `打开项目工作区（${recordCount} 条记录）` : "打开项目工作区"}
                       onClick={(event) => {
                         event.stopPropagation();
-                        onProjectRecord(group);
+                        onProjectWorkspace(group);
                       }}
                     >
                       <NotebookPen size={15} />

@@ -14,6 +14,7 @@ import type {
   StickyTarget,
   TaskPreviewRequest,
   WindowArrangementNotice,
+  WindowArrangementState,
   WindowFocusStateNotice,
   WorkshopRefreshEvent
 } from "../shared/types";
@@ -96,6 +97,8 @@ const bridge: DesktopBridge = {
   closeSticky: () => ipcRenderer.invoke("sticky:close"),
   arrangeStickyWindows: () => ipcRenderer.invoke("sticky:arrange"),
   fitWindowContent: (request) => ipcRenderer.invoke("window:fitContent", request),
+  releaseWindowArrangement: () => ipcRenderer.invoke("window:releaseArrangement"),
+  setWindowArrangementState: (state: WindowArrangementState) => ipcRenderer.invoke("window:setArrangementState", state),
   setStickyAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("sticky:setAlwaysOnTop", enabled),
   bindLocalProjectDirectory: (localProjectId: string) => ipcRenderer.invoke("localProjectDirectory:bind", localProjectId),
   openLocalProjectDirectory: (localProjectId: string) => ipcRenderer.invoke("localProjectDirectory:open", localProjectId),

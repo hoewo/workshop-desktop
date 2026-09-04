@@ -85,6 +85,8 @@ import type {
   VerificationRequest,
   WorkshopCurrentContext,
   WorkshopRefreshEvent,
+  WindowArrangementResult,
+  WindowArrangementState,
   WindowFitRequest
 } from "../shared/types";
 
@@ -117,6 +119,7 @@ const NOTE_ARRANGE_MARGIN = 12;
 const NOTE_ARRANGE_GAP = 12;
 const NOTE_ARRANGE_LIST_MIN_HEIGHT = 180;
 const NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT = 56;
+const PROJECT_WORKSPACE_COLLAPSED_HEIGHT = 124;
 const DARWIN_ON_SCREEN_WINDOW_IDS_TIMEOUT_MS = 1200;
 const CURRENT_CONTEXT_STALE_MS = 5 * 60 * 1000;
 const CONFIRMATION_REQUESTS_LIMIT = 100;
@@ -146,6 +149,10 @@ const stickyWindows = new Set<BrowserWindow>();
 const stickyWindowTargets = new Map<BrowserWindow, NormalizedStickyTarget>();
 const recordWindows = new Set<BrowserWindow>();
 const recordWindowTargets = new Map<BrowserWindow, NormalizedRecordTarget>();
+const windowArrangementStates = new Map<BrowserWindow, WindowArrangementState>();
+const arrangedWindowMaxHeights = new Map<BrowserWindow, number>();
+const noteWindowFocusOrder = new Map<BrowserWindow, number>();
+let nextNoteWindowFocusOrder = 1;
 let settingsWindowRef: BrowserWindow | null = null;
 let manualWindowRef: BrowserWindow | null = null;
 let updateWindowRef: BrowserWindow | null = null;
@@ -745,8 +752,29 @@ function selectNoteWindow(win: BrowserWindow) {
   if (win.isDestroyed() || win.webContents.isDestroyed()) {
     return;
   }
+  noteWindowFocusOrder.set(win, nextNoteWindowFocusOrder);
+  nextNoteWindowFocusOrder += 1;
   selectedNoteWindowId = win.webContents.id;
   broadcastSelectedNoteWindow();
+}
+
+function releaseWindowArrangement(win: BrowserWindow, notify = true) {
+  const hadArrangement = arrangedWindowMaxHeights.delete(win);
+  if (hadArrangement && notify && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("window:arrangement", { released: true });
+  }
+}
+
+function registerWindowArrangementLifecycle(win: BrowserWindow) {
+  windowArrangementStates.set(win, { protected: false });
+  win.on("will-move", () => releaseWindowArrangement(win));
+  win.on("will-resize", () => releaseWindowArrangement(win));
+}
+
+function clearWindowArrangementLifecycle(win: BrowserWindow) {
+  windowArrangementStates.delete(win);
+  arrangedWindowMaxHeights.delete(win);
+  noteWindowFocusOrder.delete(win);
 }
 
 function clearSelectedNoteWindow(win: BrowserWindow) {
@@ -2495,12 +2523,14 @@ async function createStickyWindow(target: NormalizedStickyTarget) {
   win.on("closed", () => {
     stickyWindows.delete(win);
     stickyWindowTargets.delete(win);
+    clearWindowArrangementLifecycle(win);
     clearSelectedNoteWindowById(webContentsId);
     clearCurrentWorkshopContextIfMatches(context);
   });
 
   stickyWindows.add(win);
   stickyWindowTargets.set(win, target);
+  registerWindowArrangementLifecycle(win);
   win.on("focus", () => markStickyWindowContext(win));
   win.webContents.once("did-finish-load", () => {
     sendNoteWindowFocusState(win, win.webContents.id === selectedNoteWindowId);
@@ -2693,9 +2723,34 @@ function focusExistingNoteWindow(win: BrowserWindow) {
   hideTrayAfterNoteWindowShown(win);
 }
 
-async function showStickyWindow(target?: StickyTarget | number) {
+function isNoteWindow(win: BrowserWindow | null | undefined): win is BrowserWindow {
+  return Boolean(win && !win.isDestroyed() && (stickyWindows.has(win) || recordWindows.has(win)));
+}
+
+function positionNoteWindowNearSource(win: BrowserWindow, sourceWin: BrowserWindow) {
+  const sourceBounds = sourceWin.getBounds();
+  const bounds = win.getBounds();
+  const workArea = screen.getDisplayMatching(sourceBounds).workArea;
+  const siblingOffset = ([...stickyWindows, ...recordWindows].filter((candidate) => candidate !== win && !candidate.isDestroyed()).length % 4) * 18;
+  const rightX = sourceBounds.x + sourceBounds.width + NOTE_ARRANGE_GAP;
+  const leftX = sourceBounds.x - bounds.width - NOTE_ARRANGE_GAP;
+  const x =
+    rightX + bounds.width <= workArea.x + workArea.width - 8
+      ? rightX
+      : leftX >= workArea.x + 8
+        ? leftX
+        : clamp(sourceBounds.x + siblingOffset, workArea.x + 8, workArea.x + workArea.width - bounds.width - 8);
+  const y = clamp(
+    sourceBounds.y + siblingOffset,
+    workArea.y + 8,
+    workArea.y + workArea.height - bounds.height - 8
+  );
+  win.setPosition(Math.round(x), Math.round(y), false);
+}
+
+async function showStickyWindow(target?: StickyTarget | number, sourceWin?: BrowserWindow | null) {
   const nextTarget = normalizeStickyTarget(target);
-  const display = getTargetDisplay(nextTarget.x, nextTarget.y);
+  const display = isNoteWindow(sourceWin) ? screen.getDisplayMatching(sourceWin.getBounds()) : getTargetDisplay(nextTarget.x, nextTarget.y);
   const existingWin = findExistingStickyWindow(nextTarget, display.id);
   if (existingWin) {
     focusExistingNoteWindow(existingWin);
@@ -2712,6 +2767,8 @@ async function showStickyWindow(target?: StickyTarget | number) {
       clamp(Math.round(nextTarget.y - 24), workArea.y + 8, workArea.y + workArea.height - bounds.height - 8),
       false
     );
+  } else if (isNoteWindow(sourceWin)) {
+    positionNoteWindowNearSource(win, sourceWin);
   } else {
     const bounds = win.getBounds();
     const workArea = display.workArea;
@@ -3141,6 +3198,7 @@ function findExistingRecordWindow(target: NormalizedRecordTarget, displayId?: nu
 
 async function createRecordWindow(target: NormalizedRecordTarget) {
   const config = await readConfig();
+  const opensProjectWorkspace = isRecordListTarget(target) && target.scopeType === "project";
   const opensRecordDetail = Boolean(target.noteId || target.scopeType === "project" || target.scopeType === "task");
   const win = new BrowserWindow({
     width: 360,
@@ -3157,7 +3215,7 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
     fullscreenable: false,
     skipTaskbar: false,
     alwaysOnTop: config.stickyAlwaysOnTop,
-    title: "Workshop Personal Record",
+    title: opensProjectWorkspace ? "Workshop Project Workspace" : "Workshop Personal Record",
     backgroundColor: "#00000000",
     ...windowIconOption(),
     webPreferences: {
@@ -3173,12 +3231,14 @@ async function createRecordWindow(target: NormalizedRecordTarget) {
   win.on("closed", () => {
     recordWindows.delete(win);
     recordWindowTargets.delete(win);
+    clearWindowArrangementLifecycle(win);
     clearSelectedNoteWindowById(webContentsId);
     clearCurrentWorkshopContextIfMatches(context);
   });
 
   recordWindows.add(win);
   recordWindowTargets.set(win, target);
+  registerWindowArrangementLifecycle(win);
   win.on("focus", () => markRecordWindowContext(win));
   win.webContents.once("did-finish-load", () => {
     sendNoteWindowFocusState(win, win.webContents.id === selectedNoteWindowId);
@@ -3367,16 +3427,16 @@ function showUpdateWindow(options: { checkNow?: boolean } = {}) {
   }
 }
 
-async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
+async function showPersonalRecordWindow(target?: PersonalRecordTarget, sourceWin?: BrowserWindow | null) {
   const nextTarget = normalizeRecordTarget(target);
-  const display = getTargetDisplay(nextTarget.x, nextTarget.y);
+  const display = isNoteWindow(sourceWin) ? screen.getDisplayMatching(sourceWin.getBounds()) : getTargetDisplay(nextTarget.x, nextTarget.y);
   if (nextTarget.scopeType === "task" && nextTarget.projectId !== null && nextTarget.taskId !== null) {
     await showStickyWindow({
       projectId: nextTarget.projectId,
       taskId: nextTarget.taskId,
       x: nextTarget.x ?? undefined,
       y: nextTarget.y ?? undefined
-    });
+    }, sourceWin);
     return;
   }
 
@@ -3395,7 +3455,7 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
         taskId: record.taskId,
         x: nextTarget.x ?? undefined,
         y: nextTarget.y ?? undefined
-      });
+      }, sourceWin);
       return;
     }
   }
@@ -3409,6 +3469,8 @@ async function showPersonalRecordWindow(target?: PersonalRecordTarget) {
       clamp(Math.round(nextTarget.y - 24), workArea.y + 8, workArea.y + workArea.height - bounds.height - 8),
       false
     );
+  } else if (isNoteWindow(sourceWin)) {
+    positionNoteWindowNearSource(win, sourceWin);
   } else {
     const bounds = win.getBounds();
     const workArea = display.workArea;
@@ -3724,9 +3786,15 @@ function fitWindowContent(win: BrowserWindow, request?: WindowFitRequest) {
   const maxAvailableWidth = Math.max(160, workArea.width - 16);
   const maxAvailableHeight = Math.max(56, workArea.height - 16);
   const minWidth = Math.min(Math.max(Math.round(finiteNumber(request.minWidth, bounds.width)), 160), maxAvailableWidth);
-  const minHeight = Math.min(Math.max(Math.round(finiteNumber(request.minHeight, 56)), 56), maxAvailableHeight);
   const maxWidth = Math.min(Math.max(Math.round(finiteNumber(request.maxWidth, maxAvailableWidth)), minWidth), maxAvailableWidth);
-  const maxHeight = Math.min(Math.max(Math.round(finiteNumber(request.maxHeight, maxAvailableHeight)), minHeight), maxAvailableHeight);
+  const requestedMinHeight = Math.min(Math.max(Math.round(finiteNumber(request.minHeight, 56)), 56), maxAvailableHeight);
+  const requestedMaxHeight = Math.min(
+    Math.max(Math.round(finiteNumber(request.maxHeight, maxAvailableHeight)), requestedMinHeight),
+    maxAvailableHeight
+  );
+  const arrangedMaxHeight = arrangedWindowMaxHeights.get(win);
+  const maxHeight = arrangedMaxHeight ? Math.min(requestedMaxHeight, arrangedMaxHeight) : requestedMaxHeight;
+  const minHeight = Math.min(requestedMinHeight, maxHeight);
   const width = clamp(Math.round(finiteNumber(request.width, bounds.width)), minWidth, maxWidth);
   const height = clamp(Math.round(finiteNumber(request.height, bounds.height)), minHeight, maxHeight);
 
@@ -3741,23 +3809,39 @@ function fitWindowContent(win: BrowserWindow, request?: WindowFitRequest) {
   }
 }
 
-type ArrangeColumn = "task" | "project-record" | "personal-record";
-type ArrangeRole = "list" | "detail";
+type ArrangeScope = WindowArrangementResult["scope"];
+type ArrangeRole = "anchor" | "detail";
 
 interface ArrangeItem {
   win: BrowserWindow;
-  column: ArrangeColumn;
+  groupKey: string;
+  scope: ArrangeScope;
   role: ArrangeRole;
-  projectId: number | null;
+  anchorKind: "project-workspace" | "list" | null;
   sourceOrder: number;
+  focusOrder: number;
   bounds: Electron.Rectangle;
+  minWidth: number;
   minHeight: number;
   collapsedHeight?: number;
+  protected: boolean;
 }
 
-function compareArrangeItems(a: ArrangeItem, b: ArrangeItem) {
+interface ArrangeColumn {
+  items: ArrangeItem[];
+}
+
+function compareArrangeItems(a: ArrangeItem, b: ArrangeItem, sourceWin: BrowserWindow) {
   if (a.role !== b.role) {
-    return a.role === "list" ? -1 : 1;
+    return a.role === "anchor" ? -1 : 1;
+  }
+
+  if (a.win === sourceWin || b.win === sourceWin) {
+    return a.win === sourceWin ? -1 : 1;
+  }
+
+  if (a.focusOrder !== b.focusOrder) {
+    return b.focusOrder - a.focusOrder;
   }
 
   if (a.bounds.y !== b.bounds.y) {
@@ -3767,31 +3851,61 @@ function compareArrangeItems(a: ArrangeItem, b: ArrangeItem) {
   return a.bounds.x - b.bounds.x;
 }
 
+function getCurrentWindowMinWidth(win: BrowserWindow, fallback: number) {
+  const [minWidth] = win.getMinimumSize();
+  return Number.isFinite(minWidth) && minWidth > 0 ? Math.max(160, Math.round(minWidth)) : fallback;
+}
+
 function getCurrentWindowMinHeight(win: BrowserWindow, fallback: number) {
   const [, minHeight] = win.getMinimumSize();
   return Number.isFinite(minHeight) && minHeight > 0 ? Math.max(56, Math.round(minHeight)) : fallback;
 }
 
-function getStickyArrangeItem(win: BrowserWindow, sourceOrder: number): ArrangeItem | null {
+function resolveProjectArrangeGroup(
+  config: AppConfig,
+  localProjectId: string | null | undefined,
+  projectId: number | null | undefined,
+  projectName?: string | null
+) {
+  const normalizedLocalProjectId = safeLocalProjectId(localProjectId);
+  if (normalizedLocalProjectId) {
+    return `local-project:${normalizedLocalProjectId}`;
+  }
+
+  if (typeof projectId === "number" && Number.isFinite(projectId)) {
+    const localProject = config.localProjects.find((project) => project.linkedWorkshopProjectId === projectId);
+    return localProject ? `local-project:${localProject.id}` : `workshop-project:${projectId}`;
+  }
+
+  const normalizedProjectName = (safeWindowText(projectName) ?? "").toLocaleLowerCase();
+  return normalizedProjectName ? `legacy-project:${normalizedProjectName}` : null;
+}
+
+function getStickyArrangeItem(win: BrowserWindow, sourceOrder: number, config: AppConfig): ArrangeItem | null {
   const target = stickyWindowTargets.get(win);
   if (!target) {
     return null;
   }
 
-  const role: ArrangeRole = target.taskId === null ? "list" : "detail";
+  const projectGroupKey = resolveProjectArrangeGroup(config, null, target.projectId);
+  const role: ArrangeRole = target.taskId === null ? "anchor" : "detail";
   return {
     win,
-    column: "task",
+    groupKey: projectGroupKey ?? "tasks",
+    scope: projectGroupKey ? "project" : "tasks",
     role,
-    projectId: target.projectId,
+    anchorKind: role === "anchor" ? "list" : null,
     sourceOrder,
+    focusOrder: noteWindowFocusOrder.get(win) ?? 0,
     bounds: win.getBounds(),
-    minHeight: role === "list" ? NOTE_ARRANGE_LIST_MIN_HEIGHT : getCurrentWindowMinHeight(win, 132),
-    collapsedHeight: role === "list" ? NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT : undefined
+    minWidth: getCurrentWindowMinWidth(win, 300),
+    minHeight: role === "anchor" ? NOTE_ARRANGE_LIST_MIN_HEIGHT : getCurrentWindowMinHeight(win, 132),
+    collapsedHeight: role === "anchor" ? NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT : undefined,
+    protected: windowArrangementStates.get(win)?.protected === true
   };
 }
 
-async function getRecordArrangeItem(win: BrowserWindow, sourceOrder: number): Promise<ArrangeItem | null> {
+async function getRecordArrangeItem(win: BrowserWindow, sourceOrder: number, config: AppConfig): Promise<ArrangeItem | null> {
   const target = recordWindowTargets.get(win);
   if (!target) {
     return null;
@@ -3799,23 +3913,40 @@ async function getRecordArrangeItem(win: BrowserWindow, sourceOrder: number): Pr
 
   const record = target.noteId ? await getPersonalRecord(target.noteId).catch(() => null) : null;
   const scopeType = record?.scopeType ?? target.scopeType;
+  const localProjectId = record?.localProjectId ?? target.localProjectId;
   const projectId = typeof record?.projectId === "number" ? record.projectId : target.projectId;
-  const role: ArrangeRole = isRecordListTarget(target) ? "list" : "detail";
-  const column: ArrangeColumn = scopeType === "project" ? "project-record" : scopeType === "task" ? "task" : "personal-record";
+  const projectName = record?.projectName ?? target.projectName;
+  const projectGroupKey =
+    scopeType === "project" || scopeType === "task"
+      ? resolveProjectArrangeGroup(config, localProjectId, projectId, projectName)
+      : null;
+  const isProjectScoped = scopeType === "project" || scopeType === "task";
+  const role: ArrangeRole = isRecordListTarget(target) ? "anchor" : "detail";
+  const anchorKind = role === "anchor" ? (scopeType === "project" ? "project-workspace" : "list") : null;
 
   return {
     win,
-    column,
+    groupKey: projectGroupKey ?? (isProjectScoped ? `isolated-project:${win.webContents.id}` : "personal-records"),
+    scope: isProjectScoped ? "project" : "personal-records",
     role,
-    projectId: column === "personal-record" ? null : projectId,
+    anchorKind,
     sourceOrder,
+    focusOrder: noteWindowFocusOrder.get(win) ?? 0,
     bounds: win.getBounds(),
-    minHeight: role === "list" ? NOTE_ARRANGE_LIST_MIN_HEIGHT : getCurrentWindowMinHeight(win, column === "task" ? 132 : 188),
-    collapsedHeight: role === "list" ? NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT : undefined
+    minWidth: getCurrentWindowMinWidth(win, 320),
+    minHeight: role === "anchor" ? NOTE_ARRANGE_LIST_MIN_HEIGHT : getCurrentWindowMinHeight(win, scopeType === "task" ? 132 : 188),
+    collapsedHeight:
+      role === "anchor"
+        ? anchorKind === "project-workspace"
+          ? PROJECT_WORKSPACE_COLLAPSED_HEIGHT
+          : NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT
+        : undefined,
+    protected: windowArrangementStates.get(win)?.protected === true
   };
 }
 
 async function getArrangeableNoteItems(sourceWin: BrowserWindow, displayId: number) {
+  const config = await readConfig();
   const currentWorkspaceWindowIds = await getDarwinOnScreenWindowIds();
   const workspaceFilter = isWindowInCurrentWorkspace(sourceWin, currentWorkspaceWindowIds) ? currentWorkspaceWindowIds : null;
   const stickyItems = [...stickyWindows]
@@ -3827,7 +3958,7 @@ async function getArrangeableNoteItems(sourceWin: BrowserWindow, displayId: numb
         isWindowOnDisplay(win, displayId) &&
         isWindowInCurrentWorkspace(win, workspaceFilter)
     )
-    .map((win, index) => getStickyArrangeItem(win, index))
+    .map((win, index) => getStickyArrangeItem(win, index, config))
     .filter((item): item is ArrangeItem => Boolean(item));
   const recordItems = (
     await Promise.all(
@@ -3840,36 +3971,30 @@ async function getArrangeableNoteItems(sourceWin: BrowserWindow, displayId: numb
             isWindowOnDisplay(win, displayId) &&
             isWindowInCurrentWorkspace(win, workspaceFilter)
         )
-        .map((win, index) => getRecordArrangeItem(win, stickyItems.length + index))
+        .map((win, index) => getRecordArrangeItem(win, stickyItems.length + index, config))
     )
   ).filter((item): item is ArrangeItem => Boolean(item));
   const items = [...stickyItems, ...recordItems];
   const sourceItem = items.find((item) => item.win === sourceWin) ?? null;
-
-  if (sourceItem?.column === "personal-record") {
-    return items.filter((item) => item.column === "personal-record");
-  }
-
-  if (sourceItem?.projectId !== null && sourceItem?.projectId !== undefined) {
-    return items.filter((item) => item.column === "personal-record" || item.projectId === sourceItem.projectId);
-  }
-
-  return items;
+  return {
+    items: sourceItem ? items.filter((item) => item.groupKey === sourceItem.groupKey) : [],
+    sourceItem
+  };
 }
 
 function fitColumnHeights(items: ArrangeItem[], availableHeight: number) {
   const heights = new Map<BrowserWindow, number>();
-  const collapsedLists = new Set<BrowserWindow>();
+  const compactAnchors = new Set<BrowserWindow>();
   for (const item of items) {
-    heights.set(item.win, clamp(item.bounds.height, item.role === "list" ? item.collapsedHeight ?? item.minHeight : item.minHeight, availableHeight));
+    heights.set(item.win, clamp(item.bounds.height, item.minHeight, availableHeight));
   }
 
   const totalHeight = () => items.reduce((sum, item) => sum + (heights.get(item.win) ?? item.minHeight), 0) + Math.max(0, items.length - 1) * NOTE_ARRANGE_GAP;
   let overflow = totalHeight() - availableHeight;
-  const listItems = items.filter((item) => item.role === "list");
+  const anchorItems = items.filter((item) => item.role === "anchor");
   const detailItems = items.filter((item) => item.role === "detail");
 
-  for (const item of listItems) {
+  for (const item of anchorItems) {
     if (overflow <= 0) {
       break;
     }
@@ -3877,7 +4002,11 @@ function fitColumnHeights(items: ArrangeItem[], availableHeight: number) {
     const height = heights.get(item.win) ?? item.minHeight;
     const shrink = Math.min(Math.max(0, height - item.minHeight), overflow);
     if (shrink > 0) {
-      heights.set(item.win, height - shrink);
+      const nextHeight = height - shrink;
+      heights.set(item.win, nextHeight);
+      if (item.collapsedHeight && nextHeight <= item.collapsedHeight) {
+        compactAnchors.add(item.win);
+      }
       overflow -= shrink;
     }
   }
@@ -3900,7 +4029,7 @@ function fitColumnHeights(items: ArrangeItem[], availableHeight: number) {
     }
   }
 
-  for (const item of listItems) {
+  for (const item of anchorItems) {
     if (overflow <= 0) {
       break;
     }
@@ -3910,61 +4039,143 @@ function fitColumnHeights(items: ArrangeItem[], availableHeight: number) {
     const shrink = Math.min(Math.max(0, height - collapsedHeight), overflow);
     if (shrink > 0) {
       heights.set(item.win, height - shrink);
-      collapsedLists.add(item.win);
+      compactAnchors.add(item.win);
       overflow -= shrink;
     }
   }
 
-  return { heights, collapsedLists };
+  return { compactAnchors, heights, overflow };
 }
 
-async function arrangeStickyWindows(sourceWin: BrowserWindow | null) {
+function columnDesiredHeight(column: ArrangeColumn) {
+  return (
+    column.items.reduce((sum, item) => sum + Math.max(item.minHeight, item.bounds.height), 0) +
+    Math.max(0, column.items.length - 1) * NOTE_ARRANGE_GAP
+  );
+}
+
+function buildArrangeColumns(items: ArrangeItem[], availableHeight: number, maxColumnCount: number, sourceWin: BrowserWindow) {
+  const sortedItems = [...items].sort((a, b) => compareArrangeItems(a, b, sourceWin));
+  const anchors = sortedItems.filter((item) => item.role === "anchor");
+  const details = sortedItems.filter((item) => item.role === "detail");
+  const columns: ArrangeColumn[] = anchors.length > 0 ? [{ items: anchors }] : [];
+
+  if (details.length === 0) {
+    return columns;
+  }
+
+  if (columns.length >= maxColumnCount) {
+    for (const detail of details) {
+      const target = columns.reduce((shortest, column) =>
+        columnDesiredHeight(column) < columnDesiredHeight(shortest) ? column : shortest
+      );
+      target.items.push(detail);
+    }
+    return columns;
+  }
+
+  const detailColumnLimit = Math.max(1, maxColumnCount - columns.length);
+  const detailColumns: ArrangeColumn[] = [];
+  for (const detail of details) {
+    const currentColumn = detailColumns.at(-1);
+    const nextHeight = currentColumn
+      ? columnDesiredHeight(currentColumn) + NOTE_ARRANGE_GAP + Math.max(detail.minHeight, detail.bounds.height)
+      : 0;
+    if (!currentColumn || (nextHeight > availableHeight && detailColumns.length < detailColumnLimit)) {
+      detailColumns.push({ items: [detail] });
+      continue;
+    }
+
+    if (nextHeight <= availableHeight) {
+      currentColumn.items.push(detail);
+      continue;
+    }
+
+    const target = detailColumns.reduce((shortest, column) =>
+      columnDesiredHeight(column) < columnDesiredHeight(shortest) ? column : shortest
+    );
+    target.items.push(detail);
+  }
+
+  return [...columns, ...detailColumns];
+}
+
+async function arrangeStickyWindows(sourceWin: BrowserWindow | null): Promise<WindowArrangementResult> {
   if (!sourceWin || sourceWin.isDestroyed()) {
-    return { count: 0 };
+    return { count: 0, scope: "none" };
   }
 
   hideTaskPreviewWindow();
   const display = screen.getDisplayMatching(sourceWin.getBounds());
   const workArea = display.workArea;
-  const noteItems = await getArrangeableNoteItems(sourceWin, display.id);
-  if (noteItems.length === 0) {
-    return { count: 0 };
+  const { items: noteItems, sourceItem } = await getArrangeableNoteItems(sourceWin, display.id);
+  if (!sourceItem || noteItems.length === 0) {
+    return { count: 0, scope: "none" };
   }
 
-  const columnOrder: ArrangeColumn[] = ["task", "project-record", "personal-record"];
-  const activeColumns = columnOrder.filter((column) => noteItems.some((item) => item.column === column));
-  const maxWidth = Math.max(160, Math.floor((workArea.width - NOTE_ARRANGE_MARGIN * 2 - NOTE_ARRANGE_GAP * Math.max(0, activeColumns.length - 1)) / activeColumns.length));
-  const width = Math.min(NOTE_ARRANGE_WIDTH, maxWidth);
+  const protectedItems = noteItems.filter((item) => item.protected);
+  if (protectedItems.length > 0) {
+    return {
+      count: 0,
+      blocked: true,
+      protectedCount: protectedItems.length,
+      scope: sourceItem.scope
+    };
+  }
+
+  const availableWidth = Math.max(160, workArea.width - NOTE_ARRANGE_MARGIN * 2);
   const minX = workArea.x + NOTE_ARRANGE_MARGIN;
-  const maxX = workArea.x + workArea.width - width - NOTE_ARRANGE_MARGIN;
   const minY = workArea.y + NOTE_ARRANGE_MARGIN;
   const availableHeight = Math.max(56, workArea.height - NOTE_ARRANGE_MARGIN * 2);
+  const maxColumnCount = Math.max(1, Math.floor((availableWidth + NOTE_ARRANGE_GAP) / (NOTE_ARRANGE_WIDTH + NOTE_ARRANGE_GAP)));
+  const columns = buildArrangeColumns(noteItems, availableHeight, maxColumnCount, sourceWin);
+  const columnGapWidth = NOTE_ARRANGE_GAP * Math.max(0, columns.length - 1);
+  const equalColumnWidth = Math.max(160, Math.floor((availableWidth - columnGapWidth) / Math.max(1, columns.length)));
+  const columnWidths = columns.map((column) =>
+    Math.min(
+      availableWidth,
+      Math.max(
+        ...column.items.map((item) => item.minWidth),
+        Math.min(NOTE_ARRANGE_WIDTH, equalColumnWidth)
+      )
+    )
+  );
+  const totalWidth = columnWidths.reduce((sum, width) => sum + width, 0) + columnGapWidth;
+  let nextX = Math.max(minX, workArea.x + workArea.width - NOTE_ARRANGE_MARGIN - totalWidth);
 
-  for (const [columnIndex, column] of activeColumns.entries()) {
-    const columnItems = noteItems.filter((item) => item.column === column).sort(compareArrangeItems);
-    const { heights, collapsedLists } = fitColumnHeights(columnItems, availableHeight);
-    const x = clamp(maxX - columnIndex * (width + NOTE_ARRANGE_GAP), minX, Math.max(minX, maxX));
+  for (const [columnIndex, column] of columns.entries()) {
+    const width = columnWidths[columnIndex] ?? NOTE_ARRANGE_WIDTH;
+    const { compactAnchors, heights, overflow } = fitColumnHeights(column.items, availableHeight);
+    const isCascaded = overflow > 0 && column.items.length > 1;
+    const maxMinHeight = Math.max(...column.items.map((item) => item.minHeight));
+    const cascadeStep = isCascaded
+      ? Math.max(1, Math.floor((availableHeight - maxMinHeight) / Math.max(1, column.items.length - 1)))
+      : 0;
     let nextY = minY;
 
-    for (const item of columnItems) {
-      const height = heights.get(item.win) ?? item.minHeight;
-      const shouldCollapseList = item.role === "list" && collapsedLists.has(item.win);
+    for (const [itemIndex, item] of column.items.entries()) {
+      const plannedY = isCascaded ? minY + cascadeStep * itemIndex : nextY;
+      const maxHeightAtPosition = Math.max(item.minHeight, workArea.y + workArea.height - NOTE_ARRANGE_MARGIN - plannedY);
+      const height = Math.min(heights.get(item.win) ?? item.minHeight, maxHeightAtPosition);
+      const shouldUseCompactMode = item.role === "anchor" && compactAnchors.has(item.win);
+      arrangedWindowMaxHeights.set(item.win, height);
       item.win.webContents.send("window:arrangement", {
-        compactList: shouldCollapseList,
+        compactMode: shouldUseCompactMode,
         maxHeight: height
       });
-      if (item.role === "list") {
-        item.win.setMinimumSize(width, shouldCollapseList ? NOTE_ARRANGE_LIST_COLLAPSED_HEIGHT : NOTE_ARRANGE_LIST_MIN_HEIGHT);
+      item.win.setMinimumSize(Math.min(item.minWidth, width), Math.min(item.minHeight, height));
+      const y = clamp(plannedY, minY, workArea.y + workArea.height - height - NOTE_ARRANGE_MARGIN);
+      item.win.setBounds({ x: nextX, y, width, height }, false);
+      if (!isCascaded) {
+        nextY += height + NOTE_ARRANGE_GAP;
       }
-
-      const y = clamp(nextY, minY, workArea.y + workArea.height - height - NOTE_ARRANGE_MARGIN);
-      item.win.setBounds({ x, y, width, height }, false);
-      pulseWindowFocus(item.win);
-      nextY += height + NOTE_ARRANGE_GAP;
     }
+
+    nextX += width + NOTE_ARRANGE_GAP;
   }
 
-  return { count: noteItems.length };
+  pulseWindowFocus(sourceWin);
+  return { count: noteItems.length, scope: sourceItem.scope };
 }
 
 type WindowOpenSource = "tray" | "screen";
@@ -4499,8 +4710,12 @@ function registerIpc() {
   ipcMain.handle("home:open", () => showHomeWindow());
   ipcMain.handle("settings:open", () => showSettingsWindow());
   ipcMain.handle("manual:open", () => showManualWindow());
-  ipcMain.handle("sticky:open", (_event, target?: StickyTarget | number) => showStickyWindow(target));
-  ipcMain.handle("record:open", (_event, target?: PersonalRecordTarget) => showPersonalRecordWindow(target));
+  ipcMain.handle("sticky:open", (event, target?: StickyTarget | number) =>
+    showStickyWindow(target, BrowserWindow.fromWebContents(event.sender))
+  );
+  ipcMain.handle("record:open", (event, target?: PersonalRecordTarget) =>
+    showPersonalRecordWindow(target, BrowserWindow.fromWebContents(event.sender))
+  );
   ipcMain.handle("localProject:list", () => listLocalProjects());
   ipcMain.handle("localProject:create", (_event, request: CreateLocalProjectRequest) => createLocalProject(request));
   ipcMain.handle("localProject:rename", (_event, request: RenameLocalProjectRequest) => renameLocalProject(request));
@@ -4539,6 +4754,23 @@ function registerIpc() {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) {
       fitWindowContent(win, request);
+    }
+  });
+  ipcMain.handle("window:releaseArrangement", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+      releaseWindowArrangement(win);
+    }
+  });
+  ipcMain.handle("window:setArrangementState", (event, state: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || !isPlainObject(state)) {
+      return;
+    }
+    const nextState = { protected: state.protected === true };
+    windowArrangementStates.set(win, nextState);
+    if (nextState.protected) {
+      releaseWindowArrangement(win);
     }
   });
   ipcMain.handle("sticky:setAlwaysOnTop", async (_event, enabled: boolean) => {

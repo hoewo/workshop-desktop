@@ -540,8 +540,20 @@ export interface WindowFitRequest {
 }
 
 export interface WindowArrangementNotice {
-  compactList?: boolean;
+  compactMode?: boolean;
   maxHeight?: number;
+  released?: boolean;
+}
+
+export interface WindowArrangementState {
+  protected: boolean;
+}
+
+export interface WindowArrangementResult {
+  count: number;
+  blocked?: boolean;
+  protectedCount?: number;
+  scope: "project" | "personal-records" | "tasks" | "none";
 }
 
 export interface WindowFocusStateNotice {
@@ -621,8 +633,10 @@ export interface DesktopBridge {
   notifyTaskChanged: (notice: TaskStateChangeNotice) => Promise<void>;
   closeWindow: () => Promise<void>;
   closeSticky: () => Promise<void>;
-  arrangeStickyWindows: () => Promise<void>;
+  arrangeStickyWindows: () => Promise<WindowArrangementResult>;
   fitWindowContent: (request: WindowFitRequest) => Promise<void>;
+  releaseWindowArrangement: () => Promise<void>;
+  setWindowArrangementState: (state: WindowArrangementState) => Promise<void>;
   setStickyAlwaysOnTop: (enabled: boolean) => Promise<AppConfig>;
   bindLocalProjectDirectory: (localProjectId: string) => Promise<AppConfig | null>;
   openLocalProjectDirectory: (localProjectId: string) => Promise<void>;

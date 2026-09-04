@@ -30,6 +30,7 @@ import { manualRevision } from "./content/manual";
 import { HomeSurface } from "./components/surfaces/HomeSurface";
 import { LoginSurface } from "./components/surfaces/LoginSurface";
 import { ManualSurface } from "./components/surfaces/ManualSurface";
+import { ProjectWorkspaceSurface, type ProjectTaskSourceState } from "./components/surfaces/ProjectWorkspaceSurface";
 import { RecordSurface } from "./components/surfaces/RecordSurface";
 import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { StickyLoginRequiredSurface, StickySurface } from "./components/surfaces/StickySurface";
@@ -57,6 +58,7 @@ import {
   getRecordListContext,
   recordCompleteAnimationMs,
   recordMatchesListContext,
+  recordMatchesProjectWorkspaceSearch,
   recordMatchesSearch,
   type RecordListContext,
   type RecordMode,
@@ -71,6 +73,7 @@ import {
   mergeProjects,
   resolveTaskTags,
   stateLabels,
+  taskMatchesProjectWorkspaceSearch,
   taskListStates,
   taskCompleteAnimationMs,
   withOrganization,
@@ -115,6 +118,10 @@ export default function App() {
   const [projectTags, setProjectTags] = useState<Map<number, ProjectTag[]>>(new Map());
   const [loadingProjectTagIds, setLoadingProjectTagIds] = useState<Set<number>>(new Set());
   const [tasks, setTasks] = useState<EnrichedTask[]>([]);
+  const [remoteDataLoaded, setRemoteDataLoaded] = useState(false);
+  const [remoteSyncFailed, setRemoteSyncFailed] = useState(false);
+  const [taskSyncFailedProjectIds, setTaskSyncFailedProjectIds] = useState<Set<number>>(new Set());
+  const projectsRef = useRef<Project[]>([]);
   const projectTagsRef = useRef<Map<number, ProjectTag[]>>(new Map());
   const projectTagRequestsRef = useRef<Map<number, Promise<ProjectTag[]>>>(new Map());
   const tasksRef = useRef<EnrichedTask[]>([]);
@@ -236,6 +243,11 @@ export default function App() {
   const [recordSearchOpen, setRecordSearchOpen] = useState(false);
   const [stickyListCollapsed, setStickyListCollapsed] = useState(false);
   const [recordListCollapsed, setRecordListCollapsed] = useState(false);
+  const [workspaceTasksCollapsed, setWorkspaceTasksCollapsed] = useState(false);
+  const [workspaceRecordsCollapsed, setWorkspaceRecordsCollapsed] = useState(false);
+  const [arrangementCompact, setArrangementCompact] = useState(false);
+  const [arrangementMaxHeight, setArrangementMaxHeight] = useState<number | null>(null);
+  const [arrangementMessage, setArrangementMessage] = useState("");
   const [taskNoteBody, setTaskNoteBody] = useState("");
   const [taskNoteDirty, setTaskNoteDirty] = useState(false);
   const { focusPulseVisible, triggerFocusPulse } = useFocusPulse();
@@ -256,8 +268,8 @@ export default function App() {
   const recordEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const recordSearchInputRef = useRef<HTMLInputElement | null>(null);
   const taskNoteSaveTimerRef = useRef<number | null>(null);
-  const arrangementHeightTimerRef = useRef<number | null>(null);
-  const arrangementMaxHeightRef = useRef<number | null>(null);
+  const arrangementMessageTimerRef = useRef<number | null>(null);
+  const workspaceSearchCollapseSnapshotRef = useRef<{ records: boolean; tasks: boolean } | null>(null);
   const lastWindowFitRef = useRef("");
   const recordWindowWidthBeforeComposerRef = useRef<number | null>(null);
   const activeRecordRef = useRef<PersonalRecord | null>(null);
@@ -268,6 +280,22 @@ export default function App() {
   const recordSaveInFlightRef = useRef<Promise<PersonalRecord | null> | null>(null);
   const recordSaveQueuedRef = useRef(false);
   const isSingleTaskSticky = surface === "sticky" && taskFilter !== "all";
+  const isProjectWorkspace =
+    surface === "record" &&
+    recordTarget.scopeType === "project" &&
+    !recordTarget.draft &&
+    !recordTarget.noteId &&
+    !activeRecord;
+  const arrangementProtected =
+    isNoteSurface &&
+    Boolean(
+      taskComposer ||
+        isCreatingTask ||
+        recordScopePickerOpen ||
+        recordDirty ||
+        taskNoteDirty ||
+        (surface === "record" && activeRecord && !activeRecord.id)
+    );
 
   useEffect(() => {
     activeRecordRef.current = activeRecord;
@@ -294,14 +322,29 @@ export default function App() {
   }, [tasks]);
 
   useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  useEffect(() => {
     return () => {
-      if (arrangementHeightTimerRef.current !== null) {
-        window.clearTimeout(arrangementHeightTimerRef.current);
+      if (arrangementMessageTimerRef.current !== null) {
+        window.clearTimeout(arrangementMessageTimerRef.current);
       }
     };
   }, []);
 
   useEffect(() => window.workshopDesktop.onFocusPulse(triggerFocusPulse), [triggerFocusPulse]);
+
+  useEffect(() => {
+    if (!isNoteSurface) {
+      return undefined;
+    }
+
+    void window.workshopDesktop.setWindowArrangementState({ protected: arrangementProtected });
+    return () => {
+      void window.workshopDesktop.setWindowArrangementState({ protected: false });
+    };
+  }, [arrangementProtected, isNoteSurface]);
 
   useEffect(() => {
     if (!isNoteSurface) {
@@ -332,29 +375,22 @@ export default function App() {
   useEffect(
     () =>
       window.workshopDesktop.onWindowArrangement((notice) => {
-        if (typeof notice.maxHeight === "number" && Number.isFinite(notice.maxHeight) && notice.maxHeight > 0) {
-          arrangementMaxHeightRef.current = notice.maxHeight;
+        if (notice.released) {
+          setArrangementMaxHeight(null);
+          setArrangementCompact(false);
           lastWindowFitRef.current = "";
-          if (arrangementHeightTimerRef.current !== null) {
-            window.clearTimeout(arrangementHeightTimerRef.current);
-          }
-          arrangementHeightTimerRef.current = window.setTimeout(() => {
-            arrangementHeightTimerRef.current = null;
-            arrangementMaxHeightRef.current = null;
-            lastWindowFitRef.current = "";
-          }, 1400);
+          return;
         }
 
-        if (notice.compactList) {
-          if (surface === "sticky" && !isSingleTaskSticky) {
-            setStickyListCollapsed(true);
-          }
-          if (surface === "record" && !activeRecordRef.current) {
-            setRecordListCollapsed(true);
-          }
+        if (typeof notice.maxHeight === "number" && Number.isFinite(notice.maxHeight) && notice.maxHeight > 0) {
+          setArrangementMaxHeight(notice.maxHeight);
+          lastWindowFitRef.current = "";
+        }
+        if (typeof notice.compactMode === "boolean") {
+          setArrangementCompact(notice.compactMode);
         }
       }),
-    [isSingleTaskSticky, surface]
+    []
   );
 
   const rememberProjectTags = useCallback((projectId: number, tags: ProjectTag[]) => {
@@ -397,14 +433,19 @@ export default function App() {
   const loadData = useCallback(async () => {
     if (!config || !isLoggedIn(config)) {
       setProjects([]);
+      projectsRef.current = [];
       setProjectTags(new Map());
       projectTagsRef.current = new Map();
       setTasks([]);
       tasksRef.current = [];
+      setRemoteDataLoaded(false);
+      setRemoteSyncFailed(false);
+      setTaskSyncFailedProjectIds(new Set());
       return;
     }
 
     setIsLoading(true);
+    setRemoteSyncFailed(false);
     setError("");
     setTaskMessage("");
 
@@ -426,13 +467,25 @@ export default function App() {
           );
           return {
             failed: false,
+            organizationId: organization.id,
             projects: extractList<Project>(payload, "projects").map((project) => withOrganization(project, organization))
           };
         } catch {
-          return { failed: true, projects: [] as Project[] };
+          return { failed: true, organizationId: organization.id, projects: [] as Project[] };
         }
       });
-      const nextProjects = mergeProjects([standaloneProjects, ...organizationProjectResults.map((result) => result.projects)]);
+      const failedOrganizationIds = new Set(
+        organizationProjectResults.filter((result) => result.failed).map((result) => result.organizationId)
+      );
+      const cachedFailedOrganizationProjects = projectsRef.current.filter(
+        (project) => typeof project.organization_id === "number" && failedOrganizationIds.has(project.organization_id)
+      );
+      const nextProjects = mergeProjects([
+        standaloneProjects,
+        ...organizationProjectResults.map((result) => result.projects),
+        cachedFailedOrganizationProjects
+      ]);
+      projectsRef.current = nextProjects;
       setProjects(nextProjects);
 
       const projectTaskData = await mapWithConcurrency(nextProjects, LOAD_DATA_CONCURRENCY, async (project) => {
@@ -483,6 +536,9 @@ export default function App() {
       const nextTasks = projectTaskData.flatMap((item) => item.tasks).sort(compareTasks);
       tasksRef.current = nextTasks;
       setTasks(nextTasks);
+      setTaskSyncFailedProjectIds(
+        new Set(projectTaskData.filter((item) => item.taskSyncFailed).map((item) => item.projectId))
+      );
 
       const failedOrganizationCount = organizationProjectResults.filter((result) => result.failed).length;
       const failedTaskProjectCount = projectTaskData.filter((item) => item.taskSyncFailed).length;
@@ -496,8 +552,10 @@ export default function App() {
         setError(`${warnings.join("；")}。已保留成功加载的任务，请稍后刷新。`);
       }
     } catch (nextError) {
+      setRemoteSyncFailed(true);
       setError(nextError instanceof Error ? nextError.message : "同步失败");
     } finally {
+      setRemoteDataLoaded(true);
       setIsLoading(false);
     }
   }, [config, loadProjectTags]);
@@ -782,12 +840,6 @@ export default function App() {
         return;
       }
 
-      if (recordTarget.scopeType === "project") {
-        const hasProjectRecords = nextRecords.some((record) => recordMatchesListContext(record, getRecordListContext(recordTarget)));
-        if (!hasProjectRecords) {
-          startRecordDraft(recordTarget);
-        }
-      }
     });
   }, [loadRecords, openRecordById, recordTarget, startRecordDraft, surface]);
 
@@ -894,11 +946,25 @@ export default function App() {
     }
     const restoreRecordWidth = !isRecordTaskComposerOpen ? recordWindowWidthBeforeComposerRef.current : null;
     const isDetailWindow = (surface === "sticky" && isSingleTaskSticky) || isRecordDetail;
+    const isProjectWorkspaceCollapsed = isProjectWorkspace && workspaceTasksCollapsed && workspaceRecordsCollapsed;
+    const isArrangementCompactList = arrangementCompact && !isDetailWindow;
     const isCollapsedList =
-      (surface === "sticky" && stickyListCollapsed && !isSingleTaskSticky) || (surface === "record" && recordListCollapsed && !activeRecord);
-    const fixedMinHeight = isCollapsedList ? 56 : 112;
+      (surface === "sticky" && stickyListCollapsed && !isSingleTaskSticky) ||
+      (surface === "record" && !isProjectWorkspace && recordListCollapsed && !activeRecord) ||
+      isProjectWorkspaceCollapsed ||
+      isArrangementCompactList;
+    const collapsedListHeight = isProjectWorkspace ? 124 : 56;
+    const fixedMinHeight = isCollapsedList ? collapsedListHeight : 112;
     const detailMinHeight = surface === "sticky" && isSingleTaskSticky ? 132 : 188;
-    const baseMaxHeight = isCollapsedList ? 56 : surface === "sticky" ? (isSingleTaskSticky ? 640 : 720) : isRecordDetail ? 680 : 720;
+    const baseMaxHeight = isCollapsedList
+      ? collapsedListHeight
+      : surface === "sticky"
+        ? isSingleTaskSticky
+          ? 640
+          : 720
+        : isRecordDetail
+          ? 680
+          : 720;
     let animationFrame: number | null = null;
 
     function requestWindowFit() {
@@ -910,8 +976,8 @@ export default function App() {
         animationFrame = null;
         const contentHeight = readShellContentHeight();
         const minHeight = isDetailWindow ? Math.min(detailMinHeight, baseMaxHeight) : fixedMinHeight;
-        const maxHeight = arrangementMaxHeightRef.current
-          ? Math.min(baseMaxHeight, Math.max(minHeight, arrangementMaxHeightRef.current))
+        const maxHeight = arrangementMaxHeight
+          ? Math.min(baseMaxHeight, Math.max(minHeight, arrangementMaxHeight))
           : baseMaxHeight;
         const request: WindowFitRequest = isRecordTaskComposerOpen
           ? {
@@ -952,8 +1018,11 @@ export default function App() {
     };
   }, [
     activeRecord,
+    arrangementCompact,
+    arrangementMaxHeight,
     error,
     isLoading,
+    isProjectWorkspace,
     isSingleTaskSticky,
     recordBody,
     recordMessage,
@@ -966,7 +1035,9 @@ export default function App() {
     surface,
     taskComposer,
     taskNoteBody,
-    tasks
+    tasks,
+    workspaceRecordsCollapsed,
+    workspaceTasksCollapsed
   ]);
 
   useEffect(() => {
@@ -1095,12 +1166,65 @@ export default function App() {
     () => contextualRecords.filter((record) => recordMatchesSearch(record, recordSearchTokens)).sort(compareRecordListItems),
     [contextualRecords, recordSearchTokens]
   );
+  const workspaceProjectId = recordListContext.scopeType === "project" ? recordListContext.projectId : undefined;
+  const workspaceProject = useMemo(
+    () => projects.find((project) => project.id === workspaceProjectId),
+    [projects, workspaceProjectId]
+  );
+  const workspaceTasks = useMemo(
+    () =>
+      workspaceProjectId === undefined
+        ? []
+        : tasks
+            .filter(
+              (task) =>
+                task.project_id === workspaceProjectId &&
+                task.isMine &&
+                (isVisibleTask(task) || completingTaskIds.has(task.id))
+            )
+            .sort(compareTasks),
+    [completingTaskIds, tasks, workspaceProjectId]
+  );
+  const visibleWorkspaceTasks = useMemo(
+    () => workspaceTasks.filter((task) => taskMatchesProjectWorkspaceSearch(task, recordSearchTokens)),
+    [recordSearchTokens, workspaceTasks]
+  );
+  const visibleWorkspaceRecords = useMemo(
+    () =>
+      contextualRecords
+        .filter((record) => recordMatchesProjectWorkspaceSearch(record, recordSearchTokens))
+        .sort(compareRecordListItems),
+    [contextualRecords, recordSearchTokens]
+  );
+  const projectTaskSourceState: ProjectTaskSourceState = !config || !isLoggedIn(config)
+    ? "logged-out"
+    : workspaceProjectId === undefined
+      ? "unlinked"
+      : isLoading || !remoteDataLoaded
+        ? "loading"
+        : remoteSyncFailed || taskSyncFailedProjectIds.has(workspaceProjectId) || !workspaceProject
+          ? "stale"
+          : workspaceTasks.length === 0
+            ? "empty"
+            : "online";
+  const workspaceTaskCreateDisabledReason =
+    projectTaskSourceState === "logged-out"
+      ? "请先在设置中登录 Workshop 账号"
+      : projectTaskSourceState === "unlinked"
+        ? "请先将当前项目关联远端任务源"
+        : projectTaskSourceState === "loading"
+          ? "任务源加载中"
+          : projectTaskSourceState === "stale"
+            ? "同步异常，刷新成功后可新增待办"
+            : !workspaceProject
+              ? "当前远端项目不可用"
+              : undefined;
   const hasRecordSearchQuery = recordSearchTokens.length > 0;
   useEffect(() => {
-    if (surface === "record" && recordsLoaded && !activeRecord && contextualRecords.length === 0) {
+    if (surface === "record" && !isProjectWorkspace && recordsLoaded && !activeRecord && contextualRecords.length === 0) {
       setRecordListCollapsed(true);
     }
-  }, [activeRecord, contextualRecords.length, recordListContext, recordsLoaded, surface]);
+  }, [activeRecord, contextualRecords.length, isProjectWorkspace, recordListContext, recordsLoaded, surface]);
 
   const taskRecordsByTaskId = useMemo(() => {
     const byTaskId = new Map<number, PersonalRecordMeta>();
@@ -1329,7 +1453,7 @@ export default function App() {
     });
   }
 
-  function openProjectRecord(group: ProjectTodoGroup) {
+  function openProjectWorkspace(group: ProjectTodoGroup) {
     void window.workshopDesktop.openPersonalRecord({
       scopeType: "project",
       projectId: group.project.id,
@@ -1337,7 +1461,7 @@ export default function App() {
     });
   }
 
-  function openLocalProjectRecord(project: LocalProject) {
+  function openLocalProjectWorkspace(project: LocalProject) {
     void window.workshopDesktop.openPersonalRecord({
       scopeType: "project",
       localProjectId: project.id,
@@ -1623,13 +1747,14 @@ export default function App() {
     });
   }
 
-  function openDirectTaskComposer(projectId?: number) {
+  function openDirectTaskComposer(projectId?: number, lockProject = false) {
     const nextProjectId = projectId ?? projects[0]?.id;
     setTaskComposerError("");
     setTaskComposer({
       sessionId: crypto.randomUUID(),
       projectId: nextProjectId,
-      content: ""
+      content: "",
+      lockProject
     });
     if (nextProjectId) {
       handleComposerProjectChange(nextProjectId);
@@ -1936,6 +2061,9 @@ export default function App() {
     setDraftConfig(saved);
     setProjects([]);
     setTasks([]);
+    setRemoteDataLoaded(false);
+    setRemoteSyncFailed(false);
+    setTaskSyncFailedProjectIds(new Set());
   }
 
   async function handleCheckForUpdates() {
@@ -2112,8 +2240,66 @@ export default function App() {
     }
   }
 
+  function releaseCurrentWindowArrangement() {
+    setArrangementCompact(false);
+    setArrangementMaxHeight(null);
+    lastWindowFitRef.current = "";
+    void window.workshopDesktop.releaseWindowArrangement();
+  }
+
+  function showArrangementMessage(message: string) {
+    setArrangementMessage(message);
+    if (arrangementMessageTimerRef.current !== null) {
+      window.clearTimeout(arrangementMessageTimerRef.current);
+    }
+    arrangementMessageTimerRef.current = window.setTimeout(() => {
+      arrangementMessageTimerRef.current = null;
+      setArrangementMessage("");
+    }, 2200);
+  }
+
   async function handleArrangeStickyWindows() {
-    await window.workshopDesktop.arrangeStickyWindows();
+    if (arrangementProtected) {
+      showArrangementMessage("完成当前编辑后再整理");
+      return;
+    }
+
+    try {
+      const result = await window.workshopDesktop.arrangeStickyWindows();
+      if (result.blocked) {
+        showArrangementMessage(`有 ${result.protectedCount ?? 1} 个窗口正在编辑，暂未整理`);
+        return;
+      }
+      const scopeLabel = result.scope === "project" ? "当前项目" : result.scope === "personal-records" ? "个人记录" : "任务";
+      showArrangementMessage(result.count > 0 ? `已整理${scopeLabel}的 ${result.count} 个窗口` : "当前没有可整理的窗口");
+    } catch (nextError) {
+      showArrangementMessage(nextError instanceof Error ? nextError.message : "整理窗口失败");
+    }
+  }
+
+  function openProjectWorkspaceSearch() {
+    if (!recordSearchOpen) {
+      workspaceSearchCollapseSnapshotRef.current = {
+        records: workspaceRecordsCollapsed,
+        tasks: workspaceTasksCollapsed
+      };
+    }
+    if (arrangementCompact) {
+      releaseCurrentWindowArrangement();
+    }
+    setWorkspaceTasksCollapsed(false);
+    setWorkspaceRecordsCollapsed(false);
+    setRecordSearchOpen(true);
+  }
+
+  function closeProjectWorkspaceSearch() {
+    setRecordSearchOpen(false);
+    const snapshot = workspaceSearchCollapseSnapshotRef.current;
+    workspaceSearchCollapseSnapshotRef.current = null;
+    if (snapshot) {
+      setWorkspaceTasksCollapsed(snapshot.tasks);
+      setWorkspaceRecordsCollapsed(snapshot.records);
+    }
   }
 
   const loginReady = Boolean(draftConfig && loginTarget.trim() && loginCode.trim());
@@ -2346,10 +2532,83 @@ export default function App() {
     const isActiveRecordCompleting = Boolean(activeRecord && recordCompletingId === activeRecordCompletionId);
     const isRecordSearchExpanded = recordSearchOpen || hasRecordSearchQuery;
 
+    if (isProjectWorkspace && recordListContext.scopeType === "project") {
+      return (
+        <>
+          <ProjectWorkspaceSurface
+            arrangementCompact={arrangementCompact}
+            arrangementMessage={arrangementMessage}
+            arrangementProtected={arrangementProtected}
+            busyTaskId={busyTaskId}
+            closeWindow={() => void window.workshopDesktop.closeWindow()}
+            completeRecord={(record) => void completeRecord(record)}
+            completingRecordId={recordCompletingId}
+            completingTaskIds={completingTaskIds}
+            config={config}
+            focusPulseVisible={focusPulseVisible}
+            handleArrangeWindows={() => void handleArrangeStickyWindows()}
+            handleDirectoryClick={() => {
+              if (
+                recordListContext.localProjectId &&
+                config.localProjects.some((project) => project.id === recordListContext.localProjectId)
+              ) {
+                void handleLocalProjectDirectoryClick(recordListContext.localProjectId);
+                return;
+              }
+              if (recordListContext.projectId !== undefined) {
+                void handleProjectDirectoryClick(recordListContext.projectId, "record");
+              }
+            }}
+            handleStickyAlwaysOnTop={(enabled) => void handleStickyAlwaysOnTop(enabled)}
+            hasSearchQuery={hasRecordSearchQuery}
+            isRecordSearchExpanded={isRecordSearchExpanded}
+            message={recordMessage || taskMessage || error}
+            onCreateRecord={() => void handleNewRecord()}
+            onCreateTask={() => {
+              if (workspaceProjectId !== undefined && !workspaceTaskCreateDisabledReason) {
+                openDirectTaskComposer(workspaceProjectId, true);
+              }
+            }}
+            onCloseSearch={closeProjectWorkspaceSearch}
+            onExitArrangementCompact={releaseCurrentWindowArrangement}
+            onOpenSearch={openProjectWorkspaceSearch}
+            onOpenRecord={(record) =>
+              void window.workshopDesktop.openPersonalRecord({
+                noteId: record.id
+              })
+            }
+            onOpenSettings={() => void window.workshopDesktop.openSettings()}
+            onOpenTask={openTaskDetail}
+            onReloadTasks={() => void loadData()}
+            recordListContext={recordListContext}
+            records={visibleWorkspaceRecords}
+            recordsCollapsed={workspaceRecordsCollapsed}
+            recordsLoaded={recordsLoaded}
+            recordSearchInputRef={recordSearchInputRef}
+            searchQuery={recordSearchQuery}
+            setRecordsCollapsed={setWorkspaceRecordsCollapsed}
+            setSearchQuery={setRecordSearchQuery}
+            setTasksCollapsed={setWorkspaceTasksCollapsed}
+            taskCreateDisabledReason={workspaceTaskCreateDisabledReason}
+            taskSourceState={projectTaskSourceState}
+            taskTotalCount={workspaceTasks.length}
+            tasks={visibleWorkspaceTasks}
+            tasksCollapsed={workspaceTasksCollapsed}
+            updateTaskState={(task, state) => void updateTaskState(task, state)}
+            windowFocusClass={noteWindowFocusClass}
+          />
+          {taskComposerDialog}
+        </>
+      );
+    }
+
     return (
       <>
         <RecordSurface
         activeRecord={activeRecord}
+        arrangementCompact={arrangementCompact}
+        arrangementMessage={arrangementMessage}
+        arrangementProtected={arrangementProtected}
         archiveActiveRecord={() => void archiveActiveRecord()}
         archiveRecord={(record) => void archiveRecord(record)}
         assignRecordToProject={(project, projectName) => void assignRecordToProject(project, projectName)}
@@ -2368,6 +2627,7 @@ export default function App() {
         hasRecordSearchQuery={hasRecordSearchQuery}
         isActiveRecordCompleting={isActiveRecordCompleting}
         isRecordSearchExpanded={isRecordSearchExpanded}
+        onExitArrangementCompact={releaseCurrentWindowArrangement}
         onRecordBodyChange={(nextBody) => {
           recordBodyRef.current = nextBody;
           recordDirtyRef.current = true;
@@ -2475,10 +2735,10 @@ export default function App() {
           onOpenSettings={() => void window.workshopDesktop.openSettings()}
           onOpenSticky={() => void window.workshopDesktop.openSticky()}
           onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
-          onLocalProjectRecord={openLocalProjectRecord}
+          onLocalProjectWorkspace={openLocalProjectWorkspace}
           onLinkLocalProjectRemote={(project) => void openLinkLocalProjectRemote(project)}
           onProjectHover={showProjectTaskPreview}
-          onProjectRecord={openProjectRecord}
+          onProjectWorkspace={openProjectWorkspace}
           onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
           onRenameLocalProject={openRenameLocalProject}
           onUnlinkLocalProjectRemote={(project) => void handleUnlinkLocalProjectRemote(project)}
@@ -2492,7 +2752,7 @@ export default function App() {
   }
 
   if (surface === "sticky") {
-    const isStickyContentCollapsed = stickyListCollapsed && !isSingleTaskSticky;
+    const isStickyContentCollapsed = (stickyListCollapsed || arrangementCompact) && !isSingleTaskSticky;
     const stickyHeader = getStickyHeader({
       filteredTaskCount: filteredTasks.length,
       isSingleTaskSticky,
@@ -2504,6 +2764,9 @@ export default function App() {
 
     return (
       <StickySurface
+        arrangementCompact={arrangementCompact}
+        arrangementMessage={arrangementMessage}
+        arrangementProtected={arrangementProtected}
         busyTaskId={busyTaskId}
         canExtractTasks={canExtractTasks}
         closeStickyWindow={() => void closeStickyWindow()}
@@ -2519,13 +2782,14 @@ export default function App() {
         isLoading={isLoading}
         isSingleTaskSticky={isSingleTaskSticky}
         isStickyContentCollapsed={isStickyContentCollapsed}
-        onOpenProjectRecord={() =>
+        onOpenProjectWorkspace={() =>
           void window.workshopDesktop.openPersonalRecord({
             scopeType: "project",
             projectId: Number(projectFilter),
             projectName: selectedProjectName
           })
         }
+        onExitArrangementCompact={releaseCurrentWindowArrangement}
         onTaskArchive={() => handleTaskArchive()}
         openTaskDetail={openTaskDetail}
         saveTaskNoteNow={() => void saveTaskNoteNow()}
@@ -2567,13 +2831,13 @@ export default function App() {
         hideProjectTaskPreview={hideProjectTaskPreview}
         loadData={() => void loadData()}
         onLocalProjectDirectoryClick={(localProjectId) => void handleLocalProjectDirectoryClick(localProjectId)}
-        onLocalProjectRecord={openLocalProjectRecord}
+        onLocalProjectWorkspace={openLocalProjectWorkspace}
         onLinkLocalProjectRemote={(project) => void openLinkLocalProjectRemote(project)}
         onOpenHome={() => void window.workshopDesktop.openHome()}
         onOpenManual={() => void window.workshopDesktop.openManual()}
         onProjectHover={showProjectTaskPreview}
         onRemoteProjectDirectoryClick={(projectId) => void handleProjectDirectoryClick(projectId, "sticky")}
-        onProjectRecord={openProjectRecord}
+        onProjectWorkspace={openProjectWorkspace}
         onRenameLocalProject={openRenameLocalProject}
         onUnlinkLocalProjectRemote={(project) => void handleUnlinkLocalProjectRemote(project)}
       />

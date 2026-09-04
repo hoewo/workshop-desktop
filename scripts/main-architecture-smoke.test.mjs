@@ -391,6 +391,27 @@ test("app startup opens the workbench home regardless of login state", async () 
   assert.doesNotMatch(mainBundle, /if \(!hasValidLogin\(config\)\)/);
 });
 
+test("note window arrangement stays inside the current work context", async () => {
+  const [mainSource, appSource, workspaceSource] = await Promise.all([
+    readFile(path.join(process.cwd(), "src/main/main.ts"), "utf8"),
+    readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8"),
+    readFile(path.join(process.cwd(), "src/renderer/components/surfaces/ProjectWorkspaceSurface.tsx"), "utf8")
+  ]);
+
+  assert.match(mainSource, /local-project:\$\{normalizedLocalProjectId\}/);
+  assert.match(mainSource, /items\.filter\(\(item\) => item\.groupKey === sourceItem\.groupKey\)/);
+  assert.doesNotMatch(mainSource, /item\.column === "personal-record" \|\| item\.projectId === sourceItem\.projectId/);
+  assert.match(mainSource, /protectedItems\.length > 0/);
+  assert.match(mainSource, /win\.on\("will-move"/);
+  assert.match(mainSource, /win\.on\("will-resize"/);
+  assert.match(mainSource, /positionNoteWindowNearSource/);
+  assert.match(appSource, /workspaceSearchCollapseSnapshotRef/);
+  assert.doesNotMatch(appSource, /setWorkspaceTasksCollapsed\(true\)/);
+  assert.doesNotMatch(appSource, /setWorkspaceRecordsCollapsed\(true\)/);
+  assert.match(workspaceSource, /整理当前项目窗口/);
+  assert.match(workspaceSource, /PanelsTopLeft/);
+});
+
 test("CodexAppServerClient handles streaming deltas and terminal statuses", () => {
   const client = createCodexClientForNotificationTest();
   const messages = [];

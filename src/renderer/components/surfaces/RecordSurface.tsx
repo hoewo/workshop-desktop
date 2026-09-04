@@ -4,11 +4,11 @@ import {
   Check,
   Eye,
   Folder,
-  GripVertical,
   Link,
   Maximize2,
   Minimize2,
   NotebookPen,
+  PanelsTopLeft,
   Pencil,
   Pin,
   PinOff,
@@ -33,10 +33,14 @@ import {
 import { ListCellArchiveButton, ListCellCompleteButton } from "../ListCellActions";
 import { MarkdownPreview } from "../MarkdownPreview";
 import { WindowFocusOverlay } from "../WindowFocusOverlay";
+import { WindowArrangementFeedback } from "../WindowArrangementFeedback";
 import { ProjectDirectorySubtitle, WindowHeaderTitle } from "../WindowHeader";
 
 export function RecordSurface({
   activeRecord,
+  arrangementCompact,
+  arrangementMessage,
+  arrangementProtected,
   archiveActiveRecord,
   archiveRecord,
   assignRecordToProject,
@@ -56,6 +60,7 @@ export function RecordSurface({
   isActiveRecordCompleting,
   isRecordSearchExpanded,
   onRecordBodyChange,
+  onExitArrangementCompact,
   recordBody,
   recordCompletingId,
   recordEditorRef,
@@ -81,6 +86,9 @@ export function RecordSurface({
   windowFocusClass
 }: {
   activeRecord: PersonalRecord | null;
+  arrangementCompact: boolean;
+  arrangementMessage: string;
+  arrangementProtected: boolean;
   archiveActiveRecord: () => void;
   archiveRecord: (record: PersonalRecordMeta) => void;
   assignRecordToProject: (project: Project, projectName: string) => void;
@@ -100,6 +108,7 @@ export function RecordSurface({
   isActiveRecordCompleting: boolean;
   isRecordSearchExpanded: boolean;
   onRecordBodyChange: (body: string) => void;
+  onExitArrangementCompact: () => void;
   recordBody: string;
   recordCompletingId: string | null;
   recordEditorRef: RefObject<HTMLTextAreaElement | null>;
@@ -149,14 +158,21 @@ export function RecordSurface({
   return (
     <main
       className={`record-shell ${activeRecord ? "record-detail-shell" : "record-list-shell"} ${
-        !activeRecord && recordListCollapsed ? "collapsed-shell" : ""
+        !activeRecord && (recordListCollapsed || arrangementCompact) ? "collapsed-shell" : ""
       } ${windowFocusClass} ${focusPulseVisible ? "window-focus-pulse" : ""}`}
     >
       <WindowFocusOverlay focusClass={windowFocusClass} />
+      <WindowArrangementFeedback message={arrangementMessage} />
       <header className="record-titlebar">
         <div className="sticky-drag">
-          <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">
-            <GripVertical size={15} />
+          <button
+            className="sticky-arrange-button"
+            type="button"
+            onClick={handleArrangeStickyWindows}
+            disabled={arrangementProtected}
+            title={arrangementProtected ? "完成当前编辑后再整理" : activeRecord?.scopeType === "project" ? "整理当前项目窗口" : "整理个人记录窗口"}
+          >
+            <PanelsTopLeft size={15} />
           </button>
           <div className="record-title-copy">
             <div className="window-title-line">
@@ -218,6 +234,9 @@ export function RecordSurface({
                 className="record-search-toggle"
                 type="button"
                 onClick={() => {
+                  if (arrangementCompact) {
+                    onExitArrangementCompact();
+                  }
                   setRecordListCollapsed(false);
                   setRecordSearchOpen(true);
                 }}
@@ -267,10 +286,16 @@ export function RecordSurface({
             <button
               className="icon-button"
               type="button"
-              onClick={() => setRecordListCollapsed((collapsed) => !collapsed)}
-              title={recordListCollapsed ? "展开" : "折叠"}
+              onClick={() => {
+                if (arrangementCompact) {
+                  onExitArrangementCompact();
+                  return;
+                }
+                setRecordListCollapsed((collapsed) => !collapsed);
+              }}
+              title={arrangementCompact ? "退出紧凑排列" : recordListCollapsed ? "展开" : "折叠"}
             >
-              {recordListCollapsed ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
+              {recordListCollapsed || arrangementCompact ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
             </button>
           ) : null}
           {!isTaskNote ? (
@@ -282,7 +307,7 @@ export function RecordSurface({
             className={`icon-button ${config.stickyAlwaysOnTop ? "active-icon" : ""}`}
             type="button"
             onClick={() => handleStickyAlwaysOnTop(!config.stickyAlwaysOnTop)}
-            title={config.stickyAlwaysOnTop ? "取消置顶" : "置顶"}
+            title={config.stickyAlwaysOnTop ? "取消所有便签置顶" : "所有便签置顶"}
           >
             {config.stickyAlwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />}
           </button>
@@ -292,7 +317,7 @@ export function RecordSurface({
         </div>
       </header>
 
-      {!activeRecord && recordMessage ? (
+      {!activeRecord && recordMessage && !arrangementCompact ? (
         <div className="record-message">
           <Link size={14} />
           <span>{recordMessage}</span>
@@ -379,7 +404,7 @@ export function RecordSurface({
             </div>
           </div>
         </>
-      ) : !recordListCollapsed ? (
+      ) : !recordListCollapsed && !arrangementCompact ? (
         <section className="record-list" aria-label="记录列表">
           {visibleRecords.length === 0 ? (
             <div className="empty-state sticky-empty">

@@ -1,9 +1,10 @@
-import { GripVertical, Info, LoaderCircle, LogIn, Maximize2, Minimize2, NotebookPen, Pin, PinOff, ShieldCheck, WifiOff, X } from "lucide-react";
+import { Info, LoaderCircle, LogIn, Maximize2, Minimize2, NotebookPen, PanelsTopLeft, Pin, PinOff, ShieldCheck, WifiOff, X } from "lucide-react";
 import type { AppConfig, TaskState } from "../../../shared/types";
 import { getProjectLocalDirectory } from "../../lib/appModel";
 import type { HeaderTitleContent } from "../../lib/records";
 import type { EnrichedTask } from "../../lib/tasks";
 import { WindowFocusOverlay } from "../WindowFocusOverlay";
+import { WindowArrangementFeedback } from "../WindowArrangementFeedback";
 import { ProjectDirectorySubtitle, WindowHeaderTitle } from "../WindowHeader";
 import { TaskDetail, TaskRow } from "../TaskViews";
 
@@ -29,8 +30,8 @@ export function StickyLoginRequiredSurface({
       <WindowFocusOverlay focusClass={windowFocusClass} />
       <header className="sticky-titlebar">
         <div className="sticky-drag">
-          <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">
-            <GripVertical size={15} />
+          <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理任务窗口">
+            <PanelsTopLeft size={15} />
           </button>
           <h1>桌面便签</h1>
         </div>
@@ -47,6 +48,9 @@ export function StickyLoginRequiredSurface({
 }
 
 export function StickySurface({
+  arrangementCompact,
+  arrangementMessage,
+  arrangementProtected,
   busyTaskId,
   canExtractTasks,
   closeStickyWindow,
@@ -62,7 +66,8 @@ export function StickySurface({
   isLoading,
   isSingleTaskSticky,
   isStickyContentCollapsed,
-  onOpenProjectRecord,
+  onOpenProjectWorkspace,
+  onExitArrangementCompact,
   onTaskArchive,
   openTaskDetail,
   saveTaskNoteNow,
@@ -79,6 +84,9 @@ export function StickySurface({
   sendTaskToCodex,
   windowFocusClass
 }: {
+  arrangementCompact: boolean;
+  arrangementMessage: string;
+  arrangementProtected: boolean;
   busyTaskId: number | null;
   canExtractTasks: boolean;
   closeStickyWindow: () => void;
@@ -94,7 +102,8 @@ export function StickySurface({
   isLoading: boolean;
   isSingleTaskSticky: boolean;
   isStickyContentCollapsed: boolean;
-  onOpenProjectRecord: () => void;
+  onOpenProjectWorkspace: () => void;
+  onExitArrangementCompact: () => void;
   onTaskArchive: (task: EnrichedTask) => void;
   openTaskDetail: (task: EnrichedTask) => void;
   saveTaskNoteNow: () => void;
@@ -118,10 +127,17 @@ export function StickySurface({
       } ${windowFocusClass} ${focusPulseVisible ? "window-focus-pulse" : ""}`}
     >
       <WindowFocusOverlay focusClass={windowFocusClass} />
+      <WindowArrangementFeedback message={arrangementMessage} />
       <header className="sticky-titlebar">
         <div className="sticky-drag">
-          <button className="sticky-arrange-button" type="button" onClick={handleArrangeStickyWindows} title="整理便签排列">
-            <GripVertical size={15} />
+          <button
+            className="sticky-arrange-button"
+            type="button"
+            onClick={handleArrangeStickyWindows}
+            disabled={arrangementProtected}
+            title={arrangementProtected ? "完成当前编辑后再整理" : stickyProjectId ? "整理当前项目窗口" : "整理任务窗口"}
+          >
+            <PanelsTopLeft size={15} />
           </button>
           <div className="sticky-title-copy">
             <div className="window-title-line">
@@ -137,7 +153,7 @@ export function StickySurface({
         </div>
         <div className="sticky-actions">
           {!isSingleTaskSticky && selectedProjectName ? (
-            <button className="icon-button" type="button" onClick={onOpenProjectRecord} title="记项目">
+            <button className="icon-button" type="button" onClick={onOpenProjectWorkspace} title="打开项目工作区">
               <NotebookPen size={15} />
             </button>
           ) : null}
@@ -145,17 +161,23 @@ export function StickySurface({
             <button
               className="icon-button"
               type="button"
-              onClick={() => setStickyListCollapsed((collapsed) => !collapsed)}
-              title={stickyListCollapsed ? "展开" : "折叠"}
+              onClick={() => {
+                if (arrangementCompact) {
+                  onExitArrangementCompact();
+                  return;
+                }
+                setStickyListCollapsed((collapsed) => !collapsed);
+              }}
+              title={arrangementCompact ? "退出紧凑排列" : stickyListCollapsed ? "展开" : "折叠"}
             >
-              {stickyListCollapsed ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
+              {stickyListCollapsed || arrangementCompact ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
             </button>
           ) : null}
           <button
             className={`icon-button ${config.stickyAlwaysOnTop ? "active-icon" : ""}`}
             type="button"
             onClick={() => handleStickyAlwaysOnTop(!config.stickyAlwaysOnTop)}
-            title={config.stickyAlwaysOnTop ? "取消置顶" : "置顶"}
+            title={config.stickyAlwaysOnTop ? "取消所有便签置顶" : "所有便签置顶"}
           >
             {config.stickyAlwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />}
           </button>
